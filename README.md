@@ -474,7 +474,7 @@ Alternatively, you can build everything at once including the CLI binary:
 - `src/bin/`: Binary executables
   - `obadh.rs`: Main CLI application
 - `benches/`: Criterion benchmarks for tokenizer/transliterator hot paths
-- `data/`: Non-shipped source/audit material excluded from Cargo packages
+- `data/`: Non-shipped source/audit material excluded from Cargo packages, including documented rule tables and the deliberate input rule-probe corpus
 - `www/`: Web interface files
   - `index.html`: Main web application
   - `css/`: Stylesheets

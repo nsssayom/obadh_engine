@@ -10,6 +10,7 @@ const CONSONANT_RULES_DOC: &str = include_str!("../data/rules/consonants.md");
 const README_DOC: &str = include_str!("../README.md");
 const KNOWN_ISSUES_DOC: &str = include_str!("../KNOWN_ISSUES.md");
 const CONJUNCT_RULES_DOC: &str = include_str!("../data/rules/conjunct.wiki");
+const DELIBERATE_INPUT_CORPUS_DOC: &str = include_str!("../data/rules/deliberate_input_corpus.md");
 const SIMPLIFIED_RULES_DOC: &str = include_str!("../data/rules/simplified_rules.md");
 const VOWEL_RULES_DOC: &str = include_str!("../data/rules/vowels.md");
 
@@ -68,6 +69,26 @@ fn documented_simplified_rule_signals_match_runtime_behavior() {
             "documented simplified rule signal {:?} on line {} should match runtime",
             example.roman_input,
             example.line_number
+        );
+    }
+}
+
+#[test]
+fn deliberate_input_rule_probe_corpus_matches_runtime_behavior() {
+    let engine = ObadhEngine::new();
+    let mut inputs = BTreeSet::new();
+
+    for row in deliberate_input_corpus_rows(DELIBERATE_INPUT_CORPUS_DOC) {
+        assert!(
+            inputs.insert(row.roman_input),
+            "rule probe corpus should not duplicate Roman input {:?}",
+            row.roman_input
+        );
+        assert_eq!(
+            engine.transliterate(row.roman_input),
+            row.bengali_output,
+            "rule probe corpus row in category {:?} should match runtime",
+            row.category
         );
     }
 }
@@ -222,6 +243,12 @@ struct NumeralTableRow<'a> {
     bengali: &'a str,
 }
 
+struct RuleProbeRow<'a> {
+    category: &'a str,
+    roman_input: &'a str,
+    bengali_output: &'a str,
+}
+
 #[derive(Clone, Copy)]
 struct CodeSpan<'a> {
     start: usize,
@@ -315,6 +342,30 @@ fn parse_numeral_table_row(line: &str) -> Option<NumeralTableRow<'_>> {
         latin: columns.next()?,
         bengali: columns.next()?,
     })
+}
+
+fn deliberate_input_corpus_rows(markdown: &str) -> impl Iterator<Item = RuleProbeRow<'_>> {
+    markdown
+        .lines()
+        .skip_while(|line| !line.starts_with("| Category | Roman Input | Bengali Output |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(parse_rule_probe_row)
+}
+
+fn parse_rule_probe_row(line: &str) -> Option<RuleProbeRow<'_>> {
+    let mut columns = line.trim_matches('|').split('|').map(str::trim);
+
+    Some(RuleProbeRow {
+        category: columns.next()?,
+        roman_input: single_code_span_text(columns.next()?)?,
+        bengali_output: single_code_span_text(columns.next()?)?,
+    })
+}
+
+fn single_code_span_text(cell: &str) -> Option<&str> {
+    let spans = code_spans(cell);
+    (spans.len() == 1).then_some(spans[0].text)
 }
 
 fn deliberate_input_contract_signal_cells(markdown: &str) -> Vec<&str> {
