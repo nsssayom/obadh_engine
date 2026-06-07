@@ -2,7 +2,7 @@ use obadh_engine::{
     definitions::{conjuncts, consonants_static},
     ObadhEngine, PhoneticUnitType, Tokenizer,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -268,6 +268,29 @@ fn test_source_conjunct_csv_duplicate_keys_are_intentional() {
 }
 
 #[test]
+fn test_source_conjunct_wiki_inventory_is_represented_in_csv() {
+    let Some(csv) = source_conjunct_csv() else {
+        return;
+    };
+    let Some(wiki) = source_conjunct_wiki() else {
+        return;
+    };
+
+    let csv_conjuncts: BTreeSet<_> = source_conjunct_rows(&csv)
+        .map(|row| row.conjunct.to_string())
+        .collect();
+
+    for row in source_conjunct_wiki_rows(&wiki) {
+        assert!(
+            csv_conjuncts.contains(row.conjunct),
+            "Wiki conjunct '{}' on line {} is missing from data/conjuncts.csv",
+            row.conjunct,
+            row.line_number
+        );
+    }
+}
+
+#[test]
 fn test_source_data_conjunct_aliases_render() {
     let engine = ObadhEngine::new();
 
@@ -286,9 +309,23 @@ struct SourceConjunctRow<'a> {
     example: &'a str,
 }
 
+struct SourceConjunctWikiRow<'a> {
+    line_number: usize,
+    conjunct: &'a str,
+}
+
 impl SourceConjunctRow<'_> {
     fn key(&self) -> String {
         self.roman_components.concat()
+    }
+}
+
+fn source_conjunct_wiki() -> Option<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/rules/conjunct.wiki");
+    match fs::read_to_string(&path) {
+        Ok(wiki) => Some(wiki),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("Failed to read {}: {error}", path.display()),
     }
 }
 
@@ -299,6 +336,25 @@ fn source_conjunct_csv() -> Option<String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => panic!("Failed to read {}: {error}", path.display()),
     }
+}
+
+fn source_conjunct_wiki_rows(wiki: &str) -> impl Iterator<Item = SourceConjunctWikiRow<'_>> {
+    wiki.lines()
+        .enumerate()
+        .filter_map(|(index, line)| parse_source_conjunct_wiki_row(index + 1, line))
+}
+
+fn parse_source_conjunct_wiki_row(
+    line_number: usize,
+    line: &str,
+) -> Option<SourceConjunctWikiRow<'_>> {
+    let declaration = line.strip_prefix("# ")?;
+    let (conjunct, _) = declaration.split_once('=')?;
+
+    Some(SourceConjunctWikiRow {
+        line_number,
+        conjunct: conjunct.trim(),
+    })
 }
 
 fn source_conjunct_rows(csv: &str) -> impl Iterator<Item = SourceConjunctRow<'_>> {
