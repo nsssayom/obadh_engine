@@ -42,6 +42,6 @@ This document tracks current limitations and planned future work for the determi
 
 ## Notes
 
-The current version has regression coverage for basic vowel and consonant composition, explicit hasant notation, valid conjunct filtering, phola forms, the non-conjunct `র‌্য` ZWNJ signal, mixed-script preservation, numerals, and the CLI/library path. Runtime vowel, consonant, and diacritic signals have source-contract tests against their documented rule tables. The project also has a Criterion hot-path benchmark target for tokenizer and transliterator rule-stress inputs.
+The current version has regression coverage for basic vowel and consonant composition, explicit hasant notation, valid conjunct filtering, phola forms, the non-conjunct `র‌্য` ZWNJ signal, mixed-script preservation, numerals, and the CLI/library path. Runtime vowel, consonant, and diacritic signals have source-contract tests against their documented rule tables. The direct-rendering path and tokenized debug path share text-boundary predicates and have parity coverage for decimal separators, explicit hasant markers, khanda-ta notation, standalone marks, and mixed-script boundaries. The project also has a Criterion hot-path benchmark target for tokenizer and transliterator rule-stress inputs.
 
 More complex cases involving conjuncts, vowel ambiguity, and deliberate input conventions need broader corpus-driven validation. That validation should expand deterministic rules, not introduce dictionary-style word overrides into the core engine.

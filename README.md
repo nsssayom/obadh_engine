@@ -465,6 +465,7 @@ Alternatively, you can build everything at once including the CLI binary:
   - `tokenizer.rs`: Text tokenization logic
   - `transliterator.rs`: Main transliteration system
   - `sanitizer.rs`: Input text sanitization
+  - `text_boundary.rs`: Shared text-boundary predicates used by tokenizer and direct rendering paths
 - `src/definitions/`: Bengali character and rule definitions
   - Conjunct rules are compiled into static Rust tables; no CSV is parsed by the library, CLI, or WASM runtime
 - `src/wasm/`: WebAssembly bindings and web-specific functionality

@@ -5,6 +5,9 @@
 //! For detailed implementation rules, see docs/simplified_rules.md
 
 use super::sanitizer::{SanitizeResult, Sanitizer};
+use super::text_boundary::{
+    is_explicit_hasant_signal_at, is_khanda_ta_suffix_signal_at, is_phonetic_mark_signal,
+};
 use super::tokenizer::{PhoneticUnit, Token, TokenType, Tokenizer};
 use crate::definitions::{
     conjuncts::{conjuncts, ConjunctDefinitions},
@@ -17,10 +20,7 @@ mod components;
 mod parts;
 mod word;
 
-use boundary::{
-    ends_with_khanda_ta_base_signal, is_decimal_separator, is_decimal_separator_at, next_char,
-    TokenNumberBoundary,
-};
+use boundary::{is_decimal_separator, is_decimal_separator_at, TokenNumberBoundary};
 
 /// Main transliterator that performs the Roman to Bengali conversion
 pub struct Transliterator {
@@ -103,7 +103,7 @@ impl Transliterator {
             let character = text[i..].chars().next().unwrap();
             let char_len = character.len_utf8();
 
-            if character == '^' || character == ':' {
+            if is_phonetic_mark_signal(character) {
                 if current_word_start.is_none() {
                     current_word_start = Some(i);
                 }
@@ -112,17 +112,16 @@ impl Transliterator {
                 continue;
             }
 
-            if character == '`' && next_char(text, i, char_len) == Some('`') {
-                if let Some(start) = current_word_start {
-                    if ends_with_khanda_ta_base_signal(&text[start..current_word_end]) {
-                        i += 2;
-                        current_word_end = i;
-                        continue;
-                    }
+            if let Some(start) = current_word_start {
+                if is_khanda_ta_suffix_signal_at(character, text, i, &text[start..current_word_end])
+                {
+                    i += 2;
+                    current_word_end = i;
+                    continue;
                 }
             }
 
-            if character == ',' && next_char(text, i, char_len) == Some(',') {
+            if is_explicit_hasant_signal_at(character, text, i) {
                 if current_word_start.is_none() {
                     current_word_start = Some(i);
                 }
@@ -323,6 +322,11 @@ mod tests {
             "12.34.56 12 .34 12..34 1.a2",
             "k,,k t`` T`` :^",
             "rrkSh rrk,,Sh k,,w k,,y",
+            "t`` T`` kt``a T``o",
+            "^ami :shokal shesh^",
+            "rZyab rrYa Zya kZya rZga",
+            "boi bou kOI kOU kOko kok",
+            "ami\u{00a0}bangla\u{2003}lekhi ১২.৩৪",
             "আমি kA লিখি।",
         ] {
             let tokens = transliterator.tokenize(input);

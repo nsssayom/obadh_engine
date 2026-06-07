@@ -19,18 +19,6 @@ impl TokenNumberBoundary {
 }
 
 #[inline]
-pub(super) fn next_char(text: &str, byte_index: usize, current_char_len: usize) -> Option<char> {
-    text.get(byte_index + current_char_len..)?.chars().next()
-}
-
-#[inline]
-pub(super) fn ends_with_khanda_ta_base_signal(text: &str) -> bool {
-    text.chars()
-        .next_back()
-        .is_some_and(|character| matches!(character, 't' | 'T'))
-}
-
-#[inline]
 pub(super) fn is_decimal_separator_at(
     text: &str,
     byte_index: usize,

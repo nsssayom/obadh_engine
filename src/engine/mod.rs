@@ -1,6 +1,7 @@
 //! Engine module for the Obadh transliteration system
 
 pub mod sanitizer;
+pub(crate) mod text_boundary;
 pub mod tokenizer;
 pub mod transliterator;
 

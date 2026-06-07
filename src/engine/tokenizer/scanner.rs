@@ -1,4 +1,7 @@
 use super::{Token, TokenType};
+use crate::engine::text_boundary::{
+    is_explicit_hasant_signal_at, is_khanda_ta_suffix_signal_at, is_phonetic_mark_signal,
+};
 
 pub(super) fn tokenize_text(text: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
@@ -10,10 +13,7 @@ pub(super) fn tokenize_text(text: &str) -> Vec<Token> {
         let c = text[i..].chars().next().unwrap();
         let char_len = c.len_utf8();
 
-        // Chandrabindu and visarga are phonetic mark signals. Keep them
-        // inside word tokens even when they appear standalone so
-        // tokenize_word applies the same deterministic rendering path.
-        if c == '^' || c == ':' {
+        if is_phonetic_mark_signal(c) {
             if current_word.is_empty() {
                 current_position = i;
             }
@@ -22,17 +22,13 @@ pub(super) fn tokenize_text(text: &str) -> Vec<Token> {
             continue;
         }
 
-        if !current_word.is_empty()
-            && c == '`'
-            && next_char(text, i, char_len) == Some('`')
-            && ends_with_khanda_ta_base_signal(&current_word)
-        {
+        if !current_word.is_empty() && is_khanda_ta_suffix_signal_at(c, text, i, &current_word) {
             current_word.push_str("``");
             i += 2;
             continue;
         }
 
-        if c == ',' && next_char(text, i, char_len) == Some(',') {
+        if is_explicit_hasant_signal_at(c, text, i) {
             if current_word.is_empty() {
                 current_position = i;
             }
@@ -100,14 +96,4 @@ fn push_current_word_token(word: &mut String, position: usize, tokens: &mut Vec<
         token_type,
         position,
     });
-}
-
-fn next_char(text: &str, byte_index: usize, current_char_len: usize) -> Option<char> {
-    text.get(byte_index + current_char_len..)?.chars().next()
-}
-
-fn ends_with_khanda_ta_base_signal(text: &str) -> bool {
-    text.chars()
-        .next_back()
-        .is_some_and(|c| matches!(c, 't' | 'T'))
 }
