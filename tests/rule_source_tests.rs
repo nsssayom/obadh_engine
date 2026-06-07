@@ -1,6 +1,7 @@
-use obadh_engine::definitions::{is_vowel, vowel_value};
+use obadh_engine::definitions::{diacritic_rules, diacritic_value, is_vowel, vowel_value};
 use obadh_engine::ObadhEngine;
 
+const README_DOC: &str = include_str!("../README.md");
 const VOWEL_RULES_DOC: &str = include_str!("../data/rules/vowels.md");
 
 #[test]
@@ -31,6 +32,25 @@ fn documented_lowercase_oi_ou_policy_matches_runtime_behavior() {
     let engine = ObadhEngine::new();
     assert_eq!(engine.transliterate("boi bou koi kou"), "বই বউ কই কউ");
     assert_eq!(engine.transliterate("bOI bOU kOI kOU"), "বৈ বৌ কৈ কৌ");
+}
+
+#[test]
+fn deliberate_input_contract_documents_every_diacritic_rule() {
+    let documented_signals = deliberate_input_contract_signal_cells(README_DOC);
+
+    for &(roman, expected) in diacritic_rules() {
+        assert_eq!(
+            diacritic_value(roman),
+            Some(expected),
+            "diacritic {roman:?} should be directly renderable"
+        );
+        assert!(
+            documented_signals
+                .iter()
+                .any(|signal| signal_cell_mentions(signal, roman)),
+            "runtime diacritic signal {roman:?} is missing from README deliberate input contract"
+        );
+    }
 }
 
 struct VowelTableRow<'a> {
@@ -68,4 +88,18 @@ fn documented_dependent_vowel(value: &str) -> Option<&str> {
     } else {
         Some(value)
     }
+}
+
+fn deliberate_input_contract_signal_cells(markdown: &str) -> Vec<&str> {
+    markdown
+        .lines()
+        .skip_while(|line| !line.starts_with("| Roman Signal | Bengali Rule Intent |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| line.trim_matches('|').split('|').next().map(str::trim))
+        .collect()
+}
+
+fn signal_cell_mentions(signal: &str, roman: &str) -> bool {
+    signal.contains(&format!("`{roman}`")) || signal.contains(&format!("<code>{roman}</code>"))
 }
