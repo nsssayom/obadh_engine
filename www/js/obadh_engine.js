@@ -280,9 +280,6 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).length;
             return ret;
         },
-        __wbg_log_cf2e968649f3384e: function(arg0) {
-            console.log(getObject(arg0));
-        },
         __wbg_new_227d7c05414eb861: function() {
             const ret = new Error();
             return addHeapObject(ret);

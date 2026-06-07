@@ -8,11 +8,7 @@ use crate::ObadhEngine;
 // Initialize panic hook for better error messages
 #[wasm_bindgen(start)]
 pub fn start() {
-    // Always set the panic hook - it's crucial for debugging
     console_error_panic_hook::set_once();
-
-    // Log initialization
-    web_sys::console::log_1(&"Obadh Engine WASM module initializing...".into());
 }
 
 // Helper function to get the performance object
@@ -99,7 +95,6 @@ impl ObadhaWasm {
     /// Create a new instance of the Obadh engine
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        web_sys::console::log_1(&"Creating new ObadhaWasm instance...".into());
         Self {
             engine: ObadhEngine::new(),
         }
