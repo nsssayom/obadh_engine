@@ -74,7 +74,7 @@ Bengali has its own numerals that are mapped directly from Latin numerals:
 ### Hasanta Handling
 
 - Represented in Obadh input as `,,`
-  - Signal: `k,,` → `ক্‌`
+  - Signal: `k,,` → `ক্`
 - Between consonants, `,,` is an explicit conjunct command:
   - Signal: `k,,k` → `ক্ক`
 - A trailing explicit hasant after a formed conjunct remains visible:

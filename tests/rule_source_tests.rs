@@ -10,6 +10,7 @@ const CONSONANT_RULES_DOC: &str = include_str!("../data/rules/consonants.md");
 const README_DOC: &str = include_str!("../README.md");
 const KNOWN_ISSUES_DOC: &str = include_str!("../KNOWN_ISSUES.md");
 const CONJUNCT_RULES_DOC: &str = include_str!("../data/rules/conjunct.wiki");
+const SIMPLIFIED_RULES_DOC: &str = include_str!("../data/rules/simplified_rules.md");
 const VOWEL_RULES_DOC: &str = include_str!("../data/rules/vowels.md");
 
 #[test]
@@ -52,6 +53,21 @@ fn documented_consonant_vowel_examples_match_runtime_behavior() {
             row.bengali_output,
             "documented consonant-vowel example {:?} should match runtime",
             row.roman_input
+        );
+    }
+}
+
+#[test]
+fn documented_simplified_rule_signals_match_runtime_behavior() {
+    let engine = ObadhEngine::new();
+
+    for example in documented_arrow_examples(SIMPLIFIED_RULES_DOC) {
+        assert_eq!(
+            engine.transliterate(example.roman_input),
+            example.bengali_output,
+            "documented simplified rule signal {:?} on line {} should match runtime",
+            example.roman_input,
+            example.line_number
         );
     }
 }
@@ -173,6 +189,19 @@ struct ConsonantVowelExampleRow<'a> {
     bengali_output: &'a str,
 }
 
+struct DocumentedExample<'a> {
+    line_number: usize,
+    roman_input: &'a str,
+    bengali_output: &'a str,
+}
+
+#[derive(Clone, Copy)]
+struct CodeSpan<'a> {
+    start: usize,
+    end: usize,
+    text: &'a str,
+}
+
 fn basic_consonant_table_rows(markdown: &str) -> impl Iterator<Item = ConsonantTableRow<'_>> {
     markdown
         .lines()
@@ -255,4 +284,107 @@ fn deliberate_input_contract_signal_cells(markdown: &str) -> Vec<&str> {
 
 fn signal_cell_mentions(signal: &str, roman: &str) -> bool {
     signal.contains(&format!("`{roman}`")) || signal.contains(&format!("<code>{roman}</code>"))
+}
+
+fn documented_arrow_examples(markdown: &str) -> Vec<DocumentedExample<'_>> {
+    let mut examples = Vec::new();
+
+    for (line_index, line) in markdown.lines().enumerate() {
+        let spans = code_spans(line);
+        for (arrow_index, arrow) in line.match_indices('→') {
+            let Some(output_span) = spans.iter().find(|span| span.start > arrow_index) else {
+                continue;
+            };
+
+            for input_span in connected_input_spans_before_arrow(line, &spans, arrow_index) {
+                examples.push(DocumentedExample {
+                    line_number: line_index + 1,
+                    roman_input: input_span.text,
+                    bengali_output: output_span.text,
+                });
+            }
+
+            debug_assert_eq!(arrow, "→");
+        }
+    }
+
+    examples
+}
+
+fn connected_input_spans_before_arrow<'line, 'spans>(
+    line: &'line str,
+    spans: &'spans [CodeSpan<'line>],
+    arrow_index: usize,
+) -> &'spans [CodeSpan<'line>] {
+    let Some(last_input_index) = spans
+        .iter()
+        .rposition(|span| span.end <= arrow_index && connector_text(line, span.end, arrow_index))
+    else {
+        return &[];
+    };
+
+    let mut first_input_index = last_input_index;
+    while first_input_index > 0 {
+        let previous = spans[first_input_index - 1];
+        let current = spans[first_input_index];
+        if !connector_text(line, previous.end, current.start) {
+            break;
+        }
+        first_input_index -= 1;
+    }
+
+    &spans[first_input_index..=last_input_index]
+}
+
+fn connector_text(line: &str, start: usize, end: usize) -> bool {
+    line[start..end]
+        .chars()
+        .all(|character| character.is_whitespace() || character == '/')
+}
+
+fn code_spans(line: &str) -> Vec<CodeSpan<'_>> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < line.len() {
+        let next_backtick = line[cursor..].find('`').map(|offset| cursor + offset);
+        let next_html = line[cursor..].find("<code>").map(|offset| cursor + offset);
+
+        if let Some(content_start) = next_html.filter(|&html_start| {
+            next_backtick.is_none_or(|backtick_start| html_start < backtick_start)
+        }) {
+            if let Some(content_end) = line[content_start + 6..]
+                .find("</code>")
+                .map(|offset| content_start + 6 + offset)
+            {
+                spans.push(CodeSpan {
+                    start: content_start,
+                    end: content_end + 7,
+                    text: &line[content_start + 6..content_end],
+                });
+                cursor = content_end + 7;
+                continue;
+            }
+        }
+
+        let Some(content_start) = next_backtick else {
+            break;
+        };
+        let Some(content_end) = line[content_start + 1..]
+            .find('`')
+            .map(|offset| content_start + 1 + offset)
+        else {
+            break;
+        };
+
+        spans.push(CodeSpan {
+            start: content_start,
+            end: content_end + 1,
+            text: &line[content_start + 1..content_end],
+        });
+        cursor = content_end + 1;
+    }
+
+    spans.sort_unstable_by_key(|span| span.start);
+    spans
 }
