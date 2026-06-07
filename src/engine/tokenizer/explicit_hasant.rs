@@ -1,6 +1,9 @@
 use crate::definitions::conjuncts::ConjunctDefinitions;
 
-use super::{parts::BorrowedParts, PhoneticUnit, PhoneticUnitType};
+use super::{
+    parts::{extended_is_valid, BorrowedParts},
+    PhoneticUnit, PhoneticUnitType,
+};
 
 struct ExplicitHasantChain {
     end: usize,
@@ -127,7 +130,7 @@ fn explicit_hasant_chain_next_part<'a>(
 ) -> Option<&'a str> {
     match unit.unit_type {
         PhoneticUnitType::Consonant if is_explicit_phola_marker(&unit.text) => {
-            if BorrowedParts::extended_is_valid(parts, &unit.text, conjunct_defs) {
+            if extended_is_valid(parts, &unit.text, conjunct_defs) {
                 Some(unit.text.as_str())
             } else {
                 None
@@ -135,7 +138,7 @@ fn explicit_hasant_chain_next_part<'a>(
         }
         PhoneticUnitType::Consonant => Some(unit.text.as_str()),
         PhoneticUnitType::Unknown if unit.text == "w" => {
-            if BorrowedParts::extended_is_valid(parts, "w", conjunct_defs) {
+            if extended_is_valid(parts, "w", conjunct_defs) {
                 Some("w")
             } else {
                 None

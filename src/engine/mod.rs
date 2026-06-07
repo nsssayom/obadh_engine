@@ -1,5 +1,6 @@
 //! Engine module for the Obadh transliteration system
 
+pub(crate) mod inline_parts;
 pub mod sanitizer;
 pub(crate) mod text_boundary;
 pub mod tokenizer;
