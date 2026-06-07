@@ -72,7 +72,7 @@
                 this.version = window.obadhaWasm.get_version();
                 
               // Transliterate any text that might be in the input
-              if (this.inputText.trim() !== '') {
+              if (this.inputText !== '') {
                 this.debouncedTransliterate();
                 }
               } else {
@@ -99,7 +99,7 @@
         
         setMode(newMode) {
           this.mode = newMode;
-          if (this.inputText.trim() !== '') {
+          if (this.inputText !== '') {
             this.debouncedTransliterate();
           }
         },
@@ -213,7 +213,7 @@
           }
           
           // Don't process empty input
-          if (this.inputText.trim() === '') {
+          if (this.inputText === '') {
             this.clearResult();
             return;
           }
@@ -466,7 +466,7 @@
             <textarea 
               id="input-text" 
               x-model="inputText" 
-              @input="inputText.trim() === '' ? clearResult() : debouncedTransliterate()"
+              @input="inputText === '' ? clearResult() : debouncedTransliterate()"
               class="block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-primary-500 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 resize-none"
               rows="3"
               placeholder="Type here in Roman script to transliterate to Bengali..."
@@ -482,7 +482,7 @@
               <span class="text-xs text-gray-500 dark:text-gray-400" x-show="result.performance">
                 Processing time: <span x-text="result.performance ? `${result.performance.total_ms.toFixed(2)} ms` : '0.00 ms'"></span>
               </span>
-              <div class="flex items-center ml-3" x-show="mode !== 'simple' && inputText.trim() !== ''">
+              <div class="flex items-center ml-3" x-show="mode !== 'simple' && inputText !== ''">
                 <label class="toggle-switch">
                   <input type="checkbox" @click="toggleRawOutput" :checked="showRawOutput">
                   <span class="toggle-slider"></span>

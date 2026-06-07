@@ -108,8 +108,7 @@ impl ObadhaWasm {
     /// Transliterate text from Roman to Bengali
     #[wasm_bindgen]
     pub fn transliterate(&self, text: &str) -> String {
-        // For empty text, return empty string immediately
-        if text.trim().is_empty() {
+        if text.is_empty() {
             return String::new();
         }
 
@@ -119,7 +118,7 @@ impl ObadhaWasm {
     /// Transliterate text after dropping unsupported characters
     #[wasm_bindgen]
     pub fn transliterate_lenient(&self, text: &str) -> String {
-        if text.trim().is_empty() {
+        if text.is_empty() {
             return String::new();
         }
 
@@ -133,8 +132,7 @@ impl ObadhaWasm {
         text: &str,
         options_js: JsValue,
     ) -> Result<JsValue, JsValue> {
-        // For empty text, return a basic result immediately
-        if text.trim().is_empty() {
+        if text.is_empty() {
             let empty_result = TransliterationResult {
                 input: String::new(),
                 output: String::new(),
