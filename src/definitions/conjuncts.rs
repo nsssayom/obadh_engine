@@ -899,10 +899,6 @@ const CONJUNCT_RULES: &[ConjunctRule] = &[
         value: "প্প",
     },
     ConjunctRule {
-        key: "pph",
-        value: "প্ফ",
-    },
-    ConjunctRule {
         key: "py",
         value: "প্য",
     },

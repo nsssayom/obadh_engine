@@ -352,6 +352,31 @@ fn test_source_conjunct_csv_duplicate_keys_are_intentional() {
 }
 
 #[test]
+fn test_compiled_conjunct_rules_are_source_owned_or_declared_aliases() {
+    let definitions = conjuncts();
+    let Some(csv) = source_conjunct_csv() else {
+        return;
+    };
+
+    let mut allowed_keys = BTreeSet::new();
+    for row in source_conjunct_rows(&csv) {
+        allowed_keys.insert(row.key());
+        allowed_keys.extend(declared_alias_keys_for_source_row(&row));
+    }
+
+    let unsourced_keys: Vec<_> = definitions
+        .get_all_valid_conjuncts()
+        .into_iter()
+        .filter(|key| !allowed_keys.contains(*key))
+        .collect();
+
+    assert!(
+        unsourced_keys.is_empty(),
+        "Compiled conjunct keys must come from data/conjuncts.csv or a declared deterministic alias; unsourced keys: {unsourced_keys:?}"
+    );
+}
+
+#[test]
 fn test_source_conjunct_wiki_inventory_is_represented_in_csv() {
     let Some(csv) = source_conjunct_csv() else {
         return;
@@ -505,6 +530,126 @@ fn is_conjunct_source_special_component(component: &str) -> bool {
     matches!(component, "rr" | "w")
 }
 
+fn declared_alias_keys_for_source_row(row: &SourceConjunctRow<'_>) -> BTreeSet<String> {
+    let mut keys = expand_component_alias_keys(&row.roman_components);
+    keys.extend(ksha_alias_keys(&row.roman_components));
+    keys.extend(jna_alias_keys(&row.roman_components));
+    keys.extend(nasal_ba_alias_keys(&row.roman_components));
+    keys.extend(base_ba_phola_alias_keys(&row.roman_components));
+    keys.extend(base_ya_phola_alias_keys(&row.roman_components));
+    keys
+}
+
+fn expand_component_alias_keys(components: &[&str]) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    push_component_alias_keys(&mut keys, components, 0, &mut String::new());
+    keys
+}
+
+fn push_component_alias_keys(
+    keys: &mut BTreeSet<String>,
+    components: &[&str],
+    index: usize,
+    key: &mut String,
+) {
+    let Some(component) = components.get(index) else {
+        keys.insert(key.clone());
+        return;
+    };
+
+    let original_len = key.len();
+    for alias in component_aliases(component, index) {
+        key.push_str(alias);
+        push_component_alias_keys(keys, components, index + 1, key);
+        key.truncate(original_len);
+    }
+}
+
+fn component_aliases(component: &str, index: usize) -> Vec<&str> {
+    match component {
+        "kh" => vec!["kh", "Kh", "KH"],
+        "gh" => vec!["gh", "Gh", "GH"],
+        "ch" => vec!["ch", "chh", "C", "Ch", "CH", "Chh", "CHH"],
+        "jh" => vec!["jh", "Jh", "JH"],
+        "Th" => vec!["Th", "TH"],
+        "Dh" => vec!["Dh", "DH"],
+        "f" | "ph" => vec!["f", "ph", "Ph", "PH"],
+        "bh" | "v" => vec!["bh", "Bh", "BH", "v"],
+        "j" | "J" => vec!["j", "J"],
+        "sh" | "S" => vec!["sh", "S"],
+        "Sh" => vec!["Sh", "SH"],
+        "y" if index > 0 => vec!["y", "Y"],
+        _ => vec![component],
+    }
+}
+
+fn ksha_alias_keys(components: &[&str]) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+
+    for index in 0..components.len().saturating_sub(1) {
+        if components[index] == "k" && components[index + 1] == "Sh" {
+            keys.extend(replace_component_pair(components, index, "ksh"));
+
+            if index == 0 {
+                keys.extend(replace_component_pair(components, index, "kkh"));
+            }
+        }
+    }
+
+    keys
+}
+
+fn jna_alias_keys(components: &[&str]) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+
+    for index in 0..components.len().saturating_sub(1) {
+        if matches!(components[index], "j" | "J") && components[index + 1] == "NG" {
+            keys.extend(replace_component_pair(components, index, "jn"));
+            keys.extend(replace_component_pair(components, index, "Jn"));
+        }
+    }
+
+    keys
+}
+
+fn nasal_ba_alias_keys(components: &[&str]) -> BTreeSet<String> {
+    if components.first() == Some(&"m") && components.get(1) == Some(&"w") {
+        return replace_component_pair(components, 0, "mb");
+    }
+
+    BTreeSet::new()
+}
+
+fn base_ba_phola_alias_keys(components: &[&str]) -> BTreeSet<String> {
+    if components.first() == Some(&"b") && components.get(1) == Some(&"b") {
+        return replace_component_pair(components, 0, "bw");
+    }
+
+    BTreeSet::new()
+}
+
+fn base_ya_phola_alias_keys(components: &[&str]) -> BTreeSet<String> {
+    if components.first() == Some(&"y") && components.get(1) == Some(&"y") {
+        let mut keys = replace_component_pair(components, 0, "zy");
+        keys.extend(replace_component_pair(components, 0, "zY"));
+        return keys;
+    }
+
+    BTreeSet::new()
+}
+
+fn replace_component_pair<'a>(
+    components: &[&'a str],
+    pair_start: usize,
+    replacement: &'a str,
+) -> BTreeSet<String> {
+    let mut replaced = Vec::with_capacity(components.len() - 1);
+    replaced.extend_from_slice(&components[..pair_start]);
+    replaced.push(replacement);
+    replaced.extend_from_slice(&components[pair_start + 2..]);
+    expand_component_alias_keys(&replaced)
+}
+
 fn source_component_bengali<'a>(
     row: &SourceConjunctRow<'_>,
     roman: &str,
@@ -532,6 +677,8 @@ fn test_invalid_conjuncts() {
         "hk",  // হ+ক is not a standard conjunct
         "Rw",  // w is not blindly accepted after every consonant
         "kfw", // only declared full clusters absorb the ba-phola marker
+        "pph", // প্ফ is still typeable with explicit `p,,ph`, not implicit source data
+        "pPh", // titlecase aliases do not admit unsourced implicit clusters
     ];
 
     for &input in &test_cases {
@@ -550,6 +697,14 @@ fn test_invalid_conjuncts() {
             input
         );
     }
+}
+
+#[test]
+fn test_unsourced_cluster_requires_explicit_hasant_signal() {
+    let engine = ObadhEngine::new();
+
+    assert_eq!(engine.transliterate("pph pPh"), "পফ পফ");
+    assert_eq!(engine.transliterate("p,,ph p,,Ph"), "প্ফ প্ফ");
 }
 
 /// Tests for special cases: reph (রেফ), jo-phola (য-ফলা), and bo-phola (ব-ফলা)
