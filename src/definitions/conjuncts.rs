@@ -16,1788 +16,463 @@ pub struct ConjunctDefinitions {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ConjunctRule {
-    key: &'static str,
-    value: &'static str,
+struct ConjunctRule(&'static str, &'static str);
+
+impl ConjunctRule {
+    fn key(self) -> &'static str {
+        self.0
+    }
+
+    fn value(self) -> &'static str {
+        self.1
+    }
 }
 
 const CONJUNCT_RULES: &[ConjunctRule] = &[
-    ConjunctRule {
-        key: "kk",
-        value: "ক্ক",
-    },
-    ConjunctRule {
-        key: "kT",
-        value: "ক্ট",
-    },
-    ConjunctRule {
-        key: "kTr",
-        value: "ক্ট্র",
-    },
-    ConjunctRule {
-        key: "kt",
-        value: "ক্ত",
-    },
-    ConjunctRule {
-        key: "ktr",
-        value: "ক্ত্র",
-    },
-    ConjunctRule {
-        key: "kn",
-        value: "ক্ন",
-    },
-    ConjunctRule {
-        key: "kw",
-        value: "ক্ব",
-    },
-    ConjunctRule {
-        key: "km",
-        value: "ক্ম",
-    },
-    ConjunctRule {
-        key: "ky",
-        value: "ক্য",
-    },
-    ConjunctRule {
-        key: "kY",
-        value: "ক্য",
-    },
-    ConjunctRule {
-        key: "kr",
-        value: "ক্র",
-    },
-    ConjunctRule {
-        key: "kl",
-        value: "ক্ল",
-    },
-    ConjunctRule {
-        key: "kSh",
-        value: "ক্ষ",
-    },
-    ConjunctRule {
-        key: "ksh",
-        value: "ক্ষ",
-    },
-    ConjunctRule {
-        key: "kkh",
-        value: "ক্ষ",
-    },
-    ConjunctRule {
-        key: "kShN",
-        value: "ক্ষ্ণ",
-    },
-    ConjunctRule {
-        key: "kshN",
-        value: "ক্ষ্ণ",
-    },
-    ConjunctRule {
-        key: "kkhN",
-        value: "ক্ষ্ণ",
-    },
-    ConjunctRule {
-        key: "kShw",
-        value: "ক্ষ্ব",
-    },
-    ConjunctRule {
-        key: "kshw",
-        value: "ক্ষ্ব",
-    },
-    ConjunctRule {
-        key: "kkhw",
-        value: "ক্ষ্ব",
-    },
-    ConjunctRule {
-        key: "kShm",
-        value: "ক্ষ্ম",
-    },
-    ConjunctRule {
-        key: "kshm",
-        value: "ক্ষ্ম",
-    },
-    ConjunctRule {
-        key: "kkhm",
-        value: "ক্ষ্ম",
-    },
-    ConjunctRule {
-        key: "kShy",
-        value: "ক্ষ্য",
-    },
-    ConjunctRule {
-        key: "kShY",
-        value: "ক্ষ্য",
-    },
-    ConjunctRule {
-        key: "kshy",
-        value: "ক্ষ্য",
-    },
-    ConjunctRule {
-        key: "kkhy",
-        value: "ক্ষ্য",
-    },
-    ConjunctRule {
-        key: "kkhY",
-        value: "ক্ষ্য",
-    },
-    ConjunctRule {
-        key: "kShmy",
-        value: "ক্ষ্ম্য",
-    },
-    ConjunctRule {
-        key: "kshmy",
-        value: "ক্ষ্ম্য",
-    },
-    ConjunctRule {
-        key: "kkhmy",
-        value: "ক্ষ্ম্য",
-    },
-    ConjunctRule {
-        key: "ks",
-        value: "ক্স",
-    },
-    ConjunctRule {
-        key: "khy",
-        value: "খ্য",
-    },
-    ConjunctRule {
-        key: "khY",
-        value: "খ্য",
-    },
-    ConjunctRule {
-        key: "khr",
-        value: "খ্র",
-    },
-    ConjunctRule {
-        key: "gN",
-        value: "গ্‌ণ",
-    },
-    ConjunctRule {
-        key: "gdh",
-        value: "গ্ধ",
-    },
-    ConjunctRule {
-        key: "gdhy",
-        value: "গ্ধ্য",
-    },
-    ConjunctRule {
-        key: "gdhr",
-        value: "গ্ধ্র",
-    },
-    ConjunctRule {
-        key: "gn",
-        value: "গ্ন",
-    },
-    ConjunctRule {
-        key: "gny",
-        value: "গ্ন্য",
-    },
-    ConjunctRule {
-        key: "gw",
-        value: "গ্ব",
-    },
-    ConjunctRule {
-        key: "gm",
-        value: "গ্ম",
-    },
-    ConjunctRule {
-        key: "gy",
-        value: "গ্য",
-    },
-    ConjunctRule {
-        key: "gY",
-        value: "গ্য",
-    },
-    ConjunctRule {
-        key: "gr",
-        value: "গ্র",
-    },
-    ConjunctRule {
-        key: "gry",
-        value: "গ্র্য",
-    },
-    ConjunctRule {
-        key: "gl",
-        value: "গ্ল",
-    },
-    ConjunctRule {
-        key: "ghn",
-        value: "ঘ্ন",
-    },
-    ConjunctRule {
-        key: "ghy",
-        value: "ঘ্য",
-    },
-    ConjunctRule {
-        key: "ghY",
-        value: "ঘ্য",
-    },
-    ConjunctRule {
-        key: "ghr",
-        value: "ঘ্র",
-    },
-    ConjunctRule {
-        key: "Ngk",
-        value: "ঙ্ক",
-    },
-    ConjunctRule {
-        key: "Ngkt",
-        value: "ঙ্‌ক্ত",
-    },
-    ConjunctRule {
-        key: "Ngky",
-        value: "ঙ্ক্য",
-    },
-    ConjunctRule {
-        key: "NgkY",
-        value: "ঙ্ক্য",
-    },
-    ConjunctRule {
-        key: "NgkSh",
-        value: "ঙ্ক্ষ",
-    },
-    ConjunctRule {
-        key: "Ngksh",
-        value: "ঙ্ক্ষ",
-    },
-    ConjunctRule {
-        key: "Ngkh",
-        value: "ঙ্খ",
-    },
-    ConjunctRule {
-        key: "Ngkhy",
-        value: "ঙ্খ্য",
-    },
-    ConjunctRule {
-        key: "NgkhY",
-        value: "ঙ্খ্য",
-    },
-    ConjunctRule {
-        key: "Ngg",
-        value: "ঙ্গ",
-    },
-    ConjunctRule {
-        key: "Nggy",
-        value: "ঙ্গ্য",
-    },
-    ConjunctRule {
-        key: "NggY",
-        value: "ঙ্গ্য",
-    },
-    ConjunctRule {
-        key: "Nggh",
-        value: "ঙ্ঘ",
-    },
-    ConjunctRule {
-        key: "Ngghy",
-        value: "ঙ্ঘ্য",
-    },
-    ConjunctRule {
-        key: "NgghY",
-        value: "ঙ্ঘ্য",
-    },
-    ConjunctRule {
-        key: "Ngghr",
-        value: "ঙ্ঘ্র",
-    },
-    ConjunctRule {
-        key: "Ngm",
-        value: "ঙ্ম",
-    },
-    ConjunctRule {
-        key: "cc",
-        value: "চ্চ",
-    },
-    ConjunctRule {
-        key: "cch",
-        value: "চ্ছ",
-    },
-    ConjunctRule {
-        key: "cC",
-        value: "চ্ছ",
-    },
-    ConjunctRule {
-        key: "cCh",
-        value: "চ্ছ",
-    },
-    ConjunctRule {
-        key: "cChh",
-        value: "চ্ছ",
-    },
-    ConjunctRule {
-        key: "cchw",
-        value: "চ্ছ্ব",
-    },
-    ConjunctRule {
-        key: "cCw",
-        value: "চ্ছ্ব",
-    },
-    ConjunctRule {
-        key: "cChw",
-        value: "চ্ছ্ব",
-    },
-    ConjunctRule {
-        key: "cChhw",
-        value: "চ্ছ্ব",
-    },
-    ConjunctRule {
-        key: "cchr",
-        value: "চ্ছ্র",
-    },
-    ConjunctRule {
-        key: "cCr",
-        value: "চ্ছ্র",
-    },
-    ConjunctRule {
-        key: "cChr",
-        value: "চ্ছ্র",
-    },
-    ConjunctRule {
-        key: "cChhr",
-        value: "চ্ছ্র",
-    },
-    ConjunctRule {
-        key: "cNG",
-        value: "চ্ঞ",
-    },
-    ConjunctRule {
-        key: "cw",
-        value: "চ্ব",
-    },
-    ConjunctRule {
-        key: "cy",
-        value: "চ্য",
-    },
-    ConjunctRule {
-        key: "cY",
-        value: "চ্য",
-    },
-    ConjunctRule {
-        key: "jj",
-        value: "জ্জ",
-    },
-    ConjunctRule {
-        key: "Jj",
-        value: "জ্জ",
-    },
-    ConjunctRule {
-        key: "jJ",
-        value: "জ্জ",
-    },
-    ConjunctRule {
-        key: "JJ",
-        value: "জ্জ",
-    },
-    ConjunctRule {
-        key: "jjw",
-        value: "জ্জ্ব",
-    },
-    ConjunctRule {
-        key: "Jjw",
-        value: "জ্জ্ব",
-    },
-    ConjunctRule {
-        key: "jJw",
-        value: "জ্জ্ব",
-    },
-    ConjunctRule {
-        key: "JJw",
-        value: "জ্জ্ব",
-    },
-    ConjunctRule {
-        key: "jjh",
-        value: "জ্ঝ",
-    },
-    ConjunctRule {
-        key: "Jjh",
-        value: "জ্ঝ",
-    },
-    ConjunctRule {
-        key: "jNG",
-        value: "জ্ঞ",
-    },
-    ConjunctRule {
-        key: "JNG",
-        value: "জ্ঞ",
-    },
-    ConjunctRule {
-        key: "jn",
-        value: "জ্ঞ",
-    },
-    ConjunctRule {
-        key: "Jn",
-        value: "জ্ঞ",
-    },
-    ConjunctRule {
-        key: "jw",
-        value: "জ্ব",
-    },
-    ConjunctRule {
-        key: "Jw",
-        value: "জ্ব",
-    },
-    ConjunctRule {
-        key: "jy",
-        value: "জ্য",
-    },
-    ConjunctRule {
-        key: "Jy",
-        value: "জ্য",
-    },
-    ConjunctRule {
-        key: "jY",
-        value: "জ্য",
-    },
-    ConjunctRule {
-        key: "JY",
-        value: "জ্য",
-    },
-    ConjunctRule {
-        key: "jr",
-        value: "জ্র",
-    },
-    ConjunctRule {
-        key: "Jr",
-        value: "জ্র",
-    },
-    ConjunctRule {
-        key: "NGc",
-        value: "ঞ্চ",
-    },
-    ConjunctRule {
-        key: "NGch",
-        value: "ঞ্ছ",
-    },
-    ConjunctRule {
-        key: "NGj",
-        value: "ঞ্জ",
-    },
-    ConjunctRule {
-        key: "NGJ",
-        value: "ঞ্জ",
-    },
-    ConjunctRule {
-        key: "NGjh",
-        value: "ঞ্ঝ",
-    },
-    ConjunctRule {
-        key: "TT",
-        value: "ট্ট",
-    },
-    ConjunctRule {
-        key: "Tw",
-        value: "ট্ব",
-    },
-    ConjunctRule {
-        key: "Tm",
-        value: "ট্ম",
-    },
-    ConjunctRule {
-        key: "Ty",
-        value: "ট্য",
-    },
-    ConjunctRule {
-        key: "TY",
-        value: "ট্য",
-    },
-    ConjunctRule {
-        key: "Tr",
-        value: "ট্র",
-    },
-    ConjunctRule {
-        key: "DD",
-        value: "ড্ড",
-    },
-    ConjunctRule {
-        key: "Dw",
-        value: "ড্ব",
-    },
-    ConjunctRule {
-        key: "Dm",
-        value: "ড্ম",
-    },
-    ConjunctRule {
-        key: "Dy",
-        value: "ড্য",
-    },
-    ConjunctRule {
-        key: "DY",
-        value: "ড্য",
-    },
-    ConjunctRule {
-        key: "Dr",
-        value: "ড্র",
-    },
-    ConjunctRule {
-        key: "Rg",
-        value: "ড়্গ",
-    },
-    ConjunctRule {
-        key: "Dhy",
-        value: "ঢ্য",
-    },
-    ConjunctRule {
-        key: "DhY",
-        value: "ঢ্য",
-    },
-    ConjunctRule {
-        key: "Dhr",
-        value: "ঢ্র",
-    },
-    ConjunctRule {
-        key: "NT",
-        value: "ণ্ট",
-    },
-    ConjunctRule {
-        key: "NTh",
-        value: "ণ্ঠ",
-    },
-    ConjunctRule {
-        key: "NThy",
-        value: "ণ্ঠ্য",
-    },
-    ConjunctRule {
-        key: "NThY",
-        value: "ণ্ঠ্য",
-    },
-    ConjunctRule {
-        key: "ND",
-        value: "ণ্ড",
-    },
-    ConjunctRule {
-        key: "NDy",
-        value: "ণ্ড্য",
-    },
-    ConjunctRule {
-        key: "NDY",
-        value: "ণ্ড্য",
-    },
-    ConjunctRule {
-        key: "NDr",
-        value: "ণ্ড্র",
-    },
-    ConjunctRule {
-        key: "NDh",
-        value: "ণ্ঢ",
-    },
-    ConjunctRule {
-        key: "NN",
-        value: "ণ্ণ",
-    },
-    ConjunctRule {
-        key: "Nw",
-        value: "ণ্ব",
-    },
-    ConjunctRule {
-        key: "Nm",
-        value: "ণ্ম",
-    },
-    ConjunctRule {
-        key: "Ny",
-        value: "ণ্য",
-    },
-    ConjunctRule {
-        key: "NY",
-        value: "ণ্য",
-    },
-    ConjunctRule {
-        key: "tk",
-        value: "ৎক",
-    },
-    ConjunctRule {
-        key: "tkh",
-        value: "ৎখ",
-    },
-    ConjunctRule {
-        key: "tt",
-        value: "ত্ত",
-    },
-    ConjunctRule {
-        key: "ttr",
-        value: "ত্ত্র",
-    },
-    ConjunctRule {
-        key: "ttw",
-        value: "ত্ত্ব",
-    },
-    ConjunctRule {
-        key: "tty",
-        value: "ত্ত্য",
-    },
-    ConjunctRule {
-        key: "ttY",
-        value: "ত্ত্য",
-    },
-    ConjunctRule {
-        key: "tth",
-        value: "ত্থ",
-    },
-    ConjunctRule {
-        key: "tn",
-        value: "ত্ন",
-    },
-    ConjunctRule {
-        key: "tp",
-        value: "ৎপ",
-    },
-    ConjunctRule {
-        key: "tw",
-        value: "ত্ব",
-    },
-    ConjunctRule {
-        key: "tm",
-        value: "ত্ম",
-    },
-    ConjunctRule {
-        key: "tmy",
-        value: "ত্ম্য",
-    },
-    ConjunctRule {
-        key: "ty",
-        value: "ত্য",
-    },
-    ConjunctRule {
-        key: "tY",
-        value: "ত্য",
-    },
-    ConjunctRule {
-        key: "tr",
-        value: "ত্র",
-    },
-    ConjunctRule {
-        key: "try",
-        value: "ত্র্য",
-    },
-    ConjunctRule {
-        key: "tl",
-        value: "ৎল",
-    },
-    ConjunctRule {
-        key: "ts",
-        value: "ৎস",
-    },
-    ConjunctRule {
-        key: "thw",
-        value: "থ্ব",
-    },
-    ConjunctRule {
-        key: "thy",
-        value: "থ্য",
-    },
-    ConjunctRule {
-        key: "thY",
-        value: "থ্য",
-    },
-    ConjunctRule {
-        key: "thr",
-        value: "থ্র",
-    },
-    ConjunctRule {
-        key: "dg",
-        value: "দ্গ",
-    },
-    ConjunctRule {
-        key: "dgh",
-        value: "দ্ঘ",
-    },
-    ConjunctRule {
-        key: "dd",
-        value: "দ্দ",
-    },
-    ConjunctRule {
-        key: "ddw",
-        value: "দ্দ্ব",
-    },
-    ConjunctRule {
-        key: "ddh",
-        value: "দ্ধ",
-    },
-    ConjunctRule {
-        key: "dw",
-        value: "দ্ব",
-    },
-    ConjunctRule {
-        key: "dbh",
-        value: "দ্ভ",
-    },
-    ConjunctRule {
-        key: "dv",
-        value: "দ্ভ",
-    },
-    ConjunctRule {
-        key: "dbhr",
-        value: "দ্ভ্র",
-    },
-    ConjunctRule {
-        key: "dvr",
-        value: "দ্ভ্র",
-    },
-    ConjunctRule {
-        key: "dm",
-        value: "দ্ম",
-    },
-    ConjunctRule {
-        key: "dy",
-        value: "দ্য",
-    },
-    ConjunctRule {
-        key: "dY",
-        value: "দ্য",
-    },
-    ConjunctRule {
-        key: "dr",
-        value: "দ্র",
-    },
-    ConjunctRule {
-        key: "dry",
-        value: "দ্র্য",
-    },
-    ConjunctRule {
-        key: "dhn",
-        value: "ধ্ন",
-    },
-    ConjunctRule {
-        key: "dhw",
-        value: "ধ্ব",
-    },
-    ConjunctRule {
-        key: "dhm",
-        value: "ধ্ম",
-    },
-    ConjunctRule {
-        key: "dhy",
-        value: "ধ্য",
-    },
-    ConjunctRule {
-        key: "dhY",
-        value: "ধ্য",
-    },
-    ConjunctRule {
-        key: "dhr",
-        value: "ধ্র",
-    },
-    ConjunctRule {
-        key: "nT",
-        value: "ন্ট",
-    },
-    ConjunctRule {
-        key: "nTr",
-        value: "ন্ট্র",
-    },
-    ConjunctRule {
-        key: "nTh",
-        value: "ন্ঠ",
-    },
-    ConjunctRule {
-        key: "nD",
-        value: "ন্ড",
-    },
-    ConjunctRule {
-        key: "nDr",
-        value: "ন্ড্র",
-    },
-    ConjunctRule {
-        key: "nt",
-        value: "ন্ত",
-    },
-    ConjunctRule {
-        key: "ntw",
-        value: "ন্ত্ব",
-    },
-    ConjunctRule {
-        key: "nty",
-        value: "ন্ত্য",
-    },
-    ConjunctRule {
-        key: "ntY",
-        value: "ন্ত্য",
-    },
-    ConjunctRule {
-        key: "ntr",
-        value: "ন্ত্র",
-    },
-    ConjunctRule {
-        key: "ntry",
-        value: "ন্ত্র্য",
-    },
-    ConjunctRule {
-        key: "nth",
-        value: "ন্থ",
-    },
-    ConjunctRule {
-        key: "nthr",
-        value: "ন্থ্র",
-    },
-    ConjunctRule {
-        key: "nd",
-        value: "ন্দ",
-    },
-    ConjunctRule {
-        key: "ndy",
-        value: "ন্দ্য",
-    },
-    ConjunctRule {
-        key: "ndY",
-        value: "ন্দ্য",
-    },
-    ConjunctRule {
-        key: "ndw",
-        value: "ন্দ্ব",
-    },
-    ConjunctRule {
-        key: "ndr",
-        value: "ন্দ্র",
-    },
-    ConjunctRule {
-        key: "ndh",
-        value: "ন্ধ",
-    },
-    ConjunctRule {
-        key: "ndhy",
-        value: "ন্ধ্য",
-    },
-    ConjunctRule {
-        key: "ndhY",
-        value: "ন্ধ্য",
-    },
-    ConjunctRule {
-        key: "ndhr",
-        value: "ন্ধ্র",
-    },
-    ConjunctRule {
-        key: "nn",
-        value: "ন্ন",
-    },
-    ConjunctRule {
-        key: "nw",
-        value: "ন্ব",
-    },
-    ConjunctRule {
-        key: "nm",
-        value: "ন্ম",
-    },
-    ConjunctRule {
-        key: "ny",
-        value: "ন্য",
-    },
-    ConjunctRule {
-        key: "nY",
-        value: "ন্য",
-    },
-    ConjunctRule {
-        key: "pT",
-        value: "প্ট",
-    },
-    ConjunctRule {
-        key: "pt",
-        value: "প্ত",
-    },
-    ConjunctRule {
-        key: "pn",
-        value: "প্ন",
-    },
-    ConjunctRule {
-        key: "pp",
-        value: "প্প",
-    },
-    ConjunctRule {
-        key: "py",
-        value: "প্য",
-    },
-    ConjunctRule {
-        key: "pY",
-        value: "প্য",
-    },
-    ConjunctRule {
-        key: "pr",
-        value: "প্র",
-    },
-    ConjunctRule {
-        key: "pry",
-        value: "প্র্য",
-    },
-    ConjunctRule {
-        key: "pl",
-        value: "প্ল",
-    },
-    ConjunctRule {
-        key: "ps",
-        value: "প্স",
-    },
-    ConjunctRule {
-        key: "fr",
-        value: "ফ্র",
-    },
-    ConjunctRule {
-        key: "phr",
-        value: "ফ্র",
-    },
-    ConjunctRule {
-        key: "fl",
-        value: "ফ্ল",
-    },
-    ConjunctRule {
-        key: "phl",
-        value: "ফ্ল",
-    },
-    ConjunctRule {
-        key: "bj",
-        value: "ব্জ",
-    },
-    ConjunctRule {
-        key: "bJ",
-        value: "ব্জ",
-    },
-    ConjunctRule {
-        key: "bd",
-        value: "ব্দ",
-    },
-    ConjunctRule {
-        key: "bdh",
-        value: "ব্ধ",
-    },
-    ConjunctRule {
-        key: "bb",
-        value: "ব্ব",
-    },
-    ConjunctRule {
-        key: "bw",
-        value: "ব্ব",
-    },
-    ConjunctRule {
-        key: "by",
-        value: "ব্য",
-    },
-    ConjunctRule {
-        key: "bY",
-        value: "ব্য",
-    },
-    ConjunctRule {
-        key: "br",
-        value: "ব্র",
-    },
-    ConjunctRule {
-        key: "bl",
-        value: "ব্ল",
-    },
-    ConjunctRule {
-        key: "bhw",
-        value: "ভ্ব",
-    },
-    ConjunctRule {
-        key: "vw",
-        value: "ভ্ব",
-    },
-    ConjunctRule {
-        key: "bhy",
-        value: "ভ্য",
-    },
-    ConjunctRule {
-        key: "bhY",
-        value: "ভ্য",
-    },
-    ConjunctRule {
-        key: "vy",
-        value: "ভ্য",
-    },
-    ConjunctRule {
-        key: "vY",
-        value: "ভ্য",
-    },
-    ConjunctRule {
-        key: "bhr",
-        value: "ভ্র",
-    },
-    ConjunctRule {
-        key: "vr",
-        value: "ভ্র",
-    },
-    ConjunctRule {
-        key: "bhl",
-        value: "ভ্ল",
-    },
-    ConjunctRule {
-        key: "vl",
-        value: "ভ্ল",
-    },
-    ConjunctRule {
-        key: "mn",
-        value: "ম্ন",
-    },
-    ConjunctRule {
-        key: "mp",
-        value: "ম্প",
-    },
-    ConjunctRule {
-        key: "mpr",
-        value: "ম্প্র",
-    },
-    ConjunctRule {
-        key: "mf",
-        value: "ম্ফ",
-    },
-    ConjunctRule {
-        key: "mph",
-        value: "ম্ফ",
-    },
-    ConjunctRule {
-        key: "mw",
-        value: "ম্ব",
-    },
-    ConjunctRule {
-        key: "mb",
-        value: "ম্ব",
-    },
-    ConjunctRule {
-        key: "mwr",
-        value: "ম্ব্র",
-    },
-    ConjunctRule {
-        key: "mbr",
-        value: "ম্ব্র",
-    },
-    ConjunctRule {
-        key: "mbh",
-        value: "ম্ভ",
-    },
-    ConjunctRule {
-        key: "mv",
-        value: "ম্ভ",
-    },
-    ConjunctRule {
-        key: "mbhr",
-        value: "ম্ভ্র",
-    },
-    ConjunctRule {
-        key: "mvr",
-        value: "ম্ভ্র",
-    },
-    ConjunctRule {
-        key: "mm",
-        value: "ম্ম",
-    },
-    ConjunctRule {
-        key: "my",
-        value: "ম্য",
-    },
-    ConjunctRule {
-        key: "mY",
-        value: "ম্য",
-    },
-    ConjunctRule {
-        key: "mr",
-        value: "ম্র",
-    },
-    ConjunctRule {
-        key: "ml",
-        value: "ম্ল",
-    },
-    ConjunctRule {
-        key: "yy",
-        value: "য্য",
-    },
-    ConjunctRule {
-        key: "zy",
-        value: "য্য",
-    },
-    ConjunctRule {
-        key: "zY",
-        value: "য্য",
-    },
-    ConjunctRule {
-        key: "rrk",
-        value: "র্ক",
-    },
-    ConjunctRule {
-        key: "rrky",
-        value: "র্ক্য",
-    },
-    ConjunctRule {
-        key: "rrkY",
-        value: "র্ক্য",
-    },
-    ConjunctRule {
-        key: "rrg",
-        value: "র্গ",
-    },
-    ConjunctRule {
-        key: "rrgy",
-        value: "র্গ্য",
-    },
-    ConjunctRule {
-        key: "rrgY",
-        value: "র্গ্য",
-    },
-    ConjunctRule {
-        key: "rrghy",
-        value: "র্ঘ্য",
-    },
-    ConjunctRule {
-        key: "rrghY",
-        value: "র্ঘ্য",
-    },
-    ConjunctRule {
-        key: "rrNgg",
-        value: "র্ঙ্গ",
-    },
-    ConjunctRule {
-        key: "rrcy",
-        value: "র্চ্য",
-    },
-    ConjunctRule {
-        key: "rrcY",
-        value: "র্চ্য",
-    },
-    ConjunctRule {
-        key: "rrjy",
-        value: "র্জ্য",
-    },
-    ConjunctRule {
-        key: "rrjY",
-        value: "র্জ্য",
-    },
-    ConjunctRule {
-        key: "rrJy",
-        value: "র্জ্য",
-    },
-    ConjunctRule {
-        key: "rrJY",
-        value: "র্জ্য",
-    },
-    ConjunctRule {
-        key: "rrjj",
-        value: "র্জ্জ",
-    },
-    ConjunctRule {
-        key: "rrjJ",
-        value: "র্জ্জ",
-    },
-    ConjunctRule {
-        key: "rrJj",
-        value: "র্জ্জ",
-    },
-    ConjunctRule {
-        key: "rrJJ",
-        value: "র্জ্জ",
-    },
-    ConjunctRule {
-        key: "rrjNG",
-        value: "র্জ্ঞ",
-    },
-    ConjunctRule {
-        key: "rrJNG",
-        value: "র্জ্ঞ",
-    },
-    ConjunctRule {
-        key: "rrjn",
-        value: "র্জ্ঞ",
-    },
-    ConjunctRule {
-        key: "rrJn",
-        value: "র্জ্ঞ",
-    },
-    ConjunctRule {
-        key: "rrNy",
-        value: "র্ণ্য",
-    },
-    ConjunctRule {
-        key: "rrNY",
-        value: "র্ণ্য",
-    },
-    ConjunctRule {
-        key: "rrty",
-        value: "র্ত্য",
-    },
-    ConjunctRule {
-        key: "rrtY",
-        value: "র্ত্য",
-    },
-    ConjunctRule {
-        key: "rrthy",
-        value: "র্থ্য",
-    },
-    ConjunctRule {
-        key: "rrthY",
-        value: "র্থ্য",
-    },
-    ConjunctRule {
-        key: "rrwy",
-        value: "র্ব্য",
-    },
-    ConjunctRule {
-        key: "rrwY",
-        value: "র্ব্য",
-    },
-    ConjunctRule {
-        key: "rrmy",
-        value: "র্ম্য",
-    },
-    ConjunctRule {
-        key: "rrmY",
-        value: "র্ম্য",
-    },
-    ConjunctRule {
-        key: "rrshy",
-        value: "র্শ্য",
-    },
-    ConjunctRule {
-        key: "rrshY",
-        value: "র্শ্য",
-    },
-    ConjunctRule {
-        key: "rrSy",
-        value: "র্শ্য",
-    },
-    ConjunctRule {
-        key: "rrSY",
-        value: "র্শ্য",
-    },
-    ConjunctRule {
-        key: "rrShy",
-        value: "র্ষ্য",
-    },
-    ConjunctRule {
-        key: "rrShY",
-        value: "র্ষ্য",
-    },
-    ConjunctRule {
-        key: "rrhy",
-        value: "র্হ্য",
-    },
-    ConjunctRule {
-        key: "rrhY",
-        value: "র্হ্য",
-    },
-    ConjunctRule {
-        key: "rrkh",
-        value: "র্খ",
-    },
-    ConjunctRule {
-        key: "rrgr",
-        value: "র্গ্র",
-    },
-    ConjunctRule {
-        key: "rrgh",
-        value: "র্ঘ",
-    },
-    ConjunctRule {
-        key: "rrc",
-        value: "র্চ",
-    },
-    ConjunctRule {
-        key: "rrch",
-        value: "র্ছ",
-    },
-    ConjunctRule {
-        key: "rrj",
-        value: "র্জ",
-    },
-    ConjunctRule {
-        key: "rrJ",
-        value: "র্জ",
-    },
-    ConjunctRule {
-        key: "rrjh",
-        value: "র্ঝ",
-    },
-    ConjunctRule {
-        key: "rrT",
-        value: "র্ট",
-    },
-    ConjunctRule {
-        key: "rrD",
-        value: "র্ড",
-    },
-    ConjunctRule {
-        key: "rrN",
-        value: "র্ণ",
-    },
-    ConjunctRule {
-        key: "rrt",
-        value: "র্ত",
-    },
-    ConjunctRule {
-        key: "rrtm",
-        value: "র্ত্ম",
-    },
-    ConjunctRule {
-        key: "rrtr",
-        value: "র্ত্র",
-    },
-    ConjunctRule {
-        key: "rrth",
-        value: "র্থ",
-    },
-    ConjunctRule {
-        key: "rrd",
-        value: "র্দ",
-    },
-    ConjunctRule {
-        key: "rrdw",
-        value: "র্দ্ব",
-    },
-    ConjunctRule {
-        key: "rrdr",
-        value: "র্দ্র",
-    },
-    ConjunctRule {
-        key: "rrdh",
-        value: "র্ধ",
-    },
-    ConjunctRule {
-        key: "rrdhw",
-        value: "র্ধ্ব",
-    },
-    ConjunctRule {
-        key: "rrn",
-        value: "র্ন",
-    },
-    ConjunctRule {
-        key: "rrp",
-        value: "র্প",
-    },
-    ConjunctRule {
-        key: "rrf",
-        value: "র্ফ",
-    },
-    ConjunctRule {
-        key: "rrph",
-        value: "র্ফ",
-    },
-    ConjunctRule {
-        key: "rrw",
-        value: "র্ব",
-    },
-    ConjunctRule {
-        key: "rrbh",
-        value: "র্ভ",
-    },
-    ConjunctRule {
-        key: "rrv",
-        value: "র্ভ",
-    },
-    ConjunctRule {
-        key: "rrm",
-        value: "র্ম",
-    },
-    ConjunctRule {
-        key: "rry",
-        value: "র্য",
-    },
-    ConjunctRule {
-        key: "rrY",
-        value: "র্য",
-    },
-    ConjunctRule {
-        key: "rrl",
-        value: "র্ল",
-    },
-    ConjunctRule {
-        key: "rrsh",
-        value: "র্শ",
-    },
-    ConjunctRule {
-        key: "rrS",
-        value: "র্শ",
-    },
-    ConjunctRule {
-        key: "rrshw",
-        value: "র্শ্ব",
-    },
-    ConjunctRule {
-        key: "rrSw",
-        value: "র্শ্ব",
-    },
-    ConjunctRule {
-        key: "rrSh",
-        value: "র্ষ",
-    },
-    ConjunctRule {
-        key: "rrShT",
-        value: "র্ষ্ট",
-    },
-    ConjunctRule {
-        key: "rrShN",
-        value: "র্ষ্ণ",
-    },
-    ConjunctRule {
-        key: "rrShNy",
-        value: "র্ষ্ণ্য",
-    },
-    ConjunctRule {
-        key: "rrShNY",
-        value: "র্ষ্ণ্য",
-    },
-    ConjunctRule {
-        key: "rrs",
-        value: "র্স",
-    },
-    ConjunctRule {
-        key: "rrh",
-        value: "র্হ",
-    },
-    ConjunctRule {
-        key: "rrDhy",
-        value: "র্ঢ্য",
-    },
-    ConjunctRule {
-        key: "rrDhY",
-        value: "র্ঢ্য",
-    },
-    ConjunctRule {
-        key: "lk",
-        value: "ল্ক",
-    },
-    ConjunctRule {
-        key: "lky",
-        value: "ল্ক্য",
-    },
-    ConjunctRule {
-        key: "lkY",
-        value: "ল্ক্য",
-    },
-    ConjunctRule {
-        key: "lg",
-        value: "ল্গ",
-    },
-    ConjunctRule {
-        key: "lT",
-        value: "ল্ট",
-    },
-    ConjunctRule {
-        key: "lD",
-        value: "ল্ড",
-    },
-    ConjunctRule {
-        key: "lp",
-        value: "ল্প",
-    },
-    ConjunctRule {
-        key: "lf",
-        value: "ল্ফ",
-    },
-    ConjunctRule {
-        key: "lph",
-        value: "ল্ফ",
-    },
-    ConjunctRule {
-        key: "lw",
-        value: "ল্ব",
-    },
-    ConjunctRule {
-        key: "lbh",
-        value: "ল্ভ",
-    },
-    ConjunctRule {
-        key: "lv",
-        value: "ল্ভ",
-    },
-    ConjunctRule {
-        key: "lm",
-        value: "ল্ম",
-    },
-    ConjunctRule {
-        key: "ly",
-        value: "ল্য",
-    },
-    ConjunctRule {
-        key: "lY",
-        value: "ল্য",
-    },
-    ConjunctRule {
-        key: "ll",
-        value: "ল্ল",
-    },
-    ConjunctRule {
-        key: "shc",
-        value: "শ্চ",
-    },
-    ConjunctRule {
-        key: "Sc",
-        value: "শ্চ",
-    },
-    ConjunctRule {
-        key: "shch",
-        value: "শ্ছ",
-    },
-    ConjunctRule {
-        key: "Sch",
-        value: "শ্ছ",
-    },
-    ConjunctRule {
-        key: "shn",
-        value: "শ্ন",
-    },
-    ConjunctRule {
-        key: "Sn",
-        value: "শ্ন",
-    },
-    ConjunctRule {
-        key: "shw",
-        value: "শ্ব",
-    },
-    ConjunctRule {
-        key: "Sw",
-        value: "শ্ব",
-    },
-    ConjunctRule {
-        key: "shm",
-        value: "শ্ম",
-    },
-    ConjunctRule {
-        key: "Sm",
-        value: "শ্ম",
-    },
-    ConjunctRule {
-        key: "shy",
-        value: "শ্য",
-    },
-    ConjunctRule {
-        key: "shY",
-        value: "শ্য",
-    },
-    ConjunctRule {
-        key: "Sy",
-        value: "শ্য",
-    },
-    ConjunctRule {
-        key: "SY",
-        value: "শ্য",
-    },
-    ConjunctRule {
-        key: "shr",
-        value: "শ্র",
-    },
-    ConjunctRule {
-        key: "Sr",
-        value: "শ্র",
-    },
-    ConjunctRule {
-        key: "shl",
-        value: "শ্ল",
-    },
-    ConjunctRule {
-        key: "Sl",
-        value: "শ্ল",
-    },
-    ConjunctRule {
-        key: "Shk",
-        value: "ষ্ক",
-    },
-    ConjunctRule {
-        key: "Shkw",
-        value: "ষ্ক্ব",
-    },
-    ConjunctRule {
-        key: "Shkr",
-        value: "ষ্ক্র",
-    },
-    ConjunctRule {
-        key: "ShT",
-        value: "ষ্ট",
-    },
-    ConjunctRule {
-        key: "ShTy",
-        value: "ষ্ট্য",
-    },
-    ConjunctRule {
-        key: "ShTY",
-        value: "ষ্ট্য",
-    },
-    ConjunctRule {
-        key: "ShTr",
-        value: "ষ্ট্র",
-    },
-    ConjunctRule {
-        key: "ShTh",
-        value: "ষ্ঠ",
-    },
-    ConjunctRule {
-        key: "ShThy",
-        value: "ষ্ঠ্য",
-    },
-    ConjunctRule {
-        key: "ShThY",
-        value: "ষ্ঠ্য",
-    },
-    ConjunctRule {
-        key: "ShN",
-        value: "ষ্ণ",
-    },
-    ConjunctRule {
-        key: "ShNw",
-        value: "ষ্ণ্ব",
-    },
-    ConjunctRule {
-        key: "Shp",
-        value: "ষ্প",
-    },
-    ConjunctRule {
-        key: "Shpr",
-        value: "ষ্প্র",
-    },
-    ConjunctRule {
-        key: "Shf",
-        value: "ষ্ফ",
-    },
-    ConjunctRule {
-        key: "Shph",
-        value: "ষ্ফ",
-    },
-    ConjunctRule {
-        key: "Shw",
-        value: "ষ্ব",
-    },
-    ConjunctRule {
-        key: "Shm",
-        value: "ষ্ম",
-    },
-    ConjunctRule {
-        key: "Shy",
-        value: "ষ্য",
-    },
-    ConjunctRule {
-        key: "ShY",
-        value: "ষ্য",
-    },
-    ConjunctRule {
-        key: "sk",
-        value: "স্ক",
-    },
-    ConjunctRule {
-        key: "skr",
-        value: "স্ক্র",
-    },
-    ConjunctRule {
-        key: "skh",
-        value: "স্খ",
-    },
-    ConjunctRule {
-        key: "sT",
-        value: "স্ট",
-    },
-    ConjunctRule {
-        key: "sTr",
-        value: "স্ট্র",
-    },
-    ConjunctRule {
-        key: "st",
-        value: "স্ত",
-    },
-    ConjunctRule {
-        key: "stw",
-        value: "স্ত্ব",
-    },
-    ConjunctRule {
-        key: "sty",
-        value: "স্ত্য",
-    },
-    ConjunctRule {
-        key: "stY",
-        value: "স্ত্য",
-    },
-    ConjunctRule {
-        key: "str",
-        value: "স্ত্র",
-    },
-    ConjunctRule {
-        key: "sth",
-        value: "স্থ",
-    },
-    ConjunctRule {
-        key: "sthy",
-        value: "স্থ্য",
-    },
-    ConjunctRule {
-        key: "sthY",
-        value: "স্থ্য",
-    },
-    ConjunctRule {
-        key: "sn",
-        value: "স্ন",
-    },
-    ConjunctRule {
-        key: "sny",
-        value: "স্ন্য",
-    },
-    ConjunctRule {
-        key: "snY",
-        value: "স্ন্য",
-    },
-    ConjunctRule {
-        key: "sp",
-        value: "স্প",
-    },
-    ConjunctRule {
-        key: "spr",
-        value: "স্প্র",
-    },
-    ConjunctRule {
-        key: "spl",
-        value: "স্প্‌ল",
-    },
-    ConjunctRule {
-        key: "sf",
-        value: "স্ফ",
-    },
-    ConjunctRule {
-        key: "sph",
-        value: "স্ফ",
-    },
-    ConjunctRule {
-        key: "sw",
-        value: "স্ব",
-    },
-    ConjunctRule {
-        key: "sm",
-        value: "স্ম",
-    },
-    ConjunctRule {
-        key: "sy",
-        value: "স্য",
-    },
-    ConjunctRule {
-        key: "sY",
-        value: "স্য",
-    },
-    ConjunctRule {
-        key: "sr",
-        value: "স্র",
-    },
-    ConjunctRule {
-        key: "sl",
-        value: "স্ল",
-    },
-    ConjunctRule {
-        key: "hN",
-        value: "হ্ণ",
-    },
-    ConjunctRule {
-        key: "hn",
-        value: "হ্ন",
-    },
-    ConjunctRule {
-        key: "hw",
-        value: "হ্ব",
-    },
-    ConjunctRule {
-        key: "hm",
-        value: "হ্ম",
-    },
-    ConjunctRule {
-        key: "hy",
-        value: "হ্য",
-    },
-    ConjunctRule {
-        key: "hY",
-        value: "হ্য",
-    },
-    ConjunctRule {
-        key: "hr",
-        value: "হ্র",
-    },
-    ConjunctRule {
-        key: "hl",
-        value: "হ্ল",
-    },
+    ConjunctRule("kk", "ক্ক"),
+    ConjunctRule("kT", "ক্ট"),
+    ConjunctRule("kTr", "ক্ট্র"),
+    ConjunctRule("kt", "ক্ত"),
+    ConjunctRule("ktr", "ক্ত্র"),
+    ConjunctRule("kn", "ক্ন"),
+    ConjunctRule("kw", "ক্ব"),
+    ConjunctRule("km", "ক্ম"),
+    ConjunctRule("ky", "ক্য"),
+    ConjunctRule("kY", "ক্য"),
+    ConjunctRule("kr", "ক্র"),
+    ConjunctRule("kl", "ক্ল"),
+    ConjunctRule("kSh", "ক্ষ"),
+    ConjunctRule("ksh", "ক্ষ"),
+    ConjunctRule("kkh", "ক্ষ"),
+    ConjunctRule("kShN", "ক্ষ্ণ"),
+    ConjunctRule("kshN", "ক্ষ্ণ"),
+    ConjunctRule("kkhN", "ক্ষ্ণ"),
+    ConjunctRule("kShw", "ক্ষ্ব"),
+    ConjunctRule("kshw", "ক্ষ্ব"),
+    ConjunctRule("kkhw", "ক্ষ্ব"),
+    ConjunctRule("kShm", "ক্ষ্ম"),
+    ConjunctRule("kshm", "ক্ষ্ম"),
+    ConjunctRule("kkhm", "ক্ষ্ম"),
+    ConjunctRule("kShy", "ক্ষ্য"),
+    ConjunctRule("kShY", "ক্ষ্য"),
+    ConjunctRule("kshy", "ক্ষ্য"),
+    ConjunctRule("kkhy", "ক্ষ্য"),
+    ConjunctRule("kkhY", "ক্ষ্য"),
+    ConjunctRule("kShmy", "ক্ষ্ম্য"),
+    ConjunctRule("kshmy", "ক্ষ্ম্য"),
+    ConjunctRule("kkhmy", "ক্ষ্ম্য"),
+    ConjunctRule("ks", "ক্স"),
+    ConjunctRule("khy", "খ্য"),
+    ConjunctRule("khY", "খ্য"),
+    ConjunctRule("khr", "খ্র"),
+    ConjunctRule("gN", "গ্‌ণ"),
+    ConjunctRule("gdh", "গ্ধ"),
+    ConjunctRule("gdhy", "গ্ধ্য"),
+    ConjunctRule("gdhr", "গ্ধ্র"),
+    ConjunctRule("gn", "গ্ন"),
+    ConjunctRule("gny", "গ্ন্য"),
+    ConjunctRule("gw", "গ্ব"),
+    ConjunctRule("gm", "গ্ম"),
+    ConjunctRule("gy", "গ্য"),
+    ConjunctRule("gY", "গ্য"),
+    ConjunctRule("gr", "গ্র"),
+    ConjunctRule("gry", "গ্র্য"),
+    ConjunctRule("gl", "গ্ল"),
+    ConjunctRule("ghn", "ঘ্ন"),
+    ConjunctRule("ghy", "ঘ্য"),
+    ConjunctRule("ghY", "ঘ্য"),
+    ConjunctRule("ghr", "ঘ্র"),
+    ConjunctRule("Ngk", "ঙ্ক"),
+    ConjunctRule("Ngkt", "ঙ্‌ক্ত"),
+    ConjunctRule("Ngky", "ঙ্ক্য"),
+    ConjunctRule("NgkY", "ঙ্ক্য"),
+    ConjunctRule("NgkSh", "ঙ্ক্ষ"),
+    ConjunctRule("Ngksh", "ঙ্ক্ষ"),
+    ConjunctRule("Ngkh", "ঙ্খ"),
+    ConjunctRule("Ngkhy", "ঙ্খ্য"),
+    ConjunctRule("NgkhY", "ঙ্খ্য"),
+    ConjunctRule("Ngg", "ঙ্গ"),
+    ConjunctRule("Nggy", "ঙ্গ্য"),
+    ConjunctRule("NggY", "ঙ্গ্য"),
+    ConjunctRule("Nggh", "ঙ্ঘ"),
+    ConjunctRule("Ngghy", "ঙ্ঘ্য"),
+    ConjunctRule("NgghY", "ঙ্ঘ্য"),
+    ConjunctRule("Ngghr", "ঙ্ঘ্র"),
+    ConjunctRule("Ngm", "ঙ্ম"),
+    ConjunctRule("cc", "চ্চ"),
+    ConjunctRule("cch", "চ্ছ"),
+    ConjunctRule("cC", "চ্ছ"),
+    ConjunctRule("cCh", "চ্ছ"),
+    ConjunctRule("cChh", "চ্ছ"),
+    ConjunctRule("cchw", "চ্ছ্ব"),
+    ConjunctRule("cCw", "চ্ছ্ব"),
+    ConjunctRule("cChw", "চ্ছ্ব"),
+    ConjunctRule("cChhw", "চ্ছ্ব"),
+    ConjunctRule("cchr", "চ্ছ্র"),
+    ConjunctRule("cCr", "চ্ছ্র"),
+    ConjunctRule("cChr", "চ্ছ্র"),
+    ConjunctRule("cChhr", "চ্ছ্র"),
+    ConjunctRule("cNG", "চ্ঞ"),
+    ConjunctRule("cw", "চ্ব"),
+    ConjunctRule("cy", "চ্য"),
+    ConjunctRule("cY", "চ্য"),
+    ConjunctRule("jj", "জ্জ"),
+    ConjunctRule("Jj", "জ্জ"),
+    ConjunctRule("jJ", "জ্জ"),
+    ConjunctRule("JJ", "জ্জ"),
+    ConjunctRule("jjw", "জ্জ্ব"),
+    ConjunctRule("Jjw", "জ্জ্ব"),
+    ConjunctRule("jJw", "জ্জ্ব"),
+    ConjunctRule("JJw", "জ্জ্ব"),
+    ConjunctRule("jjh", "জ্ঝ"),
+    ConjunctRule("Jjh", "জ্ঝ"),
+    ConjunctRule("jNG", "জ্ঞ"),
+    ConjunctRule("JNG", "জ্ঞ"),
+    ConjunctRule("jn", "জ্ঞ"),
+    ConjunctRule("Jn", "জ্ঞ"),
+    ConjunctRule("jw", "জ্ব"),
+    ConjunctRule("Jw", "জ্ব"),
+    ConjunctRule("jy", "জ্য"),
+    ConjunctRule("Jy", "জ্য"),
+    ConjunctRule("jY", "জ্য"),
+    ConjunctRule("JY", "জ্য"),
+    ConjunctRule("jr", "জ্র"),
+    ConjunctRule("Jr", "জ্র"),
+    ConjunctRule("NGc", "ঞ্চ"),
+    ConjunctRule("NGch", "ঞ্ছ"),
+    ConjunctRule("NGj", "ঞ্জ"),
+    ConjunctRule("NGJ", "ঞ্জ"),
+    ConjunctRule("NGjh", "ঞ্ঝ"),
+    ConjunctRule("TT", "ট্ট"),
+    ConjunctRule("Tw", "ট্ব"),
+    ConjunctRule("Tm", "ট্ম"),
+    ConjunctRule("Ty", "ট্য"),
+    ConjunctRule("TY", "ট্য"),
+    ConjunctRule("Tr", "ট্র"),
+    ConjunctRule("DD", "ড্ড"),
+    ConjunctRule("Dw", "ড্ব"),
+    ConjunctRule("Dm", "ড্ম"),
+    ConjunctRule("Dy", "ড্য"),
+    ConjunctRule("DY", "ড্য"),
+    ConjunctRule("Dr", "ড্র"),
+    ConjunctRule("Rg", "ড়্গ"),
+    ConjunctRule("Dhy", "ঢ্য"),
+    ConjunctRule("DhY", "ঢ্য"),
+    ConjunctRule("Dhr", "ঢ্র"),
+    ConjunctRule("NT", "ণ্ট"),
+    ConjunctRule("NTh", "ণ্ঠ"),
+    ConjunctRule("NThy", "ণ্ঠ্য"),
+    ConjunctRule("NThY", "ণ্ঠ্য"),
+    ConjunctRule("ND", "ণ্ড"),
+    ConjunctRule("NDy", "ণ্ড্য"),
+    ConjunctRule("NDY", "ণ্ড্য"),
+    ConjunctRule("NDr", "ণ্ড্র"),
+    ConjunctRule("NDh", "ণ্ঢ"),
+    ConjunctRule("NN", "ণ্ণ"),
+    ConjunctRule("Nw", "ণ্ব"),
+    ConjunctRule("Nm", "ণ্ম"),
+    ConjunctRule("Ny", "ণ্য"),
+    ConjunctRule("NY", "ণ্য"),
+    ConjunctRule("tk", "ৎক"),
+    ConjunctRule("tkh", "ৎখ"),
+    ConjunctRule("tt", "ত্ত"),
+    ConjunctRule("ttr", "ত্ত্র"),
+    ConjunctRule("ttw", "ত্ত্ব"),
+    ConjunctRule("tty", "ত্ত্য"),
+    ConjunctRule("ttY", "ত্ত্য"),
+    ConjunctRule("tth", "ত্থ"),
+    ConjunctRule("tn", "ত্ন"),
+    ConjunctRule("tp", "ৎপ"),
+    ConjunctRule("tw", "ত্ব"),
+    ConjunctRule("tm", "ত্ম"),
+    ConjunctRule("tmy", "ত্ম্য"),
+    ConjunctRule("ty", "ত্য"),
+    ConjunctRule("tY", "ত্য"),
+    ConjunctRule("tr", "ত্র"),
+    ConjunctRule("try", "ত্র্য"),
+    ConjunctRule("tl", "ৎল"),
+    ConjunctRule("ts", "ৎস"),
+    ConjunctRule("thw", "থ্ব"),
+    ConjunctRule("thy", "থ্য"),
+    ConjunctRule("thY", "থ্য"),
+    ConjunctRule("thr", "থ্র"),
+    ConjunctRule("dg", "দ্গ"),
+    ConjunctRule("dgh", "দ্ঘ"),
+    ConjunctRule("dd", "দ্দ"),
+    ConjunctRule("ddw", "দ্দ্ব"),
+    ConjunctRule("ddh", "দ্ধ"),
+    ConjunctRule("dw", "দ্ব"),
+    ConjunctRule("dbh", "দ্ভ"),
+    ConjunctRule("dv", "দ্ভ"),
+    ConjunctRule("dbhr", "দ্ভ্র"),
+    ConjunctRule("dvr", "দ্ভ্র"),
+    ConjunctRule("dm", "দ্ম"),
+    ConjunctRule("dy", "দ্য"),
+    ConjunctRule("dY", "দ্য"),
+    ConjunctRule("dr", "দ্র"),
+    ConjunctRule("dry", "দ্র্য"),
+    ConjunctRule("dhn", "ধ্ন"),
+    ConjunctRule("dhw", "ধ্ব"),
+    ConjunctRule("dhm", "ধ্ম"),
+    ConjunctRule("dhy", "ধ্য"),
+    ConjunctRule("dhY", "ধ্য"),
+    ConjunctRule("dhr", "ধ্র"),
+    ConjunctRule("nT", "ন্ট"),
+    ConjunctRule("nTr", "ন্ট্র"),
+    ConjunctRule("nTh", "ন্ঠ"),
+    ConjunctRule("nD", "ন্ড"),
+    ConjunctRule("nDr", "ন্ড্র"),
+    ConjunctRule("nt", "ন্ত"),
+    ConjunctRule("ntw", "ন্ত্ব"),
+    ConjunctRule("nty", "ন্ত্য"),
+    ConjunctRule("ntY", "ন্ত্য"),
+    ConjunctRule("ntr", "ন্ত্র"),
+    ConjunctRule("ntry", "ন্ত্র্য"),
+    ConjunctRule("nth", "ন্থ"),
+    ConjunctRule("nthr", "ন্থ্র"),
+    ConjunctRule("nd", "ন্দ"),
+    ConjunctRule("ndy", "ন্দ্য"),
+    ConjunctRule("ndY", "ন্দ্য"),
+    ConjunctRule("ndw", "ন্দ্ব"),
+    ConjunctRule("ndr", "ন্দ্র"),
+    ConjunctRule("ndh", "ন্ধ"),
+    ConjunctRule("ndhy", "ন্ধ্য"),
+    ConjunctRule("ndhY", "ন্ধ্য"),
+    ConjunctRule("ndhr", "ন্ধ্র"),
+    ConjunctRule("nn", "ন্ন"),
+    ConjunctRule("nw", "ন্ব"),
+    ConjunctRule("nm", "ন্ম"),
+    ConjunctRule("ny", "ন্য"),
+    ConjunctRule("nY", "ন্য"),
+    ConjunctRule("pT", "প্ট"),
+    ConjunctRule("pt", "প্ত"),
+    ConjunctRule("pn", "প্ন"),
+    ConjunctRule("pp", "প্প"),
+    ConjunctRule("py", "প্য"),
+    ConjunctRule("pY", "প্য"),
+    ConjunctRule("pr", "প্র"),
+    ConjunctRule("pry", "প্র্য"),
+    ConjunctRule("pl", "প্ল"),
+    ConjunctRule("ps", "প্স"),
+    ConjunctRule("fr", "ফ্র"),
+    ConjunctRule("phr", "ফ্র"),
+    ConjunctRule("fl", "ফ্ল"),
+    ConjunctRule("phl", "ফ্ল"),
+    ConjunctRule("bj", "ব্জ"),
+    ConjunctRule("bJ", "ব্জ"),
+    ConjunctRule("bd", "ব্দ"),
+    ConjunctRule("bdh", "ব্ধ"),
+    ConjunctRule("bb", "ব্ব"),
+    ConjunctRule("bw", "ব্ব"),
+    ConjunctRule("by", "ব্য"),
+    ConjunctRule("bY", "ব্য"),
+    ConjunctRule("br", "ব্র"),
+    ConjunctRule("bl", "ব্ল"),
+    ConjunctRule("bhw", "ভ্ব"),
+    ConjunctRule("vw", "ভ্ব"),
+    ConjunctRule("bhy", "ভ্য"),
+    ConjunctRule("bhY", "ভ্য"),
+    ConjunctRule("vy", "ভ্য"),
+    ConjunctRule("vY", "ভ্য"),
+    ConjunctRule("bhr", "ভ্র"),
+    ConjunctRule("vr", "ভ্র"),
+    ConjunctRule("bhl", "ভ্ল"),
+    ConjunctRule("vl", "ভ্ল"),
+    ConjunctRule("mn", "ম্ন"),
+    ConjunctRule("mp", "ম্প"),
+    ConjunctRule("mpr", "ম্প্র"),
+    ConjunctRule("mf", "ম্ফ"),
+    ConjunctRule("mph", "ম্ফ"),
+    ConjunctRule("mw", "ম্ব"),
+    ConjunctRule("mb", "ম্ব"),
+    ConjunctRule("mwr", "ম্ব্র"),
+    ConjunctRule("mbr", "ম্ব্র"),
+    ConjunctRule("mbh", "ম্ভ"),
+    ConjunctRule("mv", "ম্ভ"),
+    ConjunctRule("mbhr", "ম্ভ্র"),
+    ConjunctRule("mvr", "ম্ভ্র"),
+    ConjunctRule("mm", "ম্ম"),
+    ConjunctRule("my", "ম্য"),
+    ConjunctRule("mY", "ম্য"),
+    ConjunctRule("mr", "ম্র"),
+    ConjunctRule("ml", "ম্ল"),
+    ConjunctRule("yy", "য্য"),
+    ConjunctRule("zy", "য্য"),
+    ConjunctRule("zY", "য্য"),
+    ConjunctRule("rrk", "র্ক"),
+    ConjunctRule("rrky", "র্ক্য"),
+    ConjunctRule("rrkY", "র্ক্য"),
+    ConjunctRule("rrg", "র্গ"),
+    ConjunctRule("rrgy", "র্গ্য"),
+    ConjunctRule("rrgY", "র্গ্য"),
+    ConjunctRule("rrghy", "র্ঘ্য"),
+    ConjunctRule("rrghY", "র্ঘ্য"),
+    ConjunctRule("rrNgg", "র্ঙ্গ"),
+    ConjunctRule("rrcy", "র্চ্য"),
+    ConjunctRule("rrcY", "র্চ্য"),
+    ConjunctRule("rrjy", "র্জ্য"),
+    ConjunctRule("rrjY", "র্জ্য"),
+    ConjunctRule("rrJy", "র্জ্য"),
+    ConjunctRule("rrJY", "র্জ্য"),
+    ConjunctRule("rrjj", "র্জ্জ"),
+    ConjunctRule("rrjJ", "র্জ্জ"),
+    ConjunctRule("rrJj", "র্জ্জ"),
+    ConjunctRule("rrJJ", "র্জ্জ"),
+    ConjunctRule("rrjNG", "র্জ্ঞ"),
+    ConjunctRule("rrJNG", "র্জ্ঞ"),
+    ConjunctRule("rrjn", "র্জ্ঞ"),
+    ConjunctRule("rrJn", "র্জ্ঞ"),
+    ConjunctRule("rrNy", "র্ণ্য"),
+    ConjunctRule("rrNY", "র্ণ্য"),
+    ConjunctRule("rrty", "র্ত্য"),
+    ConjunctRule("rrtY", "র্ত্য"),
+    ConjunctRule("rrthy", "র্থ্য"),
+    ConjunctRule("rrthY", "র্থ্য"),
+    ConjunctRule("rrwy", "র্ব্য"),
+    ConjunctRule("rrwY", "র্ব্য"),
+    ConjunctRule("rrmy", "র্ম্য"),
+    ConjunctRule("rrmY", "র্ম্য"),
+    ConjunctRule("rrshy", "র্শ্য"),
+    ConjunctRule("rrshY", "র্শ্য"),
+    ConjunctRule("rrSy", "র্শ্য"),
+    ConjunctRule("rrSY", "র্শ্য"),
+    ConjunctRule("rrShy", "র্ষ্য"),
+    ConjunctRule("rrShY", "র্ষ্য"),
+    ConjunctRule("rrhy", "র্হ্য"),
+    ConjunctRule("rrhY", "র্হ্য"),
+    ConjunctRule("rrkh", "র্খ"),
+    ConjunctRule("rrgr", "র্গ্র"),
+    ConjunctRule("rrgh", "র্ঘ"),
+    ConjunctRule("rrc", "র্চ"),
+    ConjunctRule("rrch", "র্ছ"),
+    ConjunctRule("rrj", "র্জ"),
+    ConjunctRule("rrJ", "র্জ"),
+    ConjunctRule("rrjh", "র্ঝ"),
+    ConjunctRule("rrT", "র্ট"),
+    ConjunctRule("rrD", "র্ড"),
+    ConjunctRule("rrN", "র্ণ"),
+    ConjunctRule("rrt", "র্ত"),
+    ConjunctRule("rrtm", "র্ত্ম"),
+    ConjunctRule("rrtr", "র্ত্র"),
+    ConjunctRule("rrth", "র্থ"),
+    ConjunctRule("rrd", "র্দ"),
+    ConjunctRule("rrdw", "র্দ্ব"),
+    ConjunctRule("rrdr", "র্দ্র"),
+    ConjunctRule("rrdh", "র্ধ"),
+    ConjunctRule("rrdhw", "র্ধ্ব"),
+    ConjunctRule("rrn", "র্ন"),
+    ConjunctRule("rrp", "র্প"),
+    ConjunctRule("rrf", "র্ফ"),
+    ConjunctRule("rrph", "র্ফ"),
+    ConjunctRule("rrw", "র্ব"),
+    ConjunctRule("rrbh", "র্ভ"),
+    ConjunctRule("rrv", "র্ভ"),
+    ConjunctRule("rrm", "র্ম"),
+    ConjunctRule("rry", "র্য"),
+    ConjunctRule("rrY", "র্য"),
+    ConjunctRule("rrl", "র্ল"),
+    ConjunctRule("rrsh", "র্শ"),
+    ConjunctRule("rrS", "র্শ"),
+    ConjunctRule("rrshw", "র্শ্ব"),
+    ConjunctRule("rrSw", "র্শ্ব"),
+    ConjunctRule("rrSh", "র্ষ"),
+    ConjunctRule("rrShT", "র্ষ্ট"),
+    ConjunctRule("rrShN", "র্ষ্ণ"),
+    ConjunctRule("rrShNy", "র্ষ্ণ্য"),
+    ConjunctRule("rrShNY", "র্ষ্ণ্য"),
+    ConjunctRule("rrs", "র্স"),
+    ConjunctRule("rrh", "র্হ"),
+    ConjunctRule("rrDhy", "র্ঢ্য"),
+    ConjunctRule("rrDhY", "র্ঢ্য"),
+    ConjunctRule("lk", "ল্ক"),
+    ConjunctRule("lky", "ল্ক্য"),
+    ConjunctRule("lkY", "ল্ক্য"),
+    ConjunctRule("lg", "ল্গ"),
+    ConjunctRule("lT", "ল্ট"),
+    ConjunctRule("lD", "ল্ড"),
+    ConjunctRule("lp", "ল্প"),
+    ConjunctRule("lf", "ল্ফ"),
+    ConjunctRule("lph", "ল্ফ"),
+    ConjunctRule("lw", "ল্ব"),
+    ConjunctRule("lbh", "ল্ভ"),
+    ConjunctRule("lv", "ল্ভ"),
+    ConjunctRule("lm", "ল্ম"),
+    ConjunctRule("ly", "ল্য"),
+    ConjunctRule("lY", "ল্য"),
+    ConjunctRule("ll", "ল্ল"),
+    ConjunctRule("shc", "শ্চ"),
+    ConjunctRule("Sc", "শ্চ"),
+    ConjunctRule("shch", "শ্ছ"),
+    ConjunctRule("Sch", "শ্ছ"),
+    ConjunctRule("shn", "শ্ন"),
+    ConjunctRule("Sn", "শ্ন"),
+    ConjunctRule("shw", "শ্ব"),
+    ConjunctRule("Sw", "শ্ব"),
+    ConjunctRule("shm", "শ্ম"),
+    ConjunctRule("Sm", "শ্ম"),
+    ConjunctRule("shy", "শ্য"),
+    ConjunctRule("shY", "শ্য"),
+    ConjunctRule("Sy", "শ্য"),
+    ConjunctRule("SY", "শ্য"),
+    ConjunctRule("shr", "শ্র"),
+    ConjunctRule("Sr", "শ্র"),
+    ConjunctRule("shl", "শ্ল"),
+    ConjunctRule("Sl", "শ্ল"),
+    ConjunctRule("Shk", "ষ্ক"),
+    ConjunctRule("Shkw", "ষ্ক্ব"),
+    ConjunctRule("Shkr", "ষ্ক্র"),
+    ConjunctRule("ShT", "ষ্ট"),
+    ConjunctRule("ShTy", "ষ্ট্য"),
+    ConjunctRule("ShTY", "ষ্ট্য"),
+    ConjunctRule("ShTr", "ষ্ট্র"),
+    ConjunctRule("ShTh", "ষ্ঠ"),
+    ConjunctRule("ShThy", "ষ্ঠ্য"),
+    ConjunctRule("ShThY", "ষ্ঠ্য"),
+    ConjunctRule("ShN", "ষ্ণ"),
+    ConjunctRule("ShNw", "ষ্ণ্ব"),
+    ConjunctRule("Shp", "ষ্প"),
+    ConjunctRule("Shpr", "ষ্প্র"),
+    ConjunctRule("Shf", "ষ্ফ"),
+    ConjunctRule("Shph", "ষ্ফ"),
+    ConjunctRule("Shw", "ষ্ব"),
+    ConjunctRule("Shm", "ষ্ম"),
+    ConjunctRule("Shy", "ষ্য"),
+    ConjunctRule("ShY", "ষ্য"),
+    ConjunctRule("sk", "স্ক"),
+    ConjunctRule("skr", "স্ক্র"),
+    ConjunctRule("skh", "স্খ"),
+    ConjunctRule("sT", "স্ট"),
+    ConjunctRule("sTr", "স্ট্র"),
+    ConjunctRule("st", "স্ত"),
+    ConjunctRule("stw", "স্ত্ব"),
+    ConjunctRule("sty", "স্ত্য"),
+    ConjunctRule("stY", "স্ত্য"),
+    ConjunctRule("str", "স্ত্র"),
+    ConjunctRule("sth", "স্থ"),
+    ConjunctRule("sthy", "স্থ্য"),
+    ConjunctRule("sthY", "স্থ্য"),
+    ConjunctRule("sn", "স্ন"),
+    ConjunctRule("sny", "স্ন্য"),
+    ConjunctRule("snY", "স্ন্য"),
+    ConjunctRule("sp", "স্প"),
+    ConjunctRule("spr", "স্প্র"),
+    ConjunctRule("spl", "স্প্‌ল"),
+    ConjunctRule("sf", "স্ফ"),
+    ConjunctRule("sph", "স্ফ"),
+    ConjunctRule("sw", "স্ব"),
+    ConjunctRule("sm", "স্ম"),
+    ConjunctRule("sy", "স্য"),
+    ConjunctRule("sY", "স্য"),
+    ConjunctRule("sr", "স্র"),
+    ConjunctRule("sl", "স্ল"),
+    ConjunctRule("hN", "হ্ণ"),
+    ConjunctRule("hn", "হ্ন"),
+    ConjunctRule("hw", "হ্ব"),
+    ConjunctRule("hm", "হ্ম"),
+    ConjunctRule("hy", "হ্য"),
+    ConjunctRule("hY", "হ্য"),
+    ConjunctRule("hr", "হ্র"),
+    ConjunctRule("hl", "হ্ল"),
 ];
 
 impl ConjunctDefinitions {
@@ -1809,7 +484,7 @@ impl ConjunctDefinitions {
         let mut instance = ConjunctDefinitions { conjunct_trie };
 
         for rule in CONJUNCT_RULES {
-            instance.add_conjunct(rule.key, rule.value);
+            instance.add_conjunct(rule.key(), rule.value());
         }
 
         instance.conjunct_trie.sort_edges();
@@ -1879,8 +554,8 @@ impl ConjunctDefinitions {
     /// Get romanized consonants for a conjunct
     pub fn get_components(&self, conjunct: &str) -> Option<Vec<String>> {
         for rule in CONJUNCT_RULES {
-            if rule.value == conjunct {
-                return Some(self.components_for_key(rule.key));
+            if rule.value() == conjunct {
+                return Some(self.components_for_key(rule.key()));
             }
         }
         None
@@ -1930,7 +605,7 @@ impl ConjunctDefinitions {
 
     /// Get all valid conjuncts
     pub fn get_all_valid_conjuncts(&self) -> BTreeSet<&'static str> {
-        CONJUNCT_RULES.iter().map(|rule| rule.key).collect()
+        CONJUNCT_RULES.iter().map(|rule| rule.key()).collect()
     }
 
     /// Check if a form is a special form (like reph, ya-phola, ba-phola)
@@ -2062,7 +737,7 @@ impl ConjunctTrieNode {
 fn conjunct_trie_node_capacity() -> usize {
     1 + CONJUNCT_RULES
         .iter()
-        .map(|rule| rule.key.len())
+        .map(|rule| rule.key().len())
         .sum::<usize>()
 }
 
@@ -2075,12 +750,12 @@ mod tests {
         let mut keys = BTreeSet::new();
 
         for rule in CONJUNCT_RULES {
-            assert!(!rule.key.is_empty());
-            assert!(!rule.value.is_empty());
+            assert!(!rule.key().is_empty());
+            assert!(!rule.value().is_empty());
             assert!(
-                keys.insert(rule.key),
+                keys.insert(rule.key()),
                 "duplicate conjunct rule key: {}",
-                rule.key
+                rule.key()
             );
         }
     }
@@ -2095,7 +770,7 @@ mod tests {
         );
 
         for rule in CONJUNCT_RULES {
-            assert_eq!(definitions.create_conjunct(rule.key), Some(rule.value));
+            assert_eq!(definitions.create_conjunct(rule.key()), Some(rule.value()));
         }
     }
 }
