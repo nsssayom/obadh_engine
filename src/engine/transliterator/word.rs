@@ -64,6 +64,58 @@ impl Transliterator {
         }
     }
 
+    fn append_vowel(&self, output: &mut String, vowel_key: &str, as_dependent: bool) -> bool {
+        let Some(vowel) = vowel_value(vowel_key) else {
+            return false;
+        };
+
+        if as_dependent {
+            if let Some(dependent) = &vowel.dependent {
+                output.push_str(dependent);
+            } else {
+                output.push_str(vowel.independent);
+            }
+        } else {
+            output.push_str(vowel.independent);
+        }
+
+        true
+    }
+
+    fn append_consonant_vowel(
+        &self,
+        output: &mut String,
+        consonant_key: &str,
+        vowel_key: &str,
+    ) -> bool {
+        let Some(bengali_consonant) = consonant_value(consonant_key) else {
+            return false;
+        };
+
+        output.push_str(bengali_consonant);
+        if !self.append_vowel(output, vowel_key, true) {
+            output.push_str(vowel_key);
+        }
+        true
+    }
+
+    fn append_consonant_terminator(
+        &self,
+        output: &mut String,
+        consonant_key: &str,
+        terminator_key: &str,
+    ) -> bool {
+        let Some(bengali_consonant) = consonant_value(consonant_key) else {
+            return false;
+        };
+
+        output.push_str(bengali_consonant);
+        if terminator_key != "o" && !self.append_vowel(output, terminator_key, true) {
+            output.push_str(terminator_key);
+        }
+        true
+    }
+
     fn should_suppress_visible_a(&self, vowel_key: &str, following_units: &[PhoneticUnit]) -> bool {
         vowel_key == "a" && starts_with_cluster(following_units)
     }
@@ -94,16 +146,11 @@ impl Transliterator {
                     }
                 }
                 PhoneticUnitType::Vowel => {
-                    if let Some(vowel) = vowel_value(unit.text.as_str()) {
-                        if previous_unit_accepts_dependent_vowel {
-                            if let Some(dependent) = &vowel.dependent {
-                                result.push_str(dependent);
-                            } else {
-                                result.push_str(vowel.independent);
-                            }
-                        } else {
-                            result.push_str(vowel.independent);
-                        }
+                    if self.append_vowel(
+                        result,
+                        unit.text.as_str(),
+                        previous_unit_accepts_dependent_vowel,
+                    ) {
                         previous_unit_accepts_dependent_vowel = false;
                     } else {
                         result.push_str(&unit.text);
@@ -111,16 +158,11 @@ impl Transliterator {
                     }
                 }
                 PhoneticUnitType::TerminatingVowel => {
-                    if let Some(vowel) = vowel_value(unit.text.as_str()) {
-                        if previous_unit_accepts_dependent_vowel {
-                            if let Some(dependent) = &vowel.dependent {
-                                result.push_str(dependent);
-                            } else {
-                                result.push_str(vowel.independent);
-                            }
-                        } else {
-                            result.push_str(vowel.independent);
-                        }
+                    if self.append_vowel(
+                        result,
+                        unit.text.as_str(),
+                        previous_unit_accepts_dependent_vowel,
+                    ) {
                         previous_unit_accepts_dependent_vowel = false;
                     } else {
                         result.push_str(&unit.text);
@@ -129,23 +171,15 @@ impl Transliterator {
                 }
                 PhoneticUnitType::ConsonantWithVowel => {
                     if let Some((consonant_part, vowel_part)) = split_consonant_vowel(&unit.text) {
-                        if let Some(bengali_consonant) = consonant_value(consonant_part) {
-                            result.push_str(bengali_consonant);
-                            if let Some(vowel) = vowel_value(vowel_part) {
-                                if self.should_suppress_visible_a(vowel_part, following_units) {
-                                    previous_unit_accepts_dependent_vowel = true;
-                                    continue;
-                                }
-
-                                if let Some(dependent) = &vowel.dependent {
-                                    result.push_str(dependent);
-                                } else {
-                                    result.push_str(vowel.independent);
-                                }
-                            } else {
-                                result.push_str(vowel_part);
+                        if self.should_suppress_visible_a(vowel_part, following_units) {
+                            if let Some(bengali_consonant) = consonant_value(consonant_part) {
+                                result.push_str(bengali_consonant);
+                                previous_unit_accepts_dependent_vowel = true;
+                                continue;
                             }
-                        } else {
+                        }
+
+                        if !self.append_consonant_vowel(result, consonant_part, vowel_part) {
                             result.push_str(&unit.text);
                         }
                     } else if let Some(bengali_consonant) = consonant_value(unit.text.as_str()) {
@@ -159,21 +193,11 @@ impl Transliterator {
                     if let Some((consonant_part, terminator_part)) =
                         split_consonant_vowel(&unit.text)
                     {
-                        if let Some(bengali_consonant) = consonant_value(consonant_part) {
-                            result.push_str(bengali_consonant);
-
-                            if terminator_part != "o" {
-                                if let Some(vowel) = vowel_value(terminator_part) {
-                                    if let Some(dependent) = &vowel.dependent {
-                                        result.push_str(dependent);
-                                    } else {
-                                        result.push_str(vowel.independent);
-                                    }
-                                } else {
-                                    result.push_str(terminator_part);
-                                }
-                            }
-                        } else {
+                        if !self.append_consonant_terminator(
+                            result,
+                            consonant_part,
+                            terminator_part,
+                        ) {
                             result.push_str(&unit.text);
                         }
                     } else if let Some(bengali_consonant) = consonant_value(unit.text.as_str()) {
@@ -287,16 +311,11 @@ impl Transliterator {
                             if !self.append_dependent_vowel(result, vowel_part) {
                                 result.push_str(vowel_part);
                             }
-                        } else if let (Some(bengali_consonant), Some(vowel)) =
-                            (consonant_value(consonant_part), vowel_value(vowel_part))
-                        {
+                        } else if let Some(bengali_consonant) = consonant_value(consonant_part) {
                             result.push_str("র্");
                             result.push_str(bengali_consonant);
-
-                            if let Some(dependent_vowel) = &vowel.dependent {
-                                result.push_str(dependent_vowel);
-                            } else {
-                                result.push_str(vowel.independent);
+                            if !self.append_vowel(result, vowel_part, true) {
+                                result.push_str(vowel_part);
                             }
                         } else {
                             result.push_str(&unit.text);
@@ -324,14 +343,11 @@ impl Transliterator {
                             result.push_str("র্");
                             result.push_str(bengali_consonant);
 
-                            if !terminator_part.is_empty() && terminator_part != "o" {
-                                if let Some(vowel) = vowel_value(terminator_part) {
-                                    if let Some(dependent) = &vowel.dependent {
-                                        result.push_str(dependent);
-                                    } else {
-                                        result.push_str(vowel.independent);
-                                    }
-                                }
+                            if !terminator_part.is_empty()
+                                && terminator_part != "o"
+                                && !self.append_vowel(result, terminator_part, true)
+                            {
+                                result.push_str(terminator_part);
                             }
                         } else {
                             result.push_str(&unit.text);
