@@ -175,6 +175,29 @@ fn test_source_conjunct_csv_keys_accept_canonical_dependent_vowels() {
     }
 }
 
+#[test]
+fn test_source_conjunct_csv_components_render_with_explicit_hasant() {
+    let engine = ObadhEngine::new();
+    let Some(csv) = source_conjunct_csv() else {
+        return;
+    };
+
+    for row in source_conjunct_rows(&csv) {
+        let key = row.key();
+        if allowed_csv_value_conflict(&key, &engine.transliterate(&key), row.conjunct) {
+            continue;
+        }
+
+        let explicit_key = row.roman_components.join(",,");
+        let actual = engine.transliterate(&explicit_key);
+        assert_eq!(
+            actual, row.conjunct,
+            "Explicit key '{explicit_key}' on row {} rendered as '{actual}', expected '{}'",
+            row.line_number, row.conjunct
+        );
+    }
+}
+
 fn allowed_csv_value_conflict(key: &str, actual: &str, expected: &str) -> bool {
     key == "rrt" && actual == "র্ত" && expected == "র্ৎ"
 }
