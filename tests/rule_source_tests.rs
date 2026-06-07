@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use obadh_engine::definitions::{
-    consonant_categories, consonant_value, diacritic_rules, diacritic_value, is_vowel, vowel_value,
+    consonant_categories, consonant_value, diacritic_rules, diacritic_value, is_vowel,
+    symbol_rules, symbol_value, vowel_value,
 };
 use obadh_engine::ObadhEngine;
 
@@ -72,6 +73,37 @@ fn deliberate_input_contract_documents_every_diacritic_rule() {
             "runtime diacritic signal {roman:?} is missing from README deliberate input contract"
         );
     }
+}
+
+#[test]
+fn deliberate_input_contract_documents_every_symbol_rule() {
+    let documented_signals = deliberate_input_contract_signal_cells(README_DOC);
+    let engine = ObadhEngine::new();
+
+    for &(roman, expected) in symbol_rules() {
+        assert_eq!(
+            symbol_value(roman),
+            Some(expected),
+            "symbol {roman:?} should be directly renderable"
+        );
+        assert_eq!(
+            engine.transliterate(roman),
+            expected,
+            "symbol {roman:?} should render through the public engine path"
+        );
+        assert!(
+            documented_signals
+                .iter()
+                .any(|signal| signal_cell_mentions(signal, roman)),
+            "runtime symbol signal {roman:?} is missing from README deliberate input contract"
+        );
+    }
+
+    assert_eq!(
+        engine.transliterate("12.34 12.34."),
+        "১২.৩৪ ১২.৩৪।",
+        "decimal periods should stay ASCII periods between number-bearing tokens"
+    );
 }
 
 #[test]

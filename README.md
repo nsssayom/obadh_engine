@@ -105,6 +105,8 @@ The full consonant signal table is maintained in `data/rules/consonants.md` and 
 | `,,` | explicit hasant / conjunct boundary command |
 | `^` | chandrabindu |
 | `:` | visarga |
+| `.` | Bengali danda `।`; decimal periods between number-bearing tokens stay `.` |
+| `$` | Bengali taka sign `৳` |
 
 Casual Latin spellings are not correction requests in this layer. They are just input sequences. If a future product wants correction, suggestions, or personalization, it should build that above the deterministic engine.
 
