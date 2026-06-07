@@ -79,6 +79,7 @@ The full consonant signal table is maintained in `data/rules/consonants.md` and 
 
 | Roman Signal | Bengali Rule Intent |
 |--------------|---------------------|
+| `o` | inherent অ as an initial vowel or lowercase terminator; separates consonants without visible ও (`kok` → `কক`) and leaves terminated clusters unmarked (`kko` → `ক্ক`) |
 | `A` / `aa` | long আ / া |
 | `I` / `ee` / `ii` | long ঈ / ী |
 | `iyw` after a consonant/conjunct | composable ঈয় signal, e.g. `jatiywta` → `জাতীয়তা` |

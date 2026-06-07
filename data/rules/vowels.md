@@ -69,7 +69,7 @@ This is crucial when you need to represent two consecutive same letters without 
 | e + o | eo | এও |
 
 > `aa` is a special case equivalent to independent আ (`A`) and আ-কার.
-> `ee`/`ii` are explicit long-vowel aliases for `I`. `oo` follows Avro's short-উ signal; use `U` or `uu` for long ঊ.
+> `ee`/`ii` are explicit long-vowel aliases for `I`. `oo` is an accepted short-উ alias in Obadh's explicit vowel table; use `U` or `uu` for long ঊ.
 > Lowercase `oi`/`ou` remain vowel sequences such as `boi` → `বই`; use uppercase `OI`/`OU` for ঐ/ঔ.
 
 The same vowel-sequence rules compose after consonants by using the dependent form of the first vowel plus any following independent vowel or glide.

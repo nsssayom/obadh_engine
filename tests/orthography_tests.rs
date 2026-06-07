@@ -1,7 +1,7 @@
 use obadh_engine::{ObadhEngine, PhoneticUnitType, Tokenizer};
 
 #[test]
-fn test_avro_style_chh_alias() {
+fn test_documented_aspirated_cha_alias() {
     let tokenizer = Tokenizer::new();
     let units = tokenizer.tokenize_word("chhi");
 
@@ -30,7 +30,7 @@ fn test_chhi_alias_does_not_rewrite_independent_hi_after_r() {
 }
 
 #[test]
-fn test_avro_style_uppercase_aspirated_cha_aliases() {
+fn test_documented_uppercase_aspirated_cha_aliases() {
     let tokenizer = Tokenizer::new();
 
     for input in ["Ci", "Chi", "Chhi"] {
@@ -357,6 +357,32 @@ fn test_uppercase_e_alias_composes_as_e_kar() {
 
     let engine = ObadhEngine::new();
     assert_eq!(engine.transliterate("E kE kkE rrkE"), "এ কে ক্কে র্কে");
+}
+
+#[test]
+fn test_lowercase_o_is_inherent_terminator_after_consonant_cluster_and_reph() {
+    let tokenizer = Tokenizer::new();
+
+    for (input, expected_text, expected_type) in [
+        ("ko", "ko", PhoneticUnitType::ConsonantWithTerminator),
+        ("kko", "k,,ko", PhoneticUnitType::ConjunctWithTerminator),
+        (
+            "rrko",
+            "rrko",
+            PhoneticUnitType::RephOverConsonantWithTerminator,
+        ),
+    ] {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(units.len(), 1, "{input} should be one terminated unit");
+        assert_eq!(units[0].text, expected_text);
+        assert_eq!(units[0].unit_type, expected_type);
+    }
+
+    let engine = ObadhEngine::new();
+    assert_eq!(
+        engine.transliterate("ko kO kko kkO rrko rrkO"),
+        "ক কো ক্ক ক্কো র্ক র্কো"
+    );
 }
 
 #[test]

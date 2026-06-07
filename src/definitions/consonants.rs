@@ -45,11 +45,11 @@ const VELARS: &[ConsonantRule] = &[
 const PALATALS: &[ConsonantRule] = &[
     ("c", "চ"),   // ca
     ("ch", "ছ"),  // cha
-    ("chh", "ছ"), // Avro-style aspirated cha alias
-    ("C", "ছ"),   // Avro-style uppercase aspirated cha alias
-    ("Ch", "ছ"),  // Avro-style uppercase aspirated cha alias
+    ("chh", "ছ"), // explicit aspirated cha alias
+    ("C", "ছ"),   // compact uppercase aspirated cha alias
+    ("Ch", "ছ"),  // titlecase aspirated cha alias
     ("CH", "ছ"),  // uppercase aspirated cha alias
-    ("Chh", "ছ"), // Avro-style uppercase aspirated cha alias
+    ("Chh", "ছ"), // titlecase aspirated cha alias
     ("CHH", "ছ"), // uppercase aspirated cha alias
     ("J", "জ"),   // ja
     ("j", "জ"),   // ja

@@ -161,4 +161,4 @@ The source conjunct notes distinguish true conjunct `র্য` from the ZWNJ-se
 - `rZyab` → `র‌্যাব`
 - `rZya^da` → `র‌্যাঁদা`
 
-`Z` is intentionally narrow here. It is not a general Avro-style ya-phola alias and does not rewrite unrelated sequences such as `Zya` or `kZya`.
+`Z` is intentionally narrow here. It is not a general compatibility ya-phola alias and does not rewrite unrelated sequences such as `Zya` or `kZya`.

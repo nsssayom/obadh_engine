@@ -61,7 +61,14 @@ impl Transliterator {
     }
 
     fn append_dependent_vowel(&self, output: &mut String, vowel_key: &str) -> bool {
-        self.append_vowel(output, vowel_key, true)
+        let Some(vowel) = vowel_value(vowel_key) else {
+            return false;
+        };
+
+        if let Some(dependent) = &vowel.dependent {
+            output.push_str(dependent);
+        }
+        true
     }
 
     fn append_vowel(&self, output: &mut String, vowel_key: &str, as_dependent: bool) -> bool {
@@ -93,7 +100,7 @@ impl Transliterator {
         };
 
         output.push_str(bengali_consonant);
-        if !self.append_vowel(output, vowel_key, true) {
+        if !self.append_dependent_vowel(output, vowel_key) {
             output.push_str(vowel_key);
         }
         true
@@ -110,7 +117,7 @@ impl Transliterator {
         };
 
         output.push_str(bengali_consonant);
-        if terminator_key != "o" && !self.append_vowel(output, terminator_key, true) {
+        if terminator_key != "o" && !self.append_dependent_vowel(output, terminator_key) {
             output.push_str(terminator_key);
         }
         true
@@ -313,7 +320,7 @@ impl Transliterator {
                         } else if let Some(bengali_consonant) = consonant_value(consonant_part) {
                             Self::append_reph_prefix(result);
                             result.push_str(bengali_consonant);
-                            if !self.append_vowel(result, vowel_part, true) {
+                            if !self.append_dependent_vowel(result, vowel_part) {
                                 result.push_str(vowel_part);
                             }
                         } else {
@@ -344,7 +351,7 @@ impl Transliterator {
 
                             if !terminator_part.is_empty()
                                 && terminator_part != "o"
-                                && !self.append_vowel(result, terminator_part, true)
+                                && !self.append_dependent_vowel(result, terminator_part)
                             {
                                 result.push_str(terminator_part);
                             }
