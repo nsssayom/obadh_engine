@@ -122,6 +122,27 @@ fn test_transliterate_invalid_input_returns_original_text() {
 }
 
 #[test]
+fn test_lenient_transliteration_cleans_then_uses_direct_rendering() {
+    let engine = ObadhEngine::new();
+
+    assert_eq!(engine.transliterate_lenient("ami😀"), "আমি");
+    assert_eq!(
+        engine.transliterate_lenient("ami 12.34😀 Taka."),
+        "আমি ১২.৩৪ টাকা।"
+    );
+    assert_eq!(
+        engine.transliterate_lenient("rZyab😀 rrkSh 1.a2"),
+        "র‌্যাব র্ক্ষ ১।আ২"
+    );
+
+    let cleaned = engine.sanitize("ami 12.34 Taka.").unwrap();
+    assert_eq!(
+        engine.transliterate_lenient("ami😀 12.34 Taka."),
+        engine.transliterate(&cleaned)
+    );
+}
+
+#[test]
 fn test_tokenization() {
     let engine = ObadhEngine::new();
 

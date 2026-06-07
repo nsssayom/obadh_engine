@@ -116,6 +116,16 @@ impl ObadhaWasm {
         self.engine.transliterate(text)
     }
 
+    /// Transliterate text after dropping unsupported characters
+    #[wasm_bindgen]
+    pub fn transliterate_lenient(&self, text: &str) -> String {
+        if text.trim().is_empty() {
+            return String::new();
+        }
+
+        self.engine.transliterate_lenient(text)
+    }
+
     /// Transliterate with options for debug/verbose output
     #[wasm_bindgen]
     pub fn transliterate_with_options(

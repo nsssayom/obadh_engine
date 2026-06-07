@@ -237,6 +237,8 @@ transliterate("kA khA gA t`` 12.34").then(result => {
 });
 ```
 
+`engine.transliterate(text)` is strict: unsupported characters cause the original text to be returned unchanged. Use `engine.transliterate_lenient(text)` when callers deliberately want unsupported characters dropped before transliteration.
+
 For advanced usage with performance metrics:
 
 ```javascript

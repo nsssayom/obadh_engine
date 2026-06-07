@@ -288,13 +288,8 @@ impl Transliterator {
 
     /// Transliterate Roman text to Bengali, cleaning invalid characters instead of returning an error
     pub fn transliterate_lenient(&self, text: &str) -> String {
-        // Clean the input by removing invalid characters
         let cleaned = self.sanitizer.clean(text);
-
-        // Process the cleaned text using the tokenizer
-        let tokens = self.tokenizer.tokenize_text(&cleaned);
-
-        self.render_tokens(&tokens)
+        self.render_text(&cleaned)
     }
 }
 

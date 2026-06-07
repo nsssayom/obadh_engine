@@ -30,6 +30,11 @@ impl ObadhEngine {
         self.transliterator.transliterate(text)
     }
 
+    /// Transliterate Roman text after dropping unsupported characters.
+    pub fn transliterate_lenient(&self, text: &str) -> String {
+        self.transliterator.transliterate_lenient(text)
+    }
+
     /// Sanitize input text to ensure it contains only valid characters
     pub fn sanitize(&self, text: &str) -> SanitizeResult {
         self.transliterator.sanitize(text)
