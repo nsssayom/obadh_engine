@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
-use crate::definitions::{consonant_categories, diacritic_rules, symbol_rules, vowel_rules};
+use crate::definitions::{
+    consonant_categories, diacritic_rules, diacritics::HASANT, symbol_rules, vowel_rules,
+};
 
 use super::PhoneticUnitType;
 
@@ -120,7 +122,7 @@ fn phonetic_patterns() -> Vec<(&'static str, PhoneticUnitType)> {
     patterns.push(("rr", PhoneticUnitType::SpecialForm));
 
     for &(roman, bengali) in diacritic_rules() {
-        let unit_type = if bengali == "্" {
+        let unit_type = if bengali == HASANT {
             PhoneticUnitType::ConsonantWithHasant
         } else {
             PhoneticUnitType::SpecialForm

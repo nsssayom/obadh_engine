@@ -17,6 +17,11 @@ use super::{
 use crate::engine::tokenizer::{PhoneticUnit, PhoneticUnitType};
 
 impl Transliterator {
+    fn append_reph_prefix(output: &mut String) {
+        output.push('র');
+        output.push_str(HASANT);
+    }
+
     fn conjunct_component(&self, part: &str) -> Option<&'static str> {
         match part {
             "rZ" => Some("র\u{200C}"),
@@ -37,8 +42,8 @@ impl Transliterator {
 
         if parts.first() == Some(&"rr") {
             let tail = self.render_conjunct_parts(&parts[1..])?;
-            let mut rendered = String::from("র");
-            rendered.push_str(HASANT);
+            let mut rendered = String::with_capacity("র".len() + HASANT.len() + tail.len());
+            Self::append_reph_prefix(&mut rendered);
             rendered.push_str(tail.as_ref());
             return Some(Cow::Owned(rendered));
         }
@@ -287,7 +292,7 @@ impl Transliterator {
                         let consonant_text = &unit.text[2..];
 
                         if let Some(bengali_consonant) = consonant_value(consonant_text) {
-                            result.push_str("র্");
+                            Self::append_reph_prefix(result);
                             result.push_str(bengali_consonant);
                         } else {
                             result.push_str(&unit.text);
@@ -306,7 +311,7 @@ impl Transliterator {
                                 result.push_str(vowel_part);
                             }
                         } else if let Some(bengali_consonant) = consonant_value(consonant_part) {
-                            result.push_str("র্");
+                            Self::append_reph_prefix(result);
                             result.push_str(bengali_consonant);
                             if !self.append_vowel(result, vowel_part, true) {
                                 result.push_str(vowel_part);
@@ -334,7 +339,7 @@ impl Transliterator {
                                 result.push_str(terminator_part);
                             }
                         } else if let Some(bengali_consonant) = consonant_value(consonant_part) {
-                            result.push_str("র্");
+                            Self::append_reph_prefix(result);
                             result.push_str(bengali_consonant);
 
                             if !terminator_part.is_empty()
@@ -352,7 +357,7 @@ impl Transliterator {
                 }
                 PhoneticUnitType::SpecialForm => {
                     if unit.text == "rr" {
-                        result.push_str("র্");
+                        Self::append_reph_prefix(result);
                     } else if unit.text == "^" {
                         result.push_str(CHANDRABINDU);
                     } else if unit.text == ":" {
