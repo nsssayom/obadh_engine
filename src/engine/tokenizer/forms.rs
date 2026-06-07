@@ -8,23 +8,27 @@ use super::normalization::{
     normalize_redundant_reph_hasant, normalize_reph_and_vocalic_r,
     normalize_velar_nasal_conjunct_aliases,
 };
-use super::{move_unit, PhoneticUnit, PhoneticUnitType};
+use super::{move_unit, PhoneticUnit, PhoneticUnitType, WordScanHints};
 
 /// Identify complex phonetic forms like conjuncts and consonants with vowel modifiers.
-pub(super) fn identify_complex_forms(
-    units: &mut Vec<PhoneticUnit>,
-    has_long_iya_marker_candidate: bool,
-    has_non_conjunct_ra_ya_zwnj_candidate: bool,
-) {
+pub(super) fn identify_complex_forms(units: &mut Vec<PhoneticUnit>, scan_hints: WordScanHints) {
     let conjunct_defs = conjuncts();
 
-    normalize_redundant_reph_hasant(units);
-    normalize_reph_and_vocalic_r(units);
-    normalize_velar_nasal_conjunct_aliases(units);
-    if has_non_conjunct_ra_ya_zwnj_candidate {
+    if scan_hints.has_redundant_reph_hasant_candidate {
+        normalize_redundant_reph_hasant(units);
+    }
+    if scan_hints.has_reph_candidate {
+        normalize_reph_and_vocalic_r(units);
+    }
+    if scan_hints.has_velar_nasal_conjunct_alias_candidate {
+        normalize_velar_nasal_conjunct_aliases(units);
+    }
+    if scan_hints.has_non_conjunct_ra_ya_zwnj_candidate {
         normalize_non_conjunct_ra_ya_zwnj(units);
     }
-    normalize_redundant_khanda_ta_hasant(units);
+    if scan_hints.has_redundant_khanda_ta_hasant_candidate {
+        normalize_redundant_khanda_ta_hasant(units);
+    }
 
     // Explicit hasant is a user command, so it is preserved even before later
     // valid-conjunct filtering and vowel attachment runs.
@@ -51,7 +55,7 @@ pub(super) fn identify_complex_forms(
 
     // If `iyw` consumes a marker, a following vowel may now be adjacent to
     // `y`/`Y`; run the ordinary attachment pass once more in that case.
-    if has_long_iya_marker_candidate && normalize_iyw_long_iya_signal(units) {
+    if scan_hints.has_long_iya_marker_candidate && normalize_iyw_long_iya_signal(units) {
         compact_units_and_attach_vowels(units);
     }
 }

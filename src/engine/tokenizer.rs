@@ -18,6 +18,16 @@ use forms::identify_complex_forms;
 use long_iya::is_long_iya_marker_at;
 use patterns::{phonetic_pattern_trie_static, PatternTrie};
 
+#[derive(Default)]
+pub(super) struct WordScanHints {
+    has_reph_candidate: bool,
+    has_redundant_reph_hasant_candidate: bool,
+    has_redundant_khanda_ta_hasant_candidate: bool,
+    has_velar_nasal_conjunct_alias_candidate: bool,
+    has_long_iya_marker_candidate: bool,
+    has_non_conjunct_ra_ya_zwnj_candidate: bool,
+}
+
 /// Types of tokens that can be identified
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TokenType {
@@ -131,17 +141,18 @@ impl Tokenizer {
             return;
         }
 
-        let mut has_long_iya_marker_candidate = false;
-        let mut has_non_conjunct_ra_ya_zwnj_candidate = false;
+        let mut scan_hints = WordScanHints::default();
 
         // Process the base word without diacritics
         while _i < processed_word.len() {
             if let Some(rule_match) = self.phonetic_patterns.match_at(processed_word, _i) {
-                units.push(PhoneticUnit {
+                let unit = PhoneticUnit {
                     text: rule_match.text.to_string(),
                     unit_type: rule_match.unit_type,
                     position: _i,
-                });
+                };
+                scan_hints.observe_unit(&unit, units.last());
+                units.push(unit);
                 _i += rule_match.text.len();
                 continue;
             }
@@ -156,11 +167,11 @@ impl Tokenizer {
 
                 let unknown_text = &processed_word[_i.._i + char_len];
                 if unknown_text == "w" && is_long_iya_marker_at(processed_word, _i) {
-                    has_long_iya_marker_candidate = true;
+                    scan_hints.has_long_iya_marker_candidate = true;
                 } else if unknown_text == "Z"
                     && is_non_conjunct_ra_ya_zwnj_marker_at(processed_word, _i)
                 {
-                    has_non_conjunct_ra_ya_zwnj_candidate = true;
+                    scan_hints.has_non_conjunct_ra_ya_zwnj_candidate = true;
                 }
 
                 units.push(PhoneticUnit {
@@ -173,11 +184,7 @@ impl Tokenizer {
         }
 
         // Post-processing to identify conjuncts and other complex forms
-        identify_complex_forms(
-            units,
-            has_long_iya_marker_candidate,
-            has_non_conjunct_ra_ya_zwnj_candidate,
-        );
+        identify_complex_forms(units, scan_hints);
 
         append_trailing_diacritics(units, trailing_diacritics);
     }
@@ -203,6 +210,47 @@ fn is_non_conjunct_ra_ya_zwnj_marker_at(text: &str, byte_index: usize) -> bool {
     byte_index > 0
         && bytes.get(byte_index - 1) == Some(&b'r')
         && matches!(bytes.get(byte_index + 1), Some(b'y') | Some(b'Y'))
+}
+
+impl WordScanHints {
+    fn observe_unit(&mut self, unit: &PhoneticUnit, previous: Option<&PhoneticUnit>) {
+        if is_reph_signal(unit) {
+            self.has_reph_candidate = true;
+        }
+
+        if is_explicit_hasant_unit(unit) {
+            if previous.is_some_and(is_reph_signal) {
+                self.has_redundant_reph_hasant_candidate = true;
+            } else if previous.is_some_and(is_khanda_ta_signal) {
+                self.has_redundant_khanda_ta_hasant_candidate = true;
+            }
+        }
+
+        if previous.is_some_and(is_anusvara_ng_signal) && is_velar_nasal_conjunct_tail(unit) {
+            self.has_velar_nasal_conjunct_alias_candidate = true;
+        }
+    }
+}
+
+fn is_reph_signal(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::SpecialForm && unit.text == "rr"
+}
+
+fn is_explicit_hasant_unit(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::ConsonantWithHasant && unit.text == ",,"
+}
+
+fn is_khanda_ta_signal(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::SpecialForm && matches!(unit.text.as_str(), "t``" | "T``")
+}
+
+fn is_anusvara_ng_signal(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::SpecialForm && unit.text == "ng"
+}
+
+fn is_velar_nasal_conjunct_tail(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::Consonant
+        && matches!(unit.text.as_str(), "g" | "gh" | "Gh" | "GH")
 }
 
 fn move_unit(units: &mut [PhoneticUnit], read: usize, write: usize) {
