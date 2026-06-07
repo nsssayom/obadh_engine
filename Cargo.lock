@@ -418,7 +418,6 @@ dependencies = [
  "clap",
  "console_error_panic_hook",
  "criterion",
- "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
