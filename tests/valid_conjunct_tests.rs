@@ -114,6 +114,27 @@ fn test_source_conjunct_csv_keys_are_implemented() {
     }
 }
 
+#[test]
+fn test_source_conjunct_csv_keys_render_through_public_engine() {
+    let engine = ObadhEngine::new();
+    let Some(csv) = source_conjunct_csv() else {
+        return;
+    };
+
+    for row in source_conjunct_rows(&csv) {
+        let key = row.key();
+        let actual = engine.transliterate(&key);
+        assert!(
+            actual == row.conjunct || allowed_csv_value_conflict(&key, &actual, row.conjunct),
+            "CSV key '{key}' on row {} rendered as '{actual}', expected '{}'",
+            row.line_number,
+            row.conjunct
+        );
+    }
+
+    assert_eq!(engine.transliterate("rrt`` rrT``"), "র্ৎ র্ৎ");
+}
+
 fn allowed_csv_value_conflict(key: &str, actual: &str, expected: &str) -> bool {
     key == "rrt" && actual == "র্ত" && expected == "র্ৎ"
 }
