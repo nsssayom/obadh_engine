@@ -4,7 +4,11 @@
 //! based on phonetic components. The engine uses this compiled Rust rule table
 //! directly; source CSV data is not parsed or shipped on the runtime path.
 
+mod trie;
+
 use crate::definitions::consonant_value;
+use trie::ConjunctTrie;
+
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -646,92 +650,6 @@ fn is_special_form_key(form: &str) -> bool {
 pub fn conjuncts() -> &'static ConjunctDefinitions {
     static INSTANCE: OnceLock<ConjunctDefinitions> = OnceLock::new();
     INSTANCE.get_or_init(ConjunctDefinitions::new)
-}
-
-#[derive(Debug)]
-struct ConjunctTrie {
-    nodes: Vec<ConjunctTrieNode>,
-}
-
-#[derive(Debug, Default)]
-struct ConjunctTrieNode {
-    value: Option<&'static str>,
-    edges: Vec<ConjunctTrieEdge>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ConjunctTrieEdge {
-    byte: u8,
-    node: usize,
-}
-
-impl ConjunctTrie {
-    fn with_capacity(capacity: usize) -> Self {
-        let mut nodes = Vec::with_capacity(capacity);
-        nodes.push(ConjunctTrieNode::default());
-
-        Self { nodes }
-    }
-
-    fn root(&self) -> usize {
-        0
-    }
-
-    fn insert(&mut self, key: &'static str, value: &'static str) {
-        let mut node = self.root();
-
-        for byte in key.bytes() {
-            node = self.child_or_insert(node, byte);
-        }
-
-        assert!(
-            self.nodes[node].value.is_none(),
-            "duplicate conjunct trie key: {key}"
-        );
-        self.nodes[node].value = Some(value);
-    }
-
-    fn child_or_insert(&mut self, node: usize, byte: u8) -> usize {
-        if let Some(edge) = self.nodes[node].edges.iter().find(|edge| edge.byte == byte) {
-            return edge.node;
-        }
-
-        let child = self.nodes.len();
-        self.nodes.push(ConjunctTrieNode::default());
-        self.nodes[node]
-            .edges
-            .push(ConjunctTrieEdge { byte, node: child });
-        child
-    }
-
-    fn sort_edges(&mut self) {
-        for node in &mut self.nodes {
-            node.edges.sort_unstable_by_key(|edge| edge.byte);
-        }
-    }
-
-    fn advance(&self, node: usize, part: &str) -> Option<usize> {
-        let mut current = node;
-
-        for byte in part.bytes() {
-            current = self.nodes.get(current)?.child(byte)?;
-        }
-
-        Some(current)
-    }
-
-    fn value(&self, node: usize) -> Option<&'static str> {
-        self.nodes.get(node)?.value
-    }
-}
-
-impl ConjunctTrieNode {
-    fn child(&self, byte: u8) -> Option<usize> {
-        self.edges
-            .binary_search_by_key(&byte, |edge| edge.byte)
-            .ok()
-            .map(|index| self.edges[index].node)
-    }
 }
 
 fn conjunct_trie_node_capacity() -> usize {
