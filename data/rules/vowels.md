@@ -107,6 +107,6 @@ The following examples show how vowels combine with consonants:
 | ক + ূ | kU | কূ |
 | ক + ে | ke | কে |
 | ক + ৈ | kOI | কৈ |
-| ক + ো | ko | কো |
+| ক + ো | kO | কো |
 | ক + ৌ | kOU | কৌ |
 | ক + ৃ | krri | কৃ |

@@ -42,6 +42,20 @@ fn documented_lowercase_oi_ou_policy_matches_runtime_behavior() {
 }
 
 #[test]
+fn documented_consonant_vowel_examples_match_runtime_behavior() {
+    let engine = ObadhEngine::new();
+
+    for row in consonant_vowel_example_rows(VOWEL_RULES_DOC) {
+        assert_eq!(
+            engine.transliterate(row.roman_input),
+            row.bengali_output,
+            "documented consonant-vowel example {:?} should match runtime",
+            row.roman_input
+        );
+    }
+}
+
+#[test]
 fn deliberate_input_contract_documents_every_diacritic_rule() {
     let documented_signals = deliberate_input_contract_signal_cells(README_DOC);
 
@@ -122,6 +136,11 @@ struct ConsonantTableRow<'a> {
     bengali_output: &'a str,
 }
 
+struct ConsonantVowelExampleRow<'a> {
+    roman_input: &'a str,
+    bengali_output: &'a str,
+}
+
 fn basic_consonant_table_rows(markdown: &str) -> impl Iterator<Item = ConsonantTableRow<'_>> {
     markdown
         .lines()
@@ -135,6 +154,27 @@ fn parse_consonant_table_row(line: &str) -> Option<ConsonantTableRow<'_>> {
     let mut columns = line.trim_matches('|').split('|').map(str::trim);
 
     Some(ConsonantTableRow {
+        roman_input: columns.next()?,
+        bengali_output: columns.next()?,
+    })
+}
+
+fn consonant_vowel_example_rows(
+    markdown: &str,
+) -> impl Iterator<Item = ConsonantVowelExampleRow<'_>> {
+    markdown
+        .lines()
+        .skip_while(|line| !line.starts_with("| Combination | Roman Input | Bengali Output |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(parse_consonant_vowel_example_row)
+}
+
+fn parse_consonant_vowel_example_row(line: &str) -> Option<ConsonantVowelExampleRow<'_>> {
+    let mut columns = line.trim_matches('|').split('|').map(str::trim);
+    let _combination = columns.next()?;
+
+    Some(ConsonantVowelExampleRow {
         roman_input: columns.next()?,
         bengali_output: columns.next()?,
     })
