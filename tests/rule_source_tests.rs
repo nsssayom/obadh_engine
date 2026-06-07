@@ -1,6 +1,11 @@
-use obadh_engine::definitions::{diacritic_rules, diacritic_value, is_vowel, vowel_value};
+use std::collections::BTreeSet;
+
+use obadh_engine::definitions::{
+    consonant_categories, consonant_value, diacritic_rules, diacritic_value, is_vowel, vowel_value,
+};
 use obadh_engine::ObadhEngine;
 
+const CONSONANT_RULES_DOC: &str = include_str!("../data/rules/consonants.md");
 const README_DOC: &str = include_str!("../README.md");
 const KNOWN_ISSUES_DOC: &str = include_str!("../KNOWN_ISSUES.md");
 const CONJUNCT_RULES_DOC: &str = include_str!("../data/rules/conjunct.wiki");
@@ -56,6 +61,39 @@ fn deliberate_input_contract_documents_every_diacritic_rule() {
 }
 
 #[test]
+fn documented_consonant_table_matches_runtime_rules() {
+    let mut documented_keys = BTreeSet::new();
+
+    for row in basic_consonant_table_rows(CONSONANT_RULES_DOC) {
+        for roman in roman_rule_keys(row.roman_input) {
+            assert!(
+                documented_keys.insert(roman),
+                "documented consonant key {roman:?} should appear only once"
+            );
+            assert_eq!(
+                consonant_value(roman),
+                Some(row.bengali_output),
+                "documented consonant output for {roman:?} should match runtime"
+            );
+        }
+    }
+
+    for category in consonant_categories() {
+        for &(roman, expected) in category {
+            assert_eq!(
+                consonant_value(roman),
+                Some(expected),
+                "consonant {roman:?} should be directly renderable"
+            );
+            assert!(
+                documented_keys.contains(roman),
+                "runtime consonant signal {roman:?} is missing from data/rules/consonants.md"
+            );
+        }
+    }
+}
+
+#[test]
 fn deliberate_input_contract_documents_non_conjunct_ra_ya_zwnj_source_note() {
     let zwnj_ra_ya = "র\u{200C}\u{09CD}য";
 
@@ -77,6 +115,29 @@ struct VowelTableRow<'a> {
     roman_input: &'a str,
     independent: &'a str,
     dependent: &'a str,
+}
+
+struct ConsonantTableRow<'a> {
+    roman_input: &'a str,
+    bengali_output: &'a str,
+}
+
+fn basic_consonant_table_rows(markdown: &str) -> impl Iterator<Item = ConsonantTableRow<'_>> {
+    markdown
+        .lines()
+        .skip_while(|line| !line.starts_with("| Roman Input | Bengali Output |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(parse_consonant_table_row)
+}
+
+fn parse_consonant_table_row(line: &str) -> Option<ConsonantTableRow<'_>> {
+    let mut columns = line.trim_matches('|').split('|').map(str::trim);
+
+    Some(ConsonantTableRow {
+        roman_input: columns.next()?,
+        bengali_output: columns.next()?,
+    })
 }
 
 fn basic_vowel_table_rows(markdown: &str) -> impl Iterator<Item = VowelTableRow<'_>> {

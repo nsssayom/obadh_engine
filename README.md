@@ -75,6 +75,8 @@ This engine does not try to rescue casual or approximate Roman spellings. The us
 
 Rule signals, not memorized words:
 
+The full consonant signal table is maintained in `data/rules/consonants.md` and checked against the runtime rule table. The high-frequency deliberate input contract is summarized here:
+
 | Roman Signal | Bengali Rule Intent |
 |--------------|---------------------|
 | `A` / `aa` | long আ / া |
