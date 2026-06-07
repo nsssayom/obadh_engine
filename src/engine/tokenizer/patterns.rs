@@ -129,7 +129,7 @@ fn phonetic_patterns() -> Vec<(&'static str, PhoneticUnitType)> {
     }
 
     for &(roman, _) in symbol_rules() {
-        patterns.push((roman, PhoneticUnitType::SpecialForm));
+        patterns.push((roman, PhoneticUnitType::Symbol));
     }
 
     for category in consonant_categories() {

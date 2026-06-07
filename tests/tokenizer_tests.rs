@@ -117,6 +117,8 @@ fn test_phonetic_tokenization_uses_definition_rules() {
         ("rr", "rr", PhoneticUnitType::SpecialForm),
         (",,", ",,", PhoneticUnitType::ConsonantWithHasant),
         ("M", "M", PhoneticUnitType::SpecialForm),
+        (".", ".", PhoneticUnitType::Symbol),
+        ("$", "$", PhoneticUnitType::Symbol),
         ("kha", "kha", PhoneticUnitType::ConsonantWithVowel),
         ("gha", "gha", PhoneticUnitType::ConsonantWithVowel),
     ];
