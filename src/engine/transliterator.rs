@@ -34,6 +34,26 @@ pub struct Transliterator {
     tokenizer: Tokenizer,
 }
 
+struct TextRenderState {
+    current_word_start: Option<usize>,
+    current_word_end: usize,
+    current_word_is_number: bool,
+    previous_boundary: TokenNumberBoundary,
+    phonetic_units: Vec<PhoneticUnit>,
+}
+
+impl TextRenderState {
+    fn new() -> Self {
+        Self {
+            current_word_start: None,
+            current_word_end: 0,
+            current_word_is_number: true,
+            previous_boundary: TokenNumberBoundary::default(),
+            phonetic_units: Vec::new(),
+        }
+    }
+}
+
 impl Transliterator {
     /// Create a new transliterator with default configuration
     pub fn new() -> Self {
@@ -102,10 +122,7 @@ impl Transliterator {
 
     fn render_text_inner<const CHECK_INPUT: bool>(&self, text: &str) -> Option<String> {
         let mut result = String::with_capacity(estimated_text_render_capacity(text));
-        let mut current_word_start = None;
-        let mut current_word_end = 0;
-        let mut previous_boundary = TokenNumberBoundary::default();
-        let mut phonetic_units = Vec::new();
+        let mut state = TextRenderState::new();
 
         let mut i = 0;
         while i < text.len() {
@@ -117,55 +134,55 @@ impl Transliterator {
             }
 
             if is_phonetic_mark_signal(character) {
-                if current_word_start.is_none() {
-                    current_word_start = Some(i);
+                if state.current_word_start.is_none() {
+                    state.current_word_start = Some(i);
                 }
-                current_word_end = i + char_len;
+                state.current_word_is_number = false;
+                state.current_word_end = i + char_len;
                 i += char_len;
                 continue;
             }
 
-            if let Some(start) = current_word_start {
-                if is_khanda_ta_suffix_signal_at(character, text, i, &text[start..current_word_end])
-                {
+            if let Some(start) = state.current_word_start {
+                if is_khanda_ta_suffix_signal_at(
+                    character,
+                    text,
+                    i,
+                    &text[start..state.current_word_end],
+                ) {
+                    state.current_word_is_number = false;
                     i += 2;
-                    current_word_end = i;
+                    state.current_word_end = i;
                     continue;
                 }
             }
 
             if is_explicit_hasant_signal_at(character, text, i) {
-                if current_word_start.is_none() {
-                    current_word_start = Some(i);
+                if state.current_word_start.is_none() {
+                    state.current_word_start = Some(i);
                 }
+                state.current_word_is_number = false;
                 i += 2;
-                current_word_end = i;
+                state.current_word_end = i;
                 continue;
             }
 
             if character.is_whitespace() {
-                self.flush_current_word(
-                    &mut result,
-                    text,
-                    &mut current_word_start,
-                    current_word_end,
-                    &mut previous_boundary,
-                    &mut phonetic_units,
-                );
+                self.flush_current_word(&mut result, text, &mut state);
                 result.push(character);
-                previous_boundary = TokenNumberBoundary::default();
+                state.previous_boundary = TokenNumberBoundary::default();
             } else if character.is_ascii_punctuation() {
-                let current_word = current_word_start.map(|start| &text[start..current_word_end]);
-                let is_decimal =
-                    is_decimal_separator_at(text, i, char_len, current_word, previous_boundary);
-                self.flush_current_word(
-                    &mut result,
+                let current_word = state
+                    .current_word_start
+                    .map(|start| &text[start..state.current_word_end]);
+                let is_decimal = is_decimal_separator_at(
                     text,
-                    &mut current_word_start,
-                    current_word_end,
-                    &mut previous_boundary,
-                    &mut phonetic_units,
+                    i,
+                    char_len,
+                    current_word,
+                    state.previous_boundary,
                 );
+                self.flush_current_word(&mut result, text, &mut state);
 
                 if is_decimal {
                     result.push('.');
@@ -174,16 +191,9 @@ impl Transliterator {
                 } else {
                     result.push(character);
                 }
-                previous_boundary = TokenNumberBoundary::default();
+                state.previous_boundary = TokenNumberBoundary::default();
             } else if !character.is_alphanumeric() {
-                self.flush_current_word(
-                    &mut result,
-                    text,
-                    &mut current_word_start,
-                    current_word_end,
-                    &mut previous_boundary,
-                    &mut phonetic_units,
-                );
+                self.flush_current_word(&mut result, text, &mut state);
 
                 let symbol_text = &text[i..i + char_len];
                 if let Some(bengali_symbol) = symbol_value(symbol_text) {
@@ -191,49 +201,39 @@ impl Transliterator {
                 } else {
                     result.push_str(symbol_text);
                 }
-                previous_boundary = TokenNumberBoundary::default();
+                state.previous_boundary = TokenNumberBoundary::default();
             } else {
-                if current_word_start.is_none() {
-                    current_word_start = Some(i);
+                if state.current_word_start.is_none() {
+                    state.current_word_start = Some(i);
+                    state.current_word_is_number = true;
                 }
-                current_word_end = i + char_len;
+                state.current_word_is_number &= character.is_numeric();
+                state.current_word_end = i + char_len;
             }
 
             i += char_len;
         }
 
-        self.flush_current_word(
-            &mut result,
-            text,
-            &mut current_word_start,
-            current_word_end,
-            &mut previous_boundary,
-            &mut phonetic_units,
-        );
+        self.flush_current_word(&mut result, text, &mut state);
 
         Some(result)
     }
 
-    fn flush_current_word(
-        &self,
-        result: &mut String,
-        text: &str,
-        current_word_start: &mut Option<usize>,
-        current_word_end: usize,
-        previous_boundary: &mut TokenNumberBoundary,
-        phonetic_units: &mut Vec<PhoneticUnit>,
-    ) {
-        let Some(start) = current_word_start.take() else {
+    fn flush_current_word(&self, result: &mut String, text: &str, state: &mut TextRenderState) {
+        let Some(start) = state.current_word_start.take() else {
+            state.current_word_is_number = true;
             return;
         };
-        let current_word = &text[start..current_word_end];
+        let current_word = &text[start..state.current_word_end];
+        let is_number = state.current_word_is_number;
+        state.current_word_is_number = true;
 
-        *previous_boundary = TokenNumberBoundary::from_word(current_word);
+        state.previous_boundary = TokenNumberBoundary::from_word(current_word);
 
-        if current_word.chars().all(|character| character.is_numeric()) {
+        if is_number {
             self.render_number_token(result, current_word);
         } else {
-            self.transliterate_word_units_into(result, current_word, phonetic_units);
+            self.transliterate_word_units_into(result, current_word, &mut state.phonetic_units);
         }
     }
 
