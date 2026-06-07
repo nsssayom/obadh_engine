@@ -10,16 +10,22 @@ use std::sync::OnceLock;
 /// A Roman input rule and its Bengali diacritic output.
 pub type DiacriticRule = (&'static str, &'static str);
 
+pub(crate) const HASANT: &str = "্";
+pub(crate) const CHANDRABINDU: &str = "ঁ";
+pub(crate) const VISARGA: &str = "ঃ";
+pub(crate) const KHANDA_TA: &str = "ৎ";
+pub(crate) const ANUSVARA: &str = "ং";
+
 const DIACRITIC_RULES: &[DiacriticRule] = &[
     // Hasanta (virama) - explicit user signal that suppresses the inherent vowel
     // and drives deterministic conjunct formation when placed between consonants.
-    (",,", "্"),
-    ("^", "ঁ"),    // Chandrabindu
-    (":", "ঃ"),   // Visarga
-    ("t``", "ৎ"), // Khanda Ta
-    ("T``", "ৎ"), // Khanda Ta alias
-    ("ng", "ং"),  // Anusvara
-    ("M", "ং"),   // Explicit anusvara alias; useful before g/gh without invoking ngg/nggh
+    (",,", HASANT),
+    ("^", CHANDRABINDU), // Chandrabindu
+    (":", VISARGA),      // Visarga
+    ("t``", KHANDA_TA),  // Khanda Ta
+    ("T``", KHANDA_TA),  // Khanda Ta alias
+    ("ng", ANUSVARA),    // Anusvara
+    ("M", ANUSVARA),     // Explicit anusvara alias; useful before g/gh without invoking ngg/nggh
 ];
 
 fn build_diacritics() -> HashMap<&'static str, &'static str> {
@@ -40,11 +46,11 @@ pub const fn diacritic_rules() -> &'static [DiacriticRule] {
 /// Look up a Bengali diacritic from a Roman rule key without constructing or hashing a map.
 pub fn diacritic_value(roman: &str) -> Option<&'static str> {
     match roman {
-        ",," => Some("্"),
-        "^" => Some("ঁ"),
-        ":" => Some("ঃ"),
-        "t``" | "T``" => Some("ৎ"),
-        "ng" | "M" => Some("ং"),
+        ",," => Some(HASANT),
+        "^" => Some(CHANDRABINDU),
+        ":" => Some(VISARGA),
+        "t``" | "T``" => Some(KHANDA_TA),
+        "ng" | "M" => Some(ANUSVARA),
         _ => None,
     }
 }

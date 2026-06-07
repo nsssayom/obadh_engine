@@ -1,6 +1,10 @@
 use std::borrow::Cow;
 
-use crate::definitions::{consonant_value, diacritic_value, symbol_value, vowel_value};
+use crate::definitions::{
+    consonant_value,
+    diacritics::{ANUSVARA, CHANDRABINDU, HASANT, KHANDA_TA, VISARGA},
+    symbol_value, vowel_value,
+};
 
 use super::{
     boundary::starts_with_cluster,
@@ -33,20 +37,18 @@ impl Transliterator {
 
         if parts.first() == Some(&"rr") {
             let tail = self.render_conjunct_parts(&parts[1..])?;
-            let hasant = diacritic_value(",,").unwrap_or("্");
             let mut rendered = String::from("র");
-            rendered.push_str(hasant);
+            rendered.push_str(HASANT);
             rendered.push_str(tail.as_ref());
             return Some(Cow::Owned(rendered));
         }
 
-        let hasant = diacritic_value(",,").unwrap_or("্");
         let mut rendered = String::new();
 
         for (index, part) in parts.iter().enumerate() {
             rendered.push_str(self.conjunct_component(part)?);
             if index < parts.len() - 1 {
-                rendered.push_str(hasant);
+                rendered.push_str(HASANT);
             }
         }
 
@@ -54,14 +56,7 @@ impl Transliterator {
     }
 
     fn append_dependent_vowel(&self, output: &mut String, vowel_key: &str) -> bool {
-        if let Some(vowel) = vowel_value(vowel_key) {
-            if let Some(dependent) = &vowel.dependent {
-                output.push_str(dependent);
-            }
-            true
-        } else {
-            false
-        }
+        self.append_vowel(output, vowel_key, true)
     }
 
     fn append_vowel(&self, output: &mut String, vowel_key: &str, as_dependent: bool) -> bool {
@@ -209,8 +204,7 @@ impl Transliterator {
                 }
                 PhoneticUnitType::ConsonantWithHasant => {
                     if unit.text == ",," {
-                        let hasant = diacritic_value(",,").unwrap_or("্");
-                        result.push_str(hasant);
+                        result.push_str(HASANT);
                     } else {
                         result.push_str(&unit.text);
                     }
@@ -360,26 +354,13 @@ impl Transliterator {
                     if unit.text == "rr" {
                         result.push_str("র্");
                     } else if unit.text == "^" {
-                        if let Some(chandrabindu) = diacritic_value("^") {
-                            result.push_str(chandrabindu);
-                        } else {
-                            result.push('ঁ');
-                        }
+                        result.push_str(CHANDRABINDU);
                     } else if unit.text == ":" {
-                        if let Some(visarga) = diacritic_value(":") {
-                            result.push_str(visarga);
-                        } else {
-                            result.push('ঃ');
-                        }
+                        result.push_str(VISARGA);
                     } else if matches!(unit.text.as_str(), "t``" | "T``") {
-                        let khanda_ta = diacritic_value(unit.text.as_str()).unwrap_or("ৎ");
-                        result.push_str(khanda_ta);
+                        result.push_str(KHANDA_TA);
                     } else if matches!(unit.text.as_str(), "ng" | "M") {
-                        if let Some(anusvara) = diacritic_value(unit.text.as_str()) {
-                            result.push_str(anusvara);
-                        } else {
-                            result.push('ং');
-                        }
+                        result.push_str(ANUSVARA);
                     } else {
                         result.push_str(&unit.text);
                     }
