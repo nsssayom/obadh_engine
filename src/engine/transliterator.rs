@@ -92,6 +92,15 @@ impl Transliterator {
     }
 
     fn render_text(&self, text: &str) -> String {
+        self.render_text_inner::<false>(text)
+            .expect("unchecked render path should not reject input")
+    }
+
+    fn render_text_checked(&self, text: &str) -> Option<String> {
+        self.render_text_inner::<true>(text)
+    }
+
+    fn render_text_inner<const CHECK_INPUT: bool>(&self, text: &str) -> Option<String> {
         let mut result = String::with_capacity(estimated_text_render_capacity(text));
         let mut current_word_start = None;
         let mut current_word_end = 0;
@@ -102,6 +111,10 @@ impl Transliterator {
         while i < text.len() {
             let character = text[i..].chars().next().unwrap();
             let char_len = character.len_utf8();
+
+            if CHECK_INPUT && !self.sanitizer.is_allowed_char(character) {
+                return None;
+            }
 
             if is_phonetic_mark_signal(character) {
                 if current_word_start.is_none() {
@@ -198,7 +211,7 @@ impl Transliterator {
             &mut phonetic_units,
         );
 
-        result
+        Some(result)
     }
 
     fn flush_current_word(
@@ -261,13 +274,11 @@ impl Transliterator {
 
     /// Transliterate Roman text to Bengali
     pub fn transliterate(&self, text: &str) -> String {
-        if self.sanitizer.is_valid(text) {
-            self.render_text(text)
-        } else {
-            // Keep the total `transliterate` API side-effect free. Callers
-            // that need details can use `sanitize` before transliterating.
-            text.to_string()
-        }
+        // Keep the total `transliterate` API side-effect free. Callers that
+        // need details can use `sanitize` before transliterating. Validation is
+        // fused into rendering so the common valid path does not scan twice.
+        self.render_text_checked(text)
+            .unwrap_or_else(|| text.to_string())
     }
 
     /// Tokenize the input text into words and other tokens

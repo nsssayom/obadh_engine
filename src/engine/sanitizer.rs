@@ -33,7 +33,7 @@ impl Sanitizer {
         self
     }
 
-    fn is_allowed_char(&self, c: char) -> bool {
+    pub(crate) fn is_allowed_char(&self, c: char) -> bool {
         is_default_allowed_char(c)
             || self
                 .extra_allowed_chars
