@@ -38,6 +38,7 @@ struct TextRenderState {
     current_word_start: Option<usize>,
     current_word_end: usize,
     current_word_is_number: bool,
+    current_word_ends_with_number: bool,
     previous_boundary: TokenNumberBoundary,
     phonetic_units: Vec<PhoneticUnit>,
 }
@@ -48,6 +49,7 @@ impl TextRenderState {
             current_word_start: None,
             current_word_end: 0,
             current_word_is_number: true,
+            current_word_ends_with_number: false,
             previous_boundary: TokenNumberBoundary::default(),
             phonetic_units: Vec::new(),
         }
@@ -138,6 +140,7 @@ impl Transliterator {
                     state.current_word_start = Some(i);
                 }
                 state.current_word_is_number = false;
+                state.current_word_ends_with_number = false;
                 state.current_word_end = i + char_len;
                 i += char_len;
                 continue;
@@ -151,6 +154,7 @@ impl Transliterator {
                     &text[start..state.current_word_end],
                 ) {
                     state.current_word_is_number = false;
+                    state.current_word_ends_with_number = false;
                     i += 2;
                     state.current_word_end = i;
                     continue;
@@ -162,6 +166,7 @@ impl Transliterator {
                     state.current_word_start = Some(i);
                 }
                 state.current_word_is_number = false;
+                state.current_word_ends_with_number = false;
                 i += 2;
                 state.current_word_end = i;
                 continue;
@@ -172,9 +177,9 @@ impl Transliterator {
                 result.push(character);
                 state.previous_boundary = TokenNumberBoundary::default();
             } else if character.is_ascii_punctuation() {
-                let current_word = state
-                    .current_word_start
-                    .map(|start| &text[start..state.current_word_end]);
+                let current_word = state.current_word_start.map(|_| {
+                    TokenNumberBoundary::from_number_state(state.current_word_ends_with_number)
+                });
                 let is_decimal = is_decimal_separator_at(
                     text,
                     i,
@@ -207,7 +212,9 @@ impl Transliterator {
                     state.current_word_start = Some(i);
                     state.current_word_is_number = true;
                 }
-                state.current_word_is_number &= character.is_numeric();
+                let is_number = character.is_numeric();
+                state.current_word_is_number &= is_number;
+                state.current_word_ends_with_number = is_number;
                 state.current_word_end = i + char_len;
             }
 
@@ -222,13 +229,16 @@ impl Transliterator {
     fn flush_current_word(&self, result: &mut String, text: &str, state: &mut TextRenderState) {
         let Some(start) = state.current_word_start.take() else {
             state.current_word_is_number = true;
+            state.current_word_ends_with_number = false;
             return;
         };
         let current_word = &text[start..state.current_word_end];
         let is_number = state.current_word_is_number;
+        let ends_with_number = state.current_word_ends_with_number;
         state.current_word_is_number = true;
+        state.current_word_ends_with_number = false;
 
-        state.previous_boundary = TokenNumberBoundary::from_word(current_word);
+        state.previous_boundary = TokenNumberBoundary::from_number_state(ends_with_number);
 
         if is_number {
             self.render_number_token(result, current_word);

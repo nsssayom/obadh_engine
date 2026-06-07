@@ -10,10 +10,10 @@ pub(super) struct TokenNumberBoundary {
 
 impl TokenNumberBoundary {
     #[inline]
-    pub(super) fn from_word(word: &str) -> Self {
+    pub(super) const fn from_number_state(ends_with_number: bool) -> Self {
         Self {
             can_contain_number: true,
-            ends_with_number: text_ends_with_number(word),
+            ends_with_number,
         }
     }
 }
@@ -23,14 +23,14 @@ pub(super) fn is_decimal_separator_at(
     text: &str,
     byte_index: usize,
     current_char_len: usize,
-    current_word: Option<&str>,
+    current_word: Option<TokenNumberBoundary>,
     previous_boundary: TokenNumberBoundary,
 ) -> bool {
     if &text[byte_index..byte_index + current_char_len] != "." {
         return false;
     }
 
-    let previous = current_word.map_or(previous_boundary, TokenNumberBoundary::from_word);
+    let previous = current_word.unwrap_or(previous_boundary);
 
     previous.can_contain_number
         && previous.ends_with_number
@@ -41,13 +41,6 @@ pub(super) fn is_decimal_separator_at(
 fn next_token_starts_with_number(text: &str, byte_index: usize) -> bool {
     text.get(byte_index..)
         .and_then(|suffix| suffix.chars().next())
-        .is_some_and(|character| character.is_numeric())
-}
-
-#[inline]
-fn text_ends_with_number(text: &str) -> bool {
-    text.chars()
-        .next_back()
         .is_some_and(|character| character.is_numeric())
 }
 
