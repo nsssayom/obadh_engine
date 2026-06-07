@@ -135,6 +135,46 @@ fn test_source_conjunct_csv_keys_render_through_public_engine() {
     assert_eq!(engine.transliterate("rrt`` rrT``"), "র্ৎ র্ৎ");
 }
 
+#[test]
+fn test_source_conjunct_csv_keys_accept_canonical_dependent_vowels() {
+    const VOWEL_CASES: &[(&str, &str)] = &[
+        ("A", "া"),
+        ("i", "ি"),
+        ("I", "ী"),
+        ("u", "ু"),
+        ("U", "ূ"),
+        ("e", "ে"),
+        ("O", "ো"),
+        ("OI", "ৈ"),
+        ("OU", "ৌ"),
+    ];
+
+    let engine = ObadhEngine::new();
+    let Some(csv) = source_conjunct_csv() else {
+        return;
+    };
+
+    for row in source_conjunct_rows(&csv) {
+        let key = row.key();
+        let rendered_base = engine.transliterate(&key);
+
+        if allowed_csv_value_conflict(&key, &rendered_base, row.conjunct) {
+            continue;
+        }
+
+        for &(vowel_key, dependent_vowel) in VOWEL_CASES {
+            let input = format!("{key}{vowel_key}");
+            let actual = engine.transliterate(&input);
+            let expected = format!("{rendered_base}{dependent_vowel}");
+            assert_eq!(
+                actual, expected,
+                "CSV key '{key}' on row {} did not accept dependent vowel '{vowel_key}'",
+                row.line_number
+            );
+        }
+    }
+}
+
 fn allowed_csv_value_conflict(key: &str, actual: &str, expected: &str) -> bool {
     key == "rrt" && actual == "র্ত" && expected == "র্ৎ"
 }
