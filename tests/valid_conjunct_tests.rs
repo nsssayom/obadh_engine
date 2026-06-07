@@ -2,7 +2,7 @@ use obadh_engine::{
     definitions::{conjuncts, consonants_static},
     ObadhEngine, PhoneticUnitType, Tokenizer,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -98,6 +98,16 @@ fn test_source_conjunct_csv_keys_are_implemented() {
     for row in source_conjunct_rows(&csv) {
         let key = row.key();
         let actual = definitions.create_conjunct(&key);
+
+        if is_composable_khanda_ta_reph_source_row(&row) {
+            assert!(
+                actual.is_none(),
+                "CSV key '{key}' on row {} should stay composable through khanda-ta rules, not the implicit conjunct table",
+                row.line_number
+            );
+            continue;
+        }
+
         assert!(
             actual.is_some(),
             "Missing conjunct rule for CSV key '{key}' on row {}",
@@ -105,11 +115,10 @@ fn test_source_conjunct_csv_keys_are_implemented() {
         );
 
         let actual = actual.unwrap();
-        assert!(
-            actual == row.conjunct || allowed_csv_value_conflict(&key, actual, row.conjunct),
+        assert_eq!(
+            actual, row.conjunct,
             "Mismatched conjunct rule for CSV key '{key}' on row {}: expected '{}', got '{actual}'",
-            row.line_number,
-            row.conjunct
+            row.line_number, row.conjunct
         );
     }
 }
@@ -124,11 +133,10 @@ fn test_source_conjunct_csv_keys_render_through_public_engine() {
     for row in source_conjunct_rows(&csv) {
         let key = row.key();
         let actual = engine.transliterate(&key);
-        assert!(
-            actual == row.conjunct || allowed_csv_value_conflict(&key, &actual, row.conjunct),
+        assert_eq!(
+            actual, row.conjunct,
             "CSV key '{key}' on row {} rendered as '{actual}', expected '{}'",
-            row.line_number,
-            row.conjunct
+            row.line_number, row.conjunct
         );
     }
 
@@ -158,7 +166,7 @@ fn test_source_conjunct_csv_keys_accept_canonical_dependent_vowels() {
         let key = row.key();
         let rendered_base = engine.transliterate(&key);
 
-        if allowed_csv_value_conflict(&key, &rendered_base, row.conjunct) {
+        if is_composable_khanda_ta_reph_source_row(&row) {
             continue;
         }
 
@@ -183,11 +191,6 @@ fn test_source_conjunct_csv_components_render_with_explicit_hasant() {
     };
 
     for row in source_conjunct_rows(&csv) {
-        let key = row.key();
-        if allowed_csv_value_conflict(&key, &engine.transliterate(&key), row.conjunct) {
-            continue;
-        }
-
         let explicit_key = row.roman_components.join(",,");
         let actual = engine.transliterate(&explicit_key);
         assert_eq!(
@@ -196,10 +199,6 @@ fn test_source_conjunct_csv_components_render_with_explicit_hasant() {
             row.line_number, row.conjunct
         );
     }
-}
-
-fn allowed_csv_value_conflict(key: &str, actual: &str, expected: &str) -> bool {
-    key == "rrt" && actual == "র্ত" && expected == "র্ৎ"
 }
 
 #[test]
@@ -327,28 +326,41 @@ fn test_source_conjunct_csv_outputs_match_components_or_declared_exceptions() {
 }
 
 #[test]
-fn test_source_conjunct_csv_duplicate_keys_are_intentional() {
+fn test_source_conjunct_csv_keys_are_unique() {
     let Some(csv) = source_conjunct_csv() else {
         return;
     };
 
-    let mut by_key: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut keys = BTreeSet::new();
     for row in source_conjunct_rows(&csv) {
-        by_key
-            .entry(row.key())
-            .or_default()
-            .push(row.conjunct.to_string());
+        let key = row.key();
+        assert!(
+            keys.insert(key.clone()),
+            "Duplicate CSV key '{key}' on row {}",
+            row.line_number
+        );
     }
+}
 
-    let duplicates: Vec<_> = by_key
-        .into_iter()
-        .filter(|(_, values)| values.len() > 1)
+#[test]
+fn test_source_conjunct_csv_uses_canonical_khanda_ta_reph_signal() {
+    let Some(csv) = source_conjunct_csv() else {
+        return;
+    };
+
+    let rows: Vec<_> = source_conjunct_rows(&csv)
+        .filter(|row| row.conjunct == "র্ৎ")
         .collect();
-
     assert_eq!(
-        duplicates,
-        vec![("rrt".to_string(), vec!["র্ত".to_string(), "র্ৎ".to_string()])]
+        rows.len(),
+        1,
+        "The র্ৎ source form should have one canonical Roman signal"
     );
+
+    let row = &rows[0];
+    assert_eq!(row.roman_components, vec!["rr", "t``"]);
+    assert_eq!(row.key(), "rrt``");
+    assert!(is_composable_khanda_ta_reph_source_row(row));
 }
 
 #[test]
@@ -526,8 +538,12 @@ fn is_contextual_khanda_ta_row(row: &SourceConjunctRow<'_>) -> bool {
     row.conjunct == format!("ৎ{}", tail.join("্"))
 }
 
+fn is_composable_khanda_ta_reph_source_row(row: &SourceConjunctRow<'_>) -> bool {
+    row.conjunct == "র্ৎ" && row.roman_components == ["rr", "t``"]
+}
+
 fn is_conjunct_source_special_component(component: &str) -> bool {
-    matches!(component, "rr" | "w")
+    matches!(component, "rr" | "w" | "t``")
 }
 
 fn declared_alias_keys_for_source_row(row: &SourceConjunctRow<'_>) -> BTreeSet<String> {
@@ -656,7 +672,7 @@ fn source_component_bengali<'a>(
     consonants: &'a std::collections::HashMap<&'static str, &'static str>,
 ) -> Option<&'a str> {
     match (row.key().as_str(), row.conjunct, roman) {
-        ("rrt", "র্ৎ", "t") => Some("ৎ"),
+        ("rrt``", "র্ৎ", "t``") => Some("ৎ"),
         (_, _, "rr") => Some("র"),
         (_, _, "w") => Some("ব"),
         (_, _, "y" | "Y") => Some("য"),
