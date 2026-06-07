@@ -3,10 +3,13 @@
 //! This module provides functionality to tokenize input text into words
 //! and letters/phonemes for processing by the transliteration engine.
 
-use std::collections::HashMap;
-use crate::definitions::{
-    consonants, vowels, diacritics, special_rules
-};
+use crate::definitions::{conjuncts, consonant_value, vowel_value};
+
+mod patterns;
+
+use patterns::{phonetic_pattern_trie_static, PatternTrie};
+
+const MAX_INLINE_EXPLICIT_PARTS: usize = 8;
 
 /// Types of tokens that can be identified
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -46,7 +49,7 @@ pub struct PhoneticUnit {
 }
 
 /// Types of phonetic units in Bengali transliteration
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum PhoneticUnitType {
     /// Single consonant
     Consonant,
@@ -72,12 +75,6 @@ pub enum PhoneticUnitType {
     RephOverConsonantWithVowel,
     /// A reph over a consonant with a terminator
     RephOverConsonantWithTerminator,
-    /// Chandrabindu (ঁ) with a vowel
-    ChandrabinduWithVowel,
-    /// Chandrabindu (ঁ) with a consonant 
-    ChandrabinduWithConsonant,
-    /// Chandrabindu (ঁ) with a consonant and vowel
-    ChandrabinduWithConsonantAndVowel,
     /// A special form (e.g., reph, ya-phala, etc.)
     SpecialForm,
     /// A numeral
@@ -90,190 +87,103 @@ pub enum PhoneticUnitType {
 
 /// Tokenizer for processing input text
 pub struct Tokenizer {
-    /// Map of special sequences to recognize
-    special_sequences: HashMap<String, PhoneticUnitType>,
-    /// Map of vowel patterns 
-    vowel_patterns: HashMap<String, bool>,
-    /// Map of consonant patterns
-    consonant_patterns: HashMap<String, bool>,
+    /// Unified matcher using longest deterministic prefix matching.
+    phonetic_patterns: &'static PatternTrie,
 }
 
 impl Tokenizer {
     /// Create a new tokenizer with default configuration
     pub fn new() -> Self {
-        let mut special_sequences = HashMap::new();
-        let mut vowel_patterns = HashMap::new();
-        let mut consonant_patterns = HashMap::new();
-        
-        // Get vowel patterns from the definitions
-        let vowels_map = vowels();
-        println!("DEBUG: Available vowel patterns: {:?}", vowels_map.keys().collect::<Vec<_>>());
-        
-        for roman in vowels_map.keys() {
-            // Mark only 'o' as a terminating vowel
-            if *roman == "o" {
-                continue; // Skip adding to vowel_patterns, will add as terminator
-            }
-            vowel_patterns.insert(roman.to_string(), true);
-        }
-        
-        println!("DEBUG: Added vowel patterns: {:?}", vowel_patterns.keys().collect::<Vec<_>>());
-        
-        // Add terminating vowel 'o' separately
-        if vowels_map.contains_key("o") {
-            special_sequences.insert("o".to_string(), PhoneticUnitType::TerminatingVowel);
-        }
-        
-        // Get consonant patterns from the definitions
-        let consonants_map = consonants();
-        for roman in consonants_map.keys() {
-            consonant_patterns.insert(roman.to_string(), true);
-        }
-        
-        // Initialize special sequences
-        // Reph (র্) is a special form
-        special_sequences.insert("rr".to_string(), PhoneticUnitType::SpecialForm);
-        
-        // Hasant/Virama from diacritics
-        let diacritics_map = diacritics();
-        if let Some(hasant_key) = diacritics_map.iter().find_map(|(k, v)| {
-            if *v == "্" { Some(k) } else { None }
-        }) {
-            special_sequences.insert(hasant_key.to_string(), PhoneticUnitType::ConsonantWithHasant);
-        } else {
-            // Fallback if not found
-            special_sequences.insert(",,".to_string(), PhoneticUnitType::ConsonantWithHasant);
-        }
-        
-        // Add Chandrabindu (^), Visarga (:), and Khanda Ta (T``)
-        special_sequences.insert("^".to_string(), PhoneticUnitType::SpecialForm);
-        special_sequences.insert(":".to_string(), PhoneticUnitType::SpecialForm);
-        special_sequences.insert("T``".to_string(), PhoneticUnitType::SpecialForm);
-        
-        // Add special rules as appropriate
-        let special_rules_map = special_rules();
-        for roman in special_rules_map.keys() {
-            special_sequences.insert(roman.to_string(), PhoneticUnitType::SpecialForm);
-        }
-        
         Tokenizer {
-            special_sequences,
-            vowel_patterns,
-            consonant_patterns,
+            phonetic_patterns: phonetic_pattern_trie_static(),
         }
     }
-    
+
     /// Tokenize input text into words and other tokens
     pub fn tokenize_text(&self, text: &str) -> Vec<Token> {
         let mut tokens = Vec::new();
         let mut current_word = String::new();
         let mut current_position = 0;
-        
-        // Helper function to add the current word as a token
-        let add_current_word = |word: &mut String, pos: usize, tokens: &mut Vec<Token>| {
-            if !word.is_empty() {
-                // Determine if the word is a number
-                let token_type = if word.chars().all(|c| c.is_numeric()) {
-                    TokenType::Number
-                } else {
-                    TokenType::Word
-                };
-                
-                tokens.push(Token {
-                    content: word.clone(),
-                    token_type,
-                    position: pos,
-                });
-                word.clear();
-            }
-        };
-        
+
         let mut i = 0;
         while i < text.len() {
             // Get the current character
             let c = text[i..].chars().next().unwrap();
             let char_len = c.len_utf8();
-            
-            // Special case: Check for diacritics that should attach to the previous word
-            if !current_word.is_empty() && (c == '^' || c == ':' || c == '`') {
-                // Special case for Khanda Ta (T``)
-                if c == '`' && i + 1 < text.len() && text.chars().nth(i + 1) == Some('`') {
-                    if current_word.ends_with('T') {
-                        // Add the `` to mark it as Khanda Ta
-                        current_word.push_str("``");
-                        i += 2; // Skip both backticks
-                        continue;
-                    }
-                }
-                
-                // Handle ^ (Chandrabindu) and : (Visarga) as part of the word
-                if c == '^' || c == ':' {
-                    current_word.push(c);
-                    i += char_len;
-                    continue;
-                }
-            }
-            
-            // Special case: Check for hasanta sequence (,,)
-            if c == ',' && i + 1 < text.len() && text.chars().nth(i + 1) == Some(',') {
-                // If we're in a word context and there's a consonant before this
-                if !current_word.is_empty() {
-                    // Add the sequence to the current word
-                    current_word.push_str(",,");
-                    i += 2; // Skip both commas
-                    continue;
-                } else {
-                    // If we're not in a word context, handle as regular punctuation
-                    add_current_word(&mut current_word, current_position, &mut tokens);
-                    
-                    // Add the first comma as punctuation
-                    tokens.push(Token {
-                        content: ",".to_string(),
-                        token_type: TokenType::Punctuation,
-                        position: i,
-                    });
-                    
-                    i += 1; // Move to the next comma
+
+            // Chandrabindu and visarga are phonetic mark signals. Keep them
+            // inside word tokens even when they appear standalone so
+            // tokenize_word applies the same deterministic rendering path.
+            if c == '^' || c == ':' {
+                if current_word.is_empty() {
                     current_position = i;
+                }
+                current_word.push(c);
+                i += char_len;
+                continue;
+            }
+
+            // Special case: Check for khanda-ta notation that should attach to
+            // the previous word.
+            if !current_word.is_empty() && c == '`' {
+                // Special case for Khanda Ta (t`` / T``)
+                if c == '`'
+                    && next_char(text, i, char_len) == Some('`')
+                    && ends_with_khanda_ta_base_signal(&current_word)
+                {
+                    // Add the `` to mark it as Khanda Ta
+                    current_word.push_str("``");
+                    i += 2; // Skip both backticks
                     continue;
                 }
             }
-            
+
+            // Special case: Check for hasanta sequence (,,)
+            if c == ',' && next_char(text, i, char_len) == Some(',') {
+                if current_word.is_empty() {
+                    current_position = i;
+                }
+
+                current_word.push_str(",,");
+                i += 2; // Skip both commas
+                continue;
+            }
+
             if c.is_whitespace() {
                 // Add the current word if any
-                add_current_word(&mut current_word, current_position, &mut tokens);
-                
+                push_current_word_token(&mut current_word, current_position, &mut tokens);
+
                 // Add the whitespace as a token
-                    tokens.push(Token {
+                tokens.push(Token {
                     content: c.to_string(),
                     token_type: TokenType::Whitespace,
                     position: i,
                 });
-                
+
                 current_position = i + char_len;
             } else if c.is_ascii_punctuation() {
                 // Add the current word if any
-                add_current_word(&mut current_word, current_position, &mut tokens);
-                
+                push_current_word_token(&mut current_word, current_position, &mut tokens);
+
                 // Add the punctuation as a token
-                    tokens.push(Token {
+                tokens.push(Token {
                     content: c.to_string(),
                     token_type: TokenType::Punctuation,
                     position: i,
                 });
-                
+
                 current_position = i + char_len;
-            } else if !c.is_alphanumeric() && !current_word.is_empty() {
+            } else if !c.is_alphanumeric() {
                 // Special symbol - add the current word if any
-                add_current_word(&mut current_word, current_position, &mut tokens);
-                
+                push_current_word_token(&mut current_word, current_position, &mut tokens);
+
                 // Add the symbol as a token
-                    tokens.push(Token {
+                tokens.push(Token {
                     content: c.to_string(),
                     token_type: TokenType::Symbol,
                     position: i,
                 });
-                
+
                 current_position = i + char_len;
             } else {
                 // If we have an empty current word, update the position
@@ -283,675 +193,128 @@ impl Tokenizer {
                 // Add the character to the current word
                 current_word.push(c);
             }
-            
+
             i += char_len;
         }
-        
+
         // Add any remaining word
-        add_current_word(&mut current_word, current_position, &mut tokens);
-        
+        push_current_word_token(&mut current_word, current_position, &mut tokens);
+
         tokens
     }
-    
+
     /// Tokenize a word into phonetic units for Bengali transliteration
     pub fn tokenize_word(&self, word: &str) -> Vec<PhoneticUnit> {
         let mut units = Vec::new();
-        
-        println!("DEBUG: Tokenizing word: {}", word);
-        
+        self.tokenize_word_into(word, &mut units);
+        units
+    }
+
+    pub(crate) fn tokenize_word_into(&self, word: &str, units: &mut Vec<PhoneticUnit>) {
+        units.clear();
         // Process the word character by character
         let mut _i = 0;
-        
-        // Pre-process special sequences
-        let mut processed_word = word.to_string();
-        
-        // Check for chandrabindu (^) and visarga (:) at the end
-        let has_chandrabindu = processed_word.ends_with('^');
-        let has_visarga = processed_word.ends_with(':');
-        
-        // Remove the diacritics for processing
-        if has_chandrabindu {
-            processed_word.pop();  // Remove the chandrabindu
-        } else if has_visarga {
-            processed_word.pop();  // Remove the visarga
-        }
-        
+
+        let (processed_word, trailing_diacritics) = split_trailing_diacritics(word);
+
         // Special case for standalone diacritics
-        if processed_word.is_empty() && (has_chandrabindu || has_visarga) {
-            // Handle standalone diacritics directly
-            if has_chandrabindu {
-                units.push(PhoneticUnit {
-                    text: "^".to_string(),
-                    unit_type: PhoneticUnitType::SpecialForm,
-                    position: 0,
-                });
-            } else if has_visarga {
-                units.push(PhoneticUnit {
-                    text: ":".to_string(),
-                    unit_type: PhoneticUnitType::SpecialForm,
-                    position: 0,
-                });
-            }
-            return units;
+        if processed_word.is_empty() && !trailing_diacritics.is_empty() {
+            append_trailing_diacritics(units, trailing_diacritics);
+            return;
         }
-        
+
+        let mut has_long_iya_marker_candidate = false;
+
         // Process the base word without diacritics
         while _i < processed_word.len() {
-            // First check for multi-letter vowels like "rri", "OI", "OU"
-            let mut matched_multi_vowel = false;
-            let multi_letter_vowels = ["rri", "OI", "OU"];
-            
-            for vowel in &multi_letter_vowels {
-                if _i + vowel.len() <= processed_word.len() && &processed_word[_i.._i+vowel.len()] == *vowel {
-                    println!("DEBUG: Found multi-letter vowel: {}", vowel);
-                    units.push(PhoneticUnit {
-                        text: vowel.to_string(),
-                        unit_type: PhoneticUnitType::Vowel,
-                        position: _i,
-                    });
-                    _i += vowel.len();
-                    matched_multi_vowel = true;
-                    break;
-                }
-            }
-            
-            if matched_multi_vowel {
-                continue;
-            }
-            
-            // Try to match special sequences first
-            let mut matched = false;
-            
-            // Try to match "ng" specifically before other sequences
-            if _i + 2 <= processed_word.len() && &processed_word[_i.._i+2] == "ng" {
+            if let Some(rule_match) = self.phonetic_patterns.match_at(processed_word, _i) {
                 units.push(PhoneticUnit {
-                    text: "ng".to_string(),
-                    unit_type: PhoneticUnitType::SpecialForm,
+                    text: rule_match.text.to_string(),
+                    unit_type: rule_match.unit_type,
                     position: _i,
                 });
-                _i += 2;
+                _i += rule_match.text.len();
                 continue;
             }
-            
-            for (sequence, unit_type) in &self.special_sequences {
-                // Skip "rr" if the next character is "i" (part of "rri")
-                if sequence == "rr" && _i + 3 <= processed_word.len() && &processed_word[_i.._i+3] == "rri" {
-                    continue;
-                }
-                
-                if _i + sequence.len() <= processed_word.len() && &processed_word[_i.._i+sequence.len()] == sequence {
-                    // Ensure all special forms are treated as SpecialForm, even T``
-                    let final_unit_type = if sequence == "T``" {
-                        PhoneticUnitType::SpecialForm
-                    } else {
-                        unit_type.clone()
-                    };
-                    
-                    units.push(PhoneticUnit {
-                        text: sequence.clone(),
-                        unit_type: final_unit_type,
-                        position: _i,
-                    });
-                    _i += sequence.len();
-                    matched = true;
-                    break;
-                }
-            }
-            
-            if matched {
-                    continue;
-                }
-                
-            // Try to match consonant patterns (longer patterns first)
-            let mut matched_consonant = false;
-            let mut consonant_patterns: Vec<_> = self.consonant_patterns.keys().collect();
-            consonant_patterns.sort_by(|a, b| b.len().cmp(&a.len())); // Sort by length, descending
-            
-            for pattern in consonant_patterns {
-                if _i + pattern.len() <= processed_word.len() && &processed_word[_i.._i+pattern.len()] == pattern {
-                    units.push(PhoneticUnit {
-                        text: pattern.clone(),
-                        unit_type: PhoneticUnitType::Consonant,
-                        position: _i,
-                    });
-                    _i += pattern.len();
-                    matched_consonant = true;
-                    break;
-                }
-            }
-            
-            if matched_consonant {
-                    continue;
-                }
-                
-            // Try to match vowel patterns (longer patterns first)
-            let mut matched_vowel = false;
-            
-            // Remove the special case for multi-letter vowels and instead
-            // ensure all vowel patterns from vowels() are used, sorted properly
-            let mut vowel_patterns: Vec<_> = self.vowel_patterns.keys().collect();
-            vowel_patterns.sort_by(|a, b| b.len().cmp(&a.len())); // Sort by length, descending
-            
-            if word == "krri" && _i == 1 {
-                println!("DEBUG: Checking for vowels at position {} in '{}', remaining: '{}'", 
-                         _i, word, &processed_word[_i..]);
-                for pattern in &vowel_patterns {
-                    if _i + pattern.len() <= processed_word.len() {
-                        println!("DEBUG: Checking pattern '{}' against '{}'", 
-                                 pattern, &processed_word[_i.._i+pattern.len()]);
-                    }
-                }
-            }
-            
-            for pattern in &vowel_patterns {
-                if _i + pattern.len() <= processed_word.len() && &processed_word[_i.._i+pattern.len()] == *pattern {
-                    units.push(PhoneticUnit {
-                        text: (*pattern).clone(),
-                        unit_type: PhoneticUnitType::Vowel,
-                        position: _i,
-                    });
-                    _i += pattern.len();
-                    matched_vowel = true;
-                    break;
-                }
-            }
-            
-            if matched_vowel {
-                continue;
-            }
-            
+
             // If no pattern matched, treat as unknown and advance by one character
             if _i < processed_word.len() {
                 // Find the length of one UTF-8 character
-                let char_len = processed_word[_i..].chars().next().map_or(1, |c| c.len_utf8());
-                
+                let char_len = processed_word[_i..]
+                    .chars()
+                    .next()
+                    .map_or(1, |c| c.len_utf8());
+
+                let unknown_text = &processed_word[_i.._i + char_len];
+                if unknown_text == "w" && is_long_iya_marker_at(processed_word, _i) {
+                    has_long_iya_marker_candidate = true;
+                }
+
                 units.push(PhoneticUnit {
-                    text: processed_word[_i.._i+char_len].to_string(),
-                    unit_type: PhoneticUnitType::Unknown,
+                    text: unknown_text.to_string(),
+                    unit_type: unmatched_unit_type(unknown_text),
                     position: _i,
                 });
                 _i += char_len;
             }
         }
-        
+
         // Post-processing to identify conjuncts and other complex forms
-        self.identify_complex_forms(&mut units);
-        
-        // Reapply the diacritics if present
-        if !units.is_empty() {
-            if has_chandrabindu {
-                let last_unit = units.last_mut().unwrap();
-                // Update the text and apply chandrabindu type based on the current unit type
-                last_unit.text = format!("{}^", last_unit.text);
-                
-                // Apply appropriate chandrabindu type based on the base unit
-                match last_unit.unit_type {
-                    PhoneticUnitType::Consonant => {
-                        last_unit.unit_type = PhoneticUnitType::ChandrabinduWithConsonant;
-                    },
-                    PhoneticUnitType::Vowel => {
-                        last_unit.unit_type = PhoneticUnitType::ChandrabinduWithVowel;
-                    },
-                    PhoneticUnitType::ConsonantWithVowel => {
-                        last_unit.unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    PhoneticUnitType::ConsonantWithTerminator => {
-                        last_unit.unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    PhoneticUnitType::Conjunct => {
-                        last_unit.unit_type = PhoneticUnitType::ChandrabinduWithConsonant;
-                    },
-                    PhoneticUnitType::ConjunctWithVowel => {
-                        last_unit.unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    PhoneticUnitType::ConjunctWithTerminator => {
-                        last_unit.unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    _ => {
-                        // If it doesn't fit any of the above, just keep the original type
-                    }
-                }
-            } else if has_visarga {
-                // For visarga, we now add it as a separate unit instead of combining
-                // Get the position for the new visarga unit
-                let position = {
-                    let last = units.last().unwrap();
-                    last.position + last.text.len()
-                };
-                
-                // Now add the visarga as a separate unit
-                units.push(PhoneticUnit {
-                    text: ":".to_string(),
-                    unit_type: PhoneticUnitType::SpecialForm,
-                    position,
-                });
-            }
-        }
-        
-        units
+        self.identify_complex_forms(units, has_long_iya_marker_candidate);
+
+        append_trailing_diacritics(units, trailing_diacritics);
     }
-    
+
     /// Identify complex phonetic forms like conjuncts and consonants with vowel modifiers
-    fn identify_complex_forms(&self, units: &mut Vec<PhoneticUnit>) {
-        let mut _i = 0;
-        
-        println!("DEBUG: After initial tokenization, {} units", units.len());
-        for unit in units.iter() {
-            println!("DEBUG: Unit '{}' type: {:?}", unit.text, unit.unit_type);
-        }
-        
+    fn identify_complex_forms(
+        &self,
+        units: &mut Vec<PhoneticUnit>,
+        has_long_iya_marker_candidate: bool,
+    ) {
+        // Get a reference to the conjunct definitions
+        let conjunct_defs = conjuncts();
+
         // First pass: Handle special "rr" cases
-        // - "rri" as vocalic R vowel
+        // - "rr" as vocalic R vowel
         // - "rr" + consonant as reph
-        _i = 0;
-        while _i < units.len() {
-            // Handle "rr" + "i" as vocalic R vowel
-            if _i + 1 < units.len() && 
-               units[_i].text == "rr" && 
-               units[_i].unit_type == PhoneticUnitType::SpecialForm && 
-               units[_i+1].text == "i" && 
-               units[_i+1].unit_type == PhoneticUnitType::Vowel {
-                
-                let vowel_text = format!("rri");
-                let _position = units[_i].position;
-                
-                // Replace with a single vowel unit
-                units[_i] = PhoneticUnit {
-                    text: vowel_text,
-                    unit_type: PhoneticUnitType::Vowel, // Vocalic R is a vowel
-                    position: _position,
-                };
-                
-                // Remove the "i" unit
-                units.remove(_i+1);
-                continue;
+        normalize_redundant_reph_hasant(units);
+
+        normalize_reph_and_vocalic_r(units);
+
+        normalize_velar_nasal_conjunct_aliases(units);
+        normalize_redundant_khanda_ta_hasant(units);
+
+        // Collapse explicit hasant chains, e.g. n,,d,,r -> n,,d,,r.
+        // Explicit hasant is a user command, so it is preserved even before
+        // later valid-conjunct filtering and vowel attachment runs.
+        collapse_explicit_hasant_chains(units, conjunct_defs);
+
+        // Second pass: process contiguous consonant runs to form conjuncts.
+        // Non-consonant units such as anusvara are boundaries, not blockers for
+        // subsequent runs. Work directly on contiguous ranges to avoid
+        // per-word segment/index allocations in the tokenizer hot path.
+        let mut run_start = 0;
+        while run_start < units.len() {
+            while run_start < units.len() && !is_conjunct_run_component(&units[run_start]) {
+                run_start += 1;
             }
-            
-            // Handle "rr" + consonant as reph over consonant
-            if _i + 1 < units.len() && 
-               units[_i].text == "rr" && 
-               units[_i].unit_type == PhoneticUnitType::SpecialForm && 
-               units[_i+1].unit_type == PhoneticUnitType::Consonant {
-                
-                let reph_text = format!("rr{}", units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a reph over consonant unit
-                units[_i] = PhoneticUnit {
-                    text: reph_text,
-                    unit_type: PhoneticUnitType::RephOverConsonant,
-                    position: _position,
-                };
-                
-                // Remove the consonant unit
-                units.remove(_i+1);
-                continue;
+
+            let mut run_end = run_start;
+            while run_end < units.len() && is_conjunct_run_component(&units[run_end]) {
+                run_end += 1;
             }
-            
-            // Handle "rr" + consonantWithVowel as reph over consonant with vowel
-            if _i + 1 < units.len() && 
-               units[_i].text == "rr" && 
-               units[_i].unit_type == PhoneticUnitType::SpecialForm && 
-               units[_i+1].unit_type == PhoneticUnitType::ConsonantWithVowel {
-                
-                let reph_text = format!("rr{}", units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a reph over consonant with vowel unit
-                units[_i] = PhoneticUnit {
-                    text: reph_text,
-                    unit_type: PhoneticUnitType::RephOverConsonantWithVowel,
-                    position: _position,
-                };
-                
-                // Remove the consonant with vowel unit
-                units.remove(_i+1);
-                continue;
-            }
-            
-            // Handle "rr" + consonantWithTerminator as reph over consonant with terminator
-            if _i + 1 < units.len() && 
-               units[_i].text == "rr" && 
-               units[_i].unit_type == PhoneticUnitType::SpecialForm && 
-               units[_i+1].unit_type == PhoneticUnitType::ConsonantWithTerminator {
-                
-                let reph_text = format!("rr{}", units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a reph over consonant with terminator unit
-                units[_i] = PhoneticUnit {
-                    text: reph_text,
-                    unit_type: PhoneticUnitType::RephOverConsonantWithTerminator,
-                    position: _position,
-                };
-                
-                // Remove the consonant with terminator unit
-                units.remove(_i+1);
-                continue;
-            }
-            
-                _i += 1;
+
+            form_conjuncts_in_range(units, run_start, run_end, conjunct_defs);
+            run_start = run_end;
         }
-        
-        // Second pass: Form basic units and conjuncts
-        _i = 0;
-        while _i < units.len() {
-            // Identify consonant + hasant (,,) + consonant as an explicit conjunct
-            if _i + 2 < units.len() && 
-               units[_i].unit_type == PhoneticUnitType::Consonant &&
-               units[_i+1].unit_type == PhoneticUnitType::ConsonantWithHasant &&
-               units[_i+2].unit_type == PhoneticUnitType::Consonant {
-                
-                let conjunct_text = format!("{}{}{}", 
-                    units[_i].text, units[_i+1].text, units[_i+2].text);
-                
-                let _position = units[_i].position;
-                
-                // Replace the three units with a single conjunct unit
-                units[_i] = PhoneticUnit {
-                    text: conjunct_text,
-                    unit_type: PhoneticUnitType::Conjunct,
-                    position: _position,
-                };
-                
-                // Remove the next two units
-                units.remove(_i+1);
-                units.remove(_i+1);
-                
-                // Don't increment _i since we want to check if the new unit
-                // is part of a larger complex form
-                continue;
-            }
-            
-            // Handle consonant + vocalic R vowel as consonant with vowel
-            if _i + 1 < units.len() && 
-               units[_i].unit_type == PhoneticUnitType::Consonant &&
-               units[_i+1].text == "rri" && 
-               units[_i+1].unit_type == PhoneticUnitType::Vowel {
-                
-                println!("DEBUG: Found consonant + vocalic R vowel: {} + {}", units[_i].text, units[_i+1].text);
-                
-                let combined_text = format!("{}{}", units[_i].text, units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single consonant with vowel unit
-                units[_i] = PhoneticUnit {
-                    text: combined_text,
-                    unit_type: PhoneticUnitType::ConsonantWithVowel,
-                    position: _position,
-                };
-                
-                // Remove the vowel unit
-                units.remove(_i+1);
-                continue;
-            }
-            
-            // Identify consonant + vowel as a consonant with vowel unit (general case)
-            if _i + 1 < units.len() && 
-               units[_i].unit_type == PhoneticUnitType::Consonant &&
-               units[_i+1].unit_type == PhoneticUnitType::Vowel {
-                
-                let combined_text = format!("{}{}", units[_i].text, units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single consonant with vowel unit
-                units[_i] = PhoneticUnit {
-                    text: combined_text,
-                    unit_type: PhoneticUnitType::ConsonantWithVowel,
-                    position: _position,
-                };
-                
-                // Remove the vowel unit
-                units.remove(_i+1);
-                
-                // Don't increment _i since we want to check if the new unit
-                // is part of a larger complex form
-                continue;
-            }
-            
-            // Form conjuncts from consecutive consonants (without explicit hasant)
-            if _i + 1 < units.len() && 
-               units[_i].unit_type == PhoneticUnitType::Consonant &&
-               units[_i+1].unit_type == PhoneticUnitType::Consonant {
-                
-                // Form an implicit conjunct by adding virtual hasant
-                let conjunct_text = format!("{}{}{}", units[_i].text, ",,", units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single conjunct unit
-                units[_i] = PhoneticUnit {
-                    text: conjunct_text,
-                    unit_type: PhoneticUnitType::Conjunct,
-                    position: _position,
-                };
-                
-                // Remove the second consonant unit
-                units.remove(_i+1);
-                
-                // Don't increment _i since we want to check if the new conjunct
-                // can form part of a larger form
-                continue;
-            }
-            
-            // Form conjunct with vowel: consonant + consonantWithVowel
-            if _i + 1 < units.len() && 
-               units[_i].unit_type == PhoneticUnitType::Consonant &&
-               (units[_i+1].unit_type == PhoneticUnitType::ConsonantWithVowel ||
-                units[_i+1].unit_type == PhoneticUnitType::ConsonantWithTerminator) {
-                
-                // Separate the consonant and vowel parts from the second unit
-                let cons2 = &units[_i+1].text[0..1]; // First character is the consonant
-                let vowel_part = &units[_i+1].text[1..]; // Rest is the vowel
-                
-                // Form conjunct with vowel
-                let conjunct_text = format!("{}{}{}{}", units[_i].text, ",,", cons2, vowel_part);
-                let _position = units[_i].position;
-                
-                // Choose the right unit type based on whether it has a terminator vowel or regular vowel
-                let unit_type = if units[_i+1].unit_type == PhoneticUnitType::ConsonantWithTerminator {
-                    PhoneticUnitType::ConjunctWithTerminator
-            } else {
-                    PhoneticUnitType::ConjunctWithVowel
-                };
-                
-                // Replace with a single conjunct with vowel unit
-                units[_i] = PhoneticUnit {
-                    text: conjunct_text,
-                    unit_type,
-                    position: _position,
-                };
-                
-                // Remove the second unit
-                units.remove(_i+1);
-                
-                continue;
-            }
-            
-            // Identify consonant + terminating vowel as a consonant with terminator
-            if _i + 1 < units.len() && 
-               units[_i].unit_type == PhoneticUnitType::Consonant &&
-               units[_i+1].unit_type == PhoneticUnitType::TerminatingVowel {
-                
-                let combined_text = format!("{}{}", units[_i].text, units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single consonant with terminator unit
-                units[_i] = PhoneticUnit {
-                    text: combined_text,
-                    unit_type: PhoneticUnitType::ConsonantWithTerminator,
-                    position: _position,
-                };
-                
-                // Remove the vowel unit
-                units.remove(_i+1);
-                
-                // Don't increment _i since we want to check if the new unit
-                // is part of a larger complex form
-                continue;
-            }
-            
-            // Handle Chandrabindu (^) applying to the previous unit - ONLY THIS GETS SPECIAL TREATMENT
-            if _i > 0 && _i < units.len() && 
-               units[_i].text == "^" && 
-               units[_i].unit_type == PhoneticUnitType::SpecialForm {
-                
-                let _position = units[_i-1].position;
-                let combined_text = format!("{}{}", units[_i-1].text, units[_i].text);
-                
-                // Determine the new unit type based on what precedes the chandrabindu
-                let new_unit_type = match units[_i-1].unit_type {
-                    PhoneticUnitType::Consonant => PhoneticUnitType::ChandrabinduWithConsonant,
-                    PhoneticUnitType::Vowel => PhoneticUnitType::ChandrabinduWithVowel,
-                    PhoneticUnitType::ConsonantWithVowel => PhoneticUnitType::ChandrabinduWithConsonantAndVowel,
-                    PhoneticUnitType::ConsonantWithTerminator => PhoneticUnitType::ChandrabinduWithConsonantAndVowel,
-                    PhoneticUnitType::Conjunct => PhoneticUnitType::ChandrabinduWithConsonant,
-                    PhoneticUnitType::ConjunctWithVowel => PhoneticUnitType::ChandrabinduWithConsonantAndVowel,
-                    PhoneticUnitType::ConjunctWithTerminator => PhoneticUnitType::ChandrabinduWithConsonantAndVowel,
-                    _ => units[_i-1].unit_type.clone(),
-                };
-                
-                // Update the previous unit to include the chandrabindu
-                units[_i-1].text = combined_text;
-                units[_i-1].unit_type = new_unit_type;
-                
-                // Remove the chandrabindu unit
-                units.remove(_i);
-                
-                // Decrement _i to check the new combined unit against further combinations
-                _i -= 1;
-                continue;
-            }
-            
-            // For Visarga (:), "ng", "T``", and other diacritics - treat as separate units
-            if (units[_i].text == ":" || units[_i].text == "ng" || units[_i].text == "T``") && 
-               units[_i].unit_type == PhoneticUnitType::SpecialForm {
-                // Keep as separate units - do nothing special
-                _i += 1;
-                continue;
-            }
-            
-            _i += 1;
-        }
-        
-        // Third pass: Handle vowels with conjuncts and reph
-        _i = 0;
-        while _i < units.len() - 1 {
-            // Conjunct + Vowel -> ConjunctWithVowel
-            if units[_i].unit_type == PhoneticUnitType::Conjunct && 
-               units[_i+1].unit_type == PhoneticUnitType::Vowel {
-                
-                let combined_text = format!("{}{}", units[_i].text, units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single conjunct with vowel unit
-                units[_i] = PhoneticUnit {
-                    text: combined_text,
-                    unit_type: PhoneticUnitType::ConjunctWithVowel,
-                    position: _position,
-                };
-                
-                // Remove the vowel unit
-                units.remove(_i+1);
-                continue;
-            }
-            
-            // Conjunct + TerminatingVowel -> ConjunctWithTerminator
-            if units[_i].unit_type == PhoneticUnitType::Conjunct && 
-               units[_i+1].unit_type == PhoneticUnitType::TerminatingVowel {
-                
-                let combined_text = format!("{}{}", units[_i].text, units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single conjunct with terminator unit
-                units[_i] = PhoneticUnit {
-                    text: combined_text,
-                    unit_type: PhoneticUnitType::ConjunctWithTerminator,
-                    position: _position,
-                };
-                
-                // Remove the vowel unit
-                units.remove(_i+1);
-                continue;
-            }
-            
-            // RephOverConsonant + Vowel -> RephOverConsonantWithVowel
-            if units[_i].unit_type == PhoneticUnitType::RephOverConsonant && 
-               units[_i+1].unit_type == PhoneticUnitType::Vowel {
-                
-                let combined_text = format!("{}{}", units[_i].text, units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single reph over consonant with vowel unit
-                units[_i] = PhoneticUnit {
-                    text: combined_text,
-                    unit_type: PhoneticUnitType::RephOverConsonantWithVowel,
-                    position: _position,
-                };
-                
-                // Remove the vowel unit
-                units.remove(_i+1);
-                continue;
-            }
-            
-            // RephOverConsonant + TerminatingVowel -> RephOverConsonantWithTerminator
-            if units[_i].unit_type == PhoneticUnitType::RephOverConsonant && 
-               units[_i+1].unit_type == PhoneticUnitType::TerminatingVowel {
-                
-                let combined_text = format!("{}{}", units[_i].text, units[_i+1].text);
-                let _position = units[_i].position;
-                
-                // Replace with a single reph over consonant with terminator unit
-                units[_i] = PhoneticUnit {
-                    text: combined_text,
-                    unit_type: PhoneticUnitType::RephOverConsonantWithTerminator,
-                    position: _position,
-                };
-                
-                // Remove the vowel unit
-                units.remove(_i+1);
-                continue;
-            }
-            
-            _i += 1;
-        }
-        
-        // Fourth pass: Handle diacritics and special forms
-        _i = 0;
-        while _i < units.len() {
-            // For Chandrabindu (^) - if a unit text ends with ^, update its type
-            if units[_i].text.ends_with('^') {
-                // Determine the type based on the current unit
-                match units[_i].unit_type {
-                    PhoneticUnitType::Consonant => {
-                        units[_i].unit_type = PhoneticUnitType::ChandrabinduWithConsonant;
-                    },
-                    PhoneticUnitType::Vowel => {
-                        units[_i].unit_type = PhoneticUnitType::ChandrabinduWithVowel;
-                    },
-                    PhoneticUnitType::ConsonantWithVowel => {
-                        units[_i].unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    PhoneticUnitType::ConsonantWithTerminator => {
-                        units[_i].unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    PhoneticUnitType::Conjunct => {
-                        units[_i].unit_type = PhoneticUnitType::ChandrabinduWithConsonant;
-                    },
-                    PhoneticUnitType::ConjunctWithVowel => {
-                        units[_i].unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    PhoneticUnitType::ConjunctWithTerminator => {
-                        units[_i].unit_type = PhoneticUnitType::ChandrabinduWithConsonantAndVowel;
-                    },
-                    _ => {
-                        // Keep the original type but preserve the text with chandrabindu
-                    }
-                }
-            }
-            
-            // For Visarga (:), "ng", "T``" - keep them as separate units
-            
-            _i += 1;
+
+        compact_units_and_attach_vowels(units);
+
+        // Fourth pass: normalize the deliberate `iyw` long-iya signal.
+        // If it consumes a marker, a following vowel may now be adjacent to
+        // `y`/`Y`; run the ordinary attachment pass once more in that case.
+        if has_long_iya_marker_candidate && normalize_iyw_long_iya_signal(units) {
+            compact_units_and_attach_vowels(units);
         }
     }
 }
@@ -959,5 +322,886 @@ impl Tokenizer {
 impl Default for Tokenizer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn push_current_word_token(word: &mut String, position: usize, tokens: &mut Vec<Token>) {
+    if word.is_empty() {
+        return;
+    }
+
+    let token_type = if word.chars().all(|c| c.is_numeric()) {
+        TokenType::Number
+    } else {
+        TokenType::Word
+    };
+
+    let capacity = word.capacity();
+    let content = std::mem::replace(word, String::with_capacity(capacity));
+
+    tokens.push(Token {
+        content,
+        token_type,
+        position,
+    });
+}
+
+fn next_char(text: &str, byte_index: usize, current_char_len: usize) -> Option<char> {
+    text.get(byte_index + current_char_len..)?.chars().next()
+}
+
+fn ends_with_khanda_ta_base_signal(text: &str) -> bool {
+    text.chars()
+        .next_back()
+        .is_some_and(|c| matches!(c, 't' | 'T'))
+}
+
+fn is_long_iya_marker_at(text: &str, byte_index: usize) -> bool {
+    byte_index > 0 && matches!(text.as_bytes().get(byte_index - 1), Some(b'y') | Some(b'Y'))
+}
+
+fn unmatched_unit_type(text: &str) -> PhoneticUnitType {
+    if text.len() == 1 && text.as_bytes()[0].is_ascii_digit() {
+        PhoneticUnitType::Numeral
+    } else {
+        PhoneticUnitType::Unknown
+    }
+}
+
+fn compact_units_and_attach_vowels(units: &mut Vec<PhoneticUnit>) {
+    let mut read = 0;
+    let mut write = 0;
+
+    while read < units.len() {
+        while read < units.len() && units[read].text.is_empty() {
+            read += 1;
+        }
+        if read >= units.len() {
+            break;
+        }
+
+        if let Some(next) = next_non_empty_unit_index(units, read + 1) {
+            if let Some(combined_type) =
+                attached_vowel_unit_type(units[read].unit_type, units[next].unit_type)
+            {
+                move_unit(units, read, write);
+                let vowel_text = std::mem::take(&mut units[next].text);
+                units[write].text.push_str(&vowel_text);
+                units[write].unit_type = combined_type;
+                read = next + 1;
+                write += 1;
+                continue;
+            }
+        }
+
+        move_unit(units, read, write);
+        read += 1;
+        write += 1;
+    }
+
+    units.truncate(write);
+}
+
+fn attached_vowel_unit_type(
+    base: PhoneticUnitType,
+    vowel: PhoneticUnitType,
+) -> Option<PhoneticUnitType> {
+    match (base, vowel) {
+        (PhoneticUnitType::Consonant, PhoneticUnitType::Vowel) => {
+            Some(PhoneticUnitType::ConsonantWithVowel)
+        }
+        (PhoneticUnitType::Consonant, PhoneticUnitType::TerminatingVowel) => {
+            Some(PhoneticUnitType::ConsonantWithTerminator)
+        }
+        (PhoneticUnitType::Conjunct, PhoneticUnitType::Vowel) => {
+            Some(PhoneticUnitType::ConjunctWithVowel)
+        }
+        (PhoneticUnitType::Conjunct, PhoneticUnitType::TerminatingVowel) => {
+            Some(PhoneticUnitType::ConjunctWithTerminator)
+        }
+        (PhoneticUnitType::RephOverConsonant, PhoneticUnitType::Vowel) => {
+            Some(PhoneticUnitType::RephOverConsonantWithVowel)
+        }
+        (PhoneticUnitType::RephOverConsonant, PhoneticUnitType::TerminatingVowel) => {
+            Some(PhoneticUnitType::RephOverConsonantWithTerminator)
+        }
+        _ => None,
+    }
+}
+
+fn next_non_empty_unit_index(units: &[PhoneticUnit], start: usize) -> Option<usize> {
+    units
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find_map(|(index, unit)| (!unit.text.is_empty()).then_some(index))
+}
+
+fn form_conjuncts_in_range(
+    units: &mut [PhoneticUnit],
+    start: usize,
+    end: usize,
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) {
+    if end.saturating_sub(start) <= 1 {
+        return;
+    }
+
+    let mut i = start;
+
+    while i < end {
+        if units[i].text.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        if let Some(length) = longest_conjunct_prefix_in_range(units, i, end, conjunct_defs) {
+            let conjunct_text = conjunct_text_for_range(units, i, length);
+
+            let position = units[i].position;
+            units[i] = PhoneticUnit {
+                text: conjunct_text,
+                unit_type: PhoneticUnitType::Conjunct,
+                position,
+            };
+
+            for unit in units.iter_mut().take(i + length).skip(i + 1) {
+                unit.text.clear();
+            }
+        }
+
+        i += 1;
+    }
+}
+
+struct ExplicitHasantChain {
+    end: usize,
+    text: String,
+    position: usize,
+}
+
+fn collapse_explicit_hasant_chains(
+    units: &mut Vec<PhoneticUnit>,
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) {
+    let Some(first_match) = first_explicit_hasant_chain(units, conjunct_defs) else {
+        return;
+    };
+
+    let mut read = first_match;
+    let mut write = first_match;
+
+    while read < units.len() {
+        if let Some(chain) = explicit_hasant_chain_at(units, read, conjunct_defs) {
+            units[write] = PhoneticUnit {
+                text: chain.text,
+                unit_type: PhoneticUnitType::Conjunct,
+                position: chain.position,
+            };
+            read = chain.end;
+            write += 1;
+            continue;
+        }
+
+        move_unit(units, read, write);
+        read += 1;
+        write += 1;
+    }
+
+    units.truncate(write);
+}
+
+fn first_explicit_hasant_chain(
+    units: &[PhoneticUnit],
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) -> Option<usize> {
+    (0..units.len().saturating_sub(2))
+        .find(|&index| explicit_hasant_chain_at(units, index, conjunct_defs).is_some())
+}
+
+fn explicit_hasant_chain_at(
+    units: &[PhoneticUnit],
+    index: usize,
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) -> Option<ExplicitHasantChain> {
+    if index + 2 >= units.len()
+        || units[index + 1].unit_type != PhoneticUnitType::ConsonantWithHasant
+    {
+        return None;
+    }
+
+    let mut parts = explicit_hasant_chain_start_parts(&units[index])?;
+    let position = units[index].position;
+    let mut next = index + 1;
+    let mut consumed_hasant = false;
+
+    while next < units.len() && units[next].unit_type == PhoneticUnitType::ConsonantWithHasant {
+        if next + 1 >= units.len() {
+            break;
+        }
+
+        if let Some(part) =
+            explicit_hasant_chain_next_part(parts.as_slice(), &units[next + 1], conjunct_defs)
+        {
+            parts.push(part);
+            consumed_hasant = true;
+            next += 2;
+        } else {
+            break;
+        }
+    }
+
+    if consumed_hasant
+        && parts.len() >= 2
+        && explicit_hasant_chain_is_renderable(parts.as_slice(), conjunct_defs)
+    {
+        return Some(ExplicitHasantChain {
+            end: next,
+            text: join_explicit_hasant_parts(parts.as_slice()),
+            position,
+        });
+    }
+
+    None
+}
+
+fn join_explicit_hasant_parts(parts: &[&str]) -> String {
+    let separator_len = ",,".len() * parts.len().saturating_sub(1);
+    let mut text =
+        String::with_capacity(parts.iter().map(|part| part.len()).sum::<usize>() + separator_len);
+
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            text.push_str(",,");
+        }
+        text.push_str(part);
+    }
+
+    text
+}
+
+struct BorrowedParts<'a> {
+    inline: [&'a str; MAX_INLINE_EXPLICIT_PARTS],
+    len: usize,
+    overflow: Option<Vec<&'a str>>,
+}
+
+impl<'a> BorrowedParts<'a> {
+    fn new() -> Self {
+        Self {
+            inline: [""; MAX_INLINE_EXPLICIT_PARTS],
+            len: 0,
+            overflow: None,
+        }
+    }
+
+    fn from_one(first: &'a str) -> Self {
+        let mut parts = Self::new();
+        parts.push(first);
+        parts
+    }
+
+    fn from_two(first: &'a str, second: &'a str) -> Self {
+        let mut parts = Self::new();
+        parts.push(first);
+        parts.push(second);
+        parts
+    }
+
+    fn push(&mut self, part: &'a str) {
+        if let Some(parts) = &mut self.overflow {
+            parts.push(part);
+            return;
+        }
+
+        if self.len < MAX_INLINE_EXPLICIT_PARTS {
+            self.inline[self.len] = part;
+            self.len += 1;
+            return;
+        }
+
+        let mut parts = Vec::with_capacity(MAX_INLINE_EXPLICIT_PARTS * 2);
+        parts.extend_from_slice(&self.inline[..self.len]);
+        parts.push(part);
+        self.overflow = Some(parts);
+    }
+
+    fn len(&self) -> usize {
+        self.overflow.as_ref().map_or(self.len, std::vec::Vec::len)
+    }
+
+    fn as_slice(&self) -> &[&'a str] {
+        self.overflow.as_deref().unwrap_or(&self.inline[..self.len])
+    }
+}
+
+fn explicit_hasant_chain_start_parts(unit: &PhoneticUnit) -> Option<BorrowedParts<'_>> {
+    match unit.unit_type {
+        PhoneticUnitType::Consonant => Some(BorrowedParts::from_one(unit.text.as_str())),
+        PhoneticUnitType::RephOverConsonant => {
+            let base = reph_base_part(unit)?;
+            Some(BorrowedParts::from_two("rr", base))
+        }
+        PhoneticUnitType::SpecialForm if unit.text == "rr" => Some(BorrowedParts::from_one("rr")),
+        _ => None,
+    }
+}
+
+fn explicit_hasant_chain_next_part<'a>(
+    parts: &[&str],
+    unit: &'a PhoneticUnit,
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) -> Option<&'a str> {
+    match unit.unit_type {
+        PhoneticUnitType::Consonant if is_explicit_phola_marker(&unit.text) => {
+            if explicit_hasant_chain_with_next_part_is_valid(parts, &unit.text, conjunct_defs) {
+                Some(unit.text.as_str())
+            } else {
+                None
+            }
+        }
+        PhoneticUnitType::Consonant => Some(unit.text.as_str()),
+        PhoneticUnitType::Unknown if unit.text == "w" => {
+            if explicit_hasant_chain_with_next_part_is_valid(parts, "w", conjunct_defs) {
+                Some("w")
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn explicit_hasant_chain_with_next_part_is_valid(
+    parts: &[&str],
+    next: &str,
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) -> bool {
+    if parts.len() < MAX_INLINE_EXPLICIT_PARTS {
+        let mut borrowed = [""; MAX_INLINE_EXPLICIT_PARTS];
+        borrowed[..parts.len()].copy_from_slice(parts);
+        borrowed[parts.len()] = next;
+        return conjunct_defs.can_form_conjunct_from_parts(&borrowed[..parts.len() + 1]);
+    }
+
+    let mut borrowed = Vec::with_capacity(parts.len() + 1);
+    borrowed.extend_from_slice(parts);
+    borrowed.push(next);
+    conjunct_defs.can_form_conjunct_from_parts(borrowed.as_slice())
+}
+
+fn explicit_hasant_chain_is_renderable(
+    parts: &[&str],
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) -> bool {
+    if !parts.iter().any(|part| is_explicit_phola_marker(part)) {
+        return true;
+    }
+
+    conjunct_defs.can_form_conjunct_from_parts(parts)
+}
+
+fn is_explicit_phola_marker(part: &str) -> bool {
+    matches!(part, "w" | "y" | "Y")
+}
+
+fn normalize_reph_and_vocalic_r(units: &mut Vec<PhoneticUnit>) {
+    let mut read = 0;
+    let mut write = 0;
+
+    while read < units.len() {
+        if read + 1 < units.len()
+            && units[read].text == "rr"
+            && units[read].unit_type == PhoneticUnitType::SpecialForm
+            && units[read + 1].text == "i"
+            && units[read + 1].unit_type == PhoneticUnitType::Vowel
+        {
+            let position = units[read].position;
+            units[write] = PhoneticUnit {
+                text: String::from("rri"),
+                unit_type: PhoneticUnitType::Vowel,
+                position,
+            };
+            read += 2;
+            write += 1;
+            continue;
+        }
+
+        if read + 1 < units.len()
+            && units[read].text == "rr"
+            && units[read].unit_type == PhoneticUnitType::SpecialForm
+            && units[read + 1].unit_type == PhoneticUnitType::Consonant
+        {
+            let position = units[read].position;
+            let next_text = units[read + 1].text.as_str();
+            let mut reph_text = String::with_capacity(2 + next_text.len());
+            reph_text.push_str("rr");
+            reph_text.push_str(next_text);
+
+            units[write] = PhoneticUnit {
+                text: reph_text,
+                unit_type: PhoneticUnitType::RephOverConsonant,
+                position,
+            };
+            read += 2;
+            write += 1;
+            continue;
+        }
+
+        move_unit(units, read, write);
+
+        read += 1;
+        write += 1;
+    }
+
+    units.truncate(write);
+}
+
+fn move_unit(units: &mut [PhoneticUnit], read: usize, write: usize) {
+    if write != read {
+        units[write] = PhoneticUnit {
+            text: std::mem::take(&mut units[read].text),
+            unit_type: units[read].unit_type,
+            position: units[read].position,
+        };
+    }
+}
+
+fn normalize_redundant_reph_hasant(units: &mut Vec<PhoneticUnit>) {
+    let Some(first_match) = first_redundant_reph_hasant(units) else {
+        return;
+    };
+
+    let mut read = first_match;
+    let mut write = first_match;
+
+    while read < units.len() {
+        if is_redundant_reph_hasant_at(units, read) {
+            move_unit(units, read, write);
+            read += 2;
+            write += 1;
+            continue;
+        }
+
+        move_unit(units, read, write);
+        read += 1;
+        write += 1;
+    }
+
+    units.truncate(write);
+}
+
+fn first_redundant_reph_hasant(units: &[PhoneticUnit]) -> Option<usize> {
+    (0..units.len().saturating_sub(2)).find(|&index| is_redundant_reph_hasant_at(units, index))
+}
+
+fn is_redundant_reph_hasant_at(units: &[PhoneticUnit], index: usize) -> bool {
+    index + 2 < units.len()
+        && units[index].unit_type == PhoneticUnitType::SpecialForm
+        && units[index].text == "rr"
+        && units[index + 1].unit_type == PhoneticUnitType::ConsonantWithHasant
+        && is_reph_target_after_redundant_hasant(&units[index + 2])
+}
+
+fn is_reph_target_after_redundant_hasant(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::Consonant || is_khanda_ta_unit(unit)
+}
+
+fn normalize_redundant_khanda_ta_hasant(units: &mut Vec<PhoneticUnit>) {
+    let Some(first_match) = first_redundant_khanda_ta_hasant(units) else {
+        return;
+    };
+
+    let mut read = first_match;
+    let mut write = first_match;
+
+    while read < units.len() {
+        if is_redundant_khanda_ta_hasant_at(units, read) {
+            move_unit(units, read, write);
+            read += 2;
+            write += 1;
+            continue;
+        }
+
+        move_unit(units, read, write);
+        read += 1;
+        write += 1;
+    }
+
+    units.truncate(write);
+}
+
+fn first_redundant_khanda_ta_hasant(units: &[PhoneticUnit]) -> Option<usize> {
+    (0..units.len().saturating_sub(2)).find(|&index| is_redundant_khanda_ta_hasant_at(units, index))
+}
+
+fn is_redundant_khanda_ta_hasant_at(units: &[PhoneticUnit], index: usize) -> bool {
+    index + 2 < units.len()
+        && is_khanda_ta_unit(&units[index])
+        && units[index + 1].unit_type == PhoneticUnitType::ConsonantWithHasant
+        && units[index + 2].unit_type == PhoneticUnitType::Consonant
+}
+
+fn is_khanda_ta_unit(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::SpecialForm && matches!(unit.text.as_str(), "t``" | "T``")
+}
+
+fn longest_conjunct_prefix_in_range(
+    units: &[PhoneticUnit],
+    start: usize,
+    end: usize,
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) -> Option<usize> {
+    let mut node = conjunct_defs.conjunct_match_root();
+    let mut best_length = None;
+
+    'candidate: for (current, unit) in units.iter().enumerate().take(end).skip(start) {
+        if unit.text.is_empty() {
+            break;
+        }
+
+        for part in unit.text.split(",,") {
+            let Some(next_node) = conjunct_defs.advance_conjunct_match(node, part) else {
+                break 'candidate;
+            };
+            node = next_node;
+        }
+
+        let length = current - start + 1;
+        if length >= 2 && conjunct_defs.conjunct_match_value(node).is_some() {
+            best_length = Some(length);
+        }
+    }
+
+    best_length.or_else(|| reph_tail_conjunct_prefix_in_range(units, start, end, conjunct_defs))
+}
+
+fn reph_tail_conjunct_prefix_in_range(
+    units: &[PhoneticUnit],
+    start: usize,
+    end: usize,
+    conjunct_defs: &crate::definitions::conjuncts::ConjunctDefinitions,
+) -> Option<usize> {
+    let first = units.get(start)?;
+    let reph_base = reph_base_part(first)?;
+    let mut tail_parts = BorrowedParts::from_one(reph_base);
+    let mut best_length = None;
+
+    for (current, unit) in units.iter().enumerate().take(end).skip(start + 1) {
+        if unit.text.is_empty() {
+            break;
+        }
+
+        for part in unit.text.split(",,") {
+            tail_parts.push(part);
+        }
+
+        let length = current - start + 1;
+        if tail_parts.len() >= 2
+            && conjunct_defs.can_form_conjunct_from_parts(tail_parts.as_slice())
+            && !is_ambiguous_reph_r_phola_before_vowel(units, start, length, tail_parts.as_slice())
+        {
+            best_length = Some(length);
+        }
+    }
+
+    best_length
+}
+
+fn is_ambiguous_reph_r_phola_before_vowel(
+    units: &[PhoneticUnit],
+    start: usize,
+    length: usize,
+    tail_parts: &[&str],
+) -> bool {
+    tail_parts.last() == Some(&"r")
+        && units.get(start + length).is_some_and(|unit| {
+            matches!(
+                unit.unit_type,
+                PhoneticUnitType::Vowel | PhoneticUnitType::TerminatingVowel
+            )
+        })
+}
+
+fn conjunct_text_for_range(units: &[PhoneticUnit], start: usize, length: usize) -> String {
+    let mut conjunct_text = String::new();
+
+    for unit in &units[start..start + length] {
+        push_conjunct_text_parts(&mut conjunct_text, unit);
+    }
+
+    conjunct_text
+}
+
+fn push_conjunct_text_parts(conjunct_text: &mut String, unit: &PhoneticUnit) {
+    if let Some(reph_base) = reph_base_part(unit) {
+        push_conjunct_text_part(conjunct_text, "rr");
+        push_conjunct_text_part(conjunct_text, reph_base);
+        return;
+    }
+
+    for part in unit.text.split(",,") {
+        push_conjunct_text_part(conjunct_text, part);
+    }
+}
+
+fn push_conjunct_text_part(conjunct_text: &mut String, part: &str) {
+    if !conjunct_text.is_empty() {
+        conjunct_text.push_str(",,");
+    }
+    conjunct_text.push_str(part);
+}
+
+fn reph_base_part(unit: &PhoneticUnit) -> Option<&str> {
+    if unit.unit_type == PhoneticUnitType::RephOverConsonant {
+        unit.text.strip_prefix("rr").filter(|part| !part.is_empty())
+    } else {
+        None
+    }
+}
+
+fn is_conjunct_run_component(unit: &PhoneticUnit) -> bool {
+    matches!(
+        unit.unit_type,
+        PhoneticUnitType::Consonant
+            | PhoneticUnitType::Conjunct
+            | PhoneticUnitType::RephOverConsonant
+    ) || (unit.unit_type == PhoneticUnitType::SpecialForm && unit.text == "rr")
+        || (unit.unit_type == PhoneticUnitType::Unknown && unit.text == "w")
+}
+
+fn normalize_velar_nasal_conjunct_aliases(units: &mut Vec<PhoneticUnit>) {
+    let Some(first_match) = first_velar_nasal_conjunct_alias(units) else {
+        return;
+    };
+
+    let mut read = first_match;
+    let mut write = first_match;
+
+    while read < units.len() {
+        if is_velar_nasal_conjunct_alias_at(units, read) {
+            if let Some(canonical_tail) = velar_nasal_conjunct_tail(&units[read + 1].text) {
+                let position = units[read].position;
+                let mut text = String::with_capacity(4 + canonical_tail.len());
+                text.push_str("Ng,,");
+                text.push_str(canonical_tail);
+
+                units[write] = PhoneticUnit {
+                    text,
+                    unit_type: PhoneticUnitType::Conjunct,
+                    position,
+                };
+                read += 2;
+                write += 1;
+                continue;
+            }
+        }
+
+        move_unit(units, read, write);
+        read += 1;
+        write += 1;
+    }
+
+    units.truncate(write);
+}
+
+fn first_velar_nasal_conjunct_alias(units: &[PhoneticUnit]) -> Option<usize> {
+    (0..units.len().saturating_sub(1)).find(|&index| {
+        is_velar_nasal_conjunct_alias_at(units, index)
+            && velar_nasal_conjunct_tail(&units[index + 1].text).is_some()
+    })
+}
+
+fn is_velar_nasal_conjunct_alias_at(units: &[PhoneticUnit], index: usize) -> bool {
+    index + 1 < units.len()
+        && units[index].unit_type == PhoneticUnitType::SpecialForm
+        && units[index].text == "ng"
+        && units[index + 1].unit_type == PhoneticUnitType::Consonant
+}
+
+fn velar_nasal_conjunct_tail(text: &str) -> Option<&'static str> {
+    match text {
+        "g" => Some("g"),
+        "gh" | "Gh" | "GH" => Some("gh"),
+        _ => None,
+    }
+}
+
+struct TrailingDiacritics<'a> {
+    text: &'a str,
+    offset: usize,
+}
+
+impl TrailingDiacritics<'_> {
+    fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+}
+
+fn split_trailing_diacritics(word: &str) -> (&str, TrailingDiacritics<'_>) {
+    let mut base_end = word.len();
+
+    for (position, marker) in word.char_indices().rev() {
+        if !matches!(marker, '^' | ':') {
+            break;
+        }
+
+        base_end = position;
+    }
+
+    (
+        &word[..base_end],
+        TrailingDiacritics {
+            text: &word[base_end..],
+            offset: base_end,
+        },
+    )
+}
+
+fn append_trailing_diacritics(units: &mut Vec<PhoneticUnit>, suffix: TrailingDiacritics<'_>) {
+    units.extend(
+        suffix
+            .text
+            .char_indices()
+            .map(|(offset, marker)| PhoneticUnit {
+                text: marker.to_string(),
+                unit_type: PhoneticUnitType::SpecialForm,
+                position: suffix.offset + offset,
+            }),
+    );
+}
+
+fn normalize_iyw_long_iya_signal(units: &mut Vec<PhoneticUnit>) -> bool {
+    let Some(first_match) = first_iyw_long_iya_signal(units) else {
+        return false;
+    };
+
+    let mut read = first_match;
+    let mut write = first_match;
+    while read < units.len() {
+        if is_iyw_long_iya_signal_at(units, read) {
+            promote_short_i_to_long_i(&mut units[read]);
+            move_unit(units, read, write);
+            move_unit(units, read + 1, write + 1);
+            write += 2;
+            read += 3;
+            continue;
+        }
+
+        move_unit(units, read, write);
+        write += 1;
+        read += 1;
+    }
+
+    units.truncate(write);
+    true
+}
+
+fn first_iyw_long_iya_signal(units: &[PhoneticUnit]) -> Option<usize> {
+    (0..units.len().saturating_sub(2)).find(|&index| is_iyw_long_iya_signal_at(units, index))
+}
+
+fn is_iyw_long_iya_signal_at(units: &[PhoneticUnit], index: usize) -> bool {
+    index + 2 < units.len()
+        && is_ya_consonant_unit(&units[index + 1])
+        && is_long_iya_marker(&units[index + 2])
+        && is_short_i_vowel_bearing_unit(&units[index])
+}
+
+fn is_short_i_vowel_bearing_unit(unit: &PhoneticUnit) -> bool {
+    if !matches!(
+        unit.unit_type,
+        PhoneticUnitType::ConsonantWithVowel
+            | PhoneticUnitType::ConjunctWithVowel
+            | PhoneticUnitType::RephOverConsonantWithVowel
+    ) {
+        return false;
+    }
+
+    attached_vowel_key(&unit.text) == Some("i")
+}
+
+fn attached_vowel_key(text: &str) -> Option<&str> {
+    let component = text.rsplit(",,").next()?;
+    let component = component
+        .strip_prefix("rr")
+        .filter(|component| !component.is_empty())
+        .unwrap_or(component);
+
+    split_component_vowel_key(component)
+}
+
+fn split_component_vowel_key(component: &str) -> Option<&str> {
+    for (boundary, _) in component.char_indices().skip(1) {
+        let consonant = &component[..boundary];
+        let vowel = &component[boundary..];
+
+        if vowel_value(vowel).is_some()
+            && (consonant_value(consonant).is_some() || is_phola_component_consonant(consonant))
+        {
+            return Some(vowel);
+        }
+    }
+
+    None
+}
+
+fn is_phola_component_consonant(component: &str) -> bool {
+    component == "w"
+}
+
+fn is_ya_consonant_unit(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::Consonant && matches!(unit.text.as_str(), "y" | "Y")
+}
+
+fn is_long_iya_marker(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::Unknown && unit.text == "w"
+}
+
+fn promote_short_i_to_long_i(unit: &mut PhoneticUnit) {
+    debug_assert!(is_short_i_vowel_bearing_unit(unit));
+    unit.text.pop();
+    unit.text.push('I');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unit(text: &str, unit_type: PhoneticUnitType, position: usize) -> PhoneticUnit {
+        PhoneticUnit {
+            text: text.to_string(),
+            unit_type,
+            position,
+        }
+    }
+
+    #[test]
+    fn compact_units_and_attach_vowels_skips_empty_units_in_place() {
+        let mut units = vec![
+            unit("k", PhoneticUnitType::Consonant, 0),
+            unit("", PhoneticUnitType::Consonant, 1),
+            unit("A", PhoneticUnitType::Vowel, 2),
+            unit("", PhoneticUnitType::Consonant, 3),
+            unit("rrk", PhoneticUnitType::RephOverConsonant, 4),
+            unit("o", PhoneticUnitType::TerminatingVowel, 7),
+            unit("ng", PhoneticUnitType::SpecialForm, 8),
+        ];
+        let capacity = units.capacity();
+
+        compact_units_and_attach_vowels(&mut units);
+
+        assert_eq!(units.capacity(), capacity);
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| (unit.text.as_str(), unit.unit_type, unit.position))
+                .collect::<Vec<_>>(),
+            vec![
+                ("kA", PhoneticUnitType::ConsonantWithVowel, 0),
+                ("rrko", PhoneticUnitType::RephOverConsonantWithTerminator, 4),
+                ("ng", PhoneticUnitType::SpecialForm, 8),
+            ]
+        );
     }
 }

@@ -1,156 +1,247 @@
-use obadh_engine::{Tokenizer, TokenType};
+use obadh_engine::{ObadhEngine, PhoneticUnitType, Token, TokenType, Tokenizer};
+
+fn token_shapes(tokens: &[Token]) -> Vec<(&str, TokenType)> {
+    tokens
+        .iter()
+        .map(|token| (token.content.as_str(), token.token_type.clone()))
+        .collect()
+}
 
 #[test]
 fn test_text_tokenization() {
     let tokenizer = Tokenizer::new();
-    
-    // Test basic text tokenization
+
     let tokens = tokenizer.tokenize_text("Hello World!");
-    
-    // Debug information to see the actual tokens
-    println!("Tokens for 'Hello World!':");
-    for (i, token) in tokens.iter().enumerate() {
-        println!("Token {}: {:?} - '{}'", i, token.token_type, token.content);
-    }
-    
-    // Update the expected count to 4 tokens: "Hello", " ", "World", "!"
-    assert_eq!(tokens.len(), 4); 
-    
-    // Check token types
-    assert_eq!(tokens[0].token_type, TokenType::Word);
-    assert_eq!(tokens[0].content, "Hello");
-    
-    assert_eq!(tokens[1].token_type, TokenType::Whitespace);
-    assert_eq!(tokens[1].content, " ");
-    
-    assert_eq!(tokens[2].token_type, TokenType::Word);
-    assert_eq!(tokens[2].content, "World");
-    
-    assert_eq!(tokens[3].token_type, TokenType::Punctuation);
-    assert_eq!(tokens[3].content, "!");
-    
-    // Test with the suggested example
+    assert_eq!(
+        token_shapes(&tokens),
+        vec![
+            ("Hello", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("World", TokenType::Word),
+            ("!", TokenType::Punctuation),
+        ]
+    );
+
     let tokens = tokenizer.tokenize_text("Amar nam, 1234.");
-    
-    // Debug information
-    println!("\nTokens for 'Amar nam, 1234.':");
-    for (i, token) in tokens.iter().enumerate() {
-        println!("Token {}: {:?} - '{}'", i, token.token_type, token.content);
-    }
-    
-    // Check the tokenization - should be 7 tokens
-    assert_eq!(tokens.len(), 7); // "Amar", " ", "nam", ",", " ", "1234", "."
-    
-    // Check for specific tokens
-    assert_eq!(tokens[0].token_type, TokenType::Word);
-    assert_eq!(tokens[0].content, "Amar");
-    
-    assert_eq!(tokens[2].token_type, TokenType::Word);
-    assert_eq!(tokens[2].content, "nam");
-    
-    assert_eq!(tokens[4].token_type, TokenType::Whitespace);
-    
-    // Check for number token
-    assert_eq!(tokens[5].token_type, TokenType::Number);
-    assert_eq!(tokens[5].content, "1234");
-    
-    // Check for punctuation tokens
-    assert_eq!(tokens[3].token_type, TokenType::Punctuation);
-    assert_eq!(tokens[3].content, ",");
-    
-    assert_eq!(tokens[6].token_type, TokenType::Punctuation);
-    assert_eq!(tokens[6].content, ".");
+    assert_eq!(
+        token_shapes(&tokens),
+        vec![
+            ("Amar", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("nam", TokenType::Word),
+            (",", TokenType::Punctuation),
+            (" ", TokenType::Whitespace),
+            ("1234", TokenType::Number),
+            (".", TokenType::Punctuation),
+        ]
+    );
 }
 
 #[test]
-#[ignore = "Explicit hasant notation handling needs further implementation refinement"]
-fn test_phonetic_tokenization() {
+fn test_non_ascii_punctuation_tokenization_is_context_free() {
     let tokenizer = Tokenizer::new();
-    
-    // Print out the patterns being used for debugging
-    println!("Debug: Analyzing phonetic tokenization with definition-based patterns only");
-    
-    // Test tokenization of patterns from definitions
-    // We don't assume what patterns are defined, so we just test that tokenization happens
-    let words = ["k", "kh", "g", "Gh", "i", "I", "e", "E"];
-    
-    for word in words {
-        let units = tokenizer.tokenize_word(word);
-        println!("Tokenization of '{}': {:?}", word, units);
-        
-        // Simply verify that some tokenization happened
-        assert!(!units.is_empty());
-        
-        // Print the unit type for diagnostic purposes
-        for unit in &units {
-            println!("Unit '{}' type: {:?}", unit.text, unit.unit_type);
-        }
+    let tokens = tokenizer.tokenize_text("। ami।bangla ।। 123।");
+
+    let symbol_positions: Vec<_> = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| (token.content == "।").then_some(index))
+        .collect();
+
+    assert_eq!(symbol_positions, vec![0, 3, 6, 7, 10]);
+    for index in symbol_positions {
+        assert_eq!(tokens[index].token_type, TokenType::Symbol);
     }
-    
-    // Test special sequences if they're defined
-    let sequences = ["rr", ",,"];
-    for seq in sequences {
-        let units = tokenizer.tokenize_word(seq);
-        println!("Special sequence '{}': {:?}", seq, units);
-        
-        // Don't make assertions about specific types
-        // Just print for diagnostic purposes
-        if !units.is_empty() {
-            println!("Unit type for '{}': {:?}", seq, units[0].unit_type);
-        }
+}
+
+#[test]
+fn test_standalone_diacritic_markers_are_phonetic_tokens() {
+    let tokenizer = Tokenizer::new();
+    let tokens = tokenizer.tokenize_text("^ : ^: :^");
+
+    assert_eq!(
+        token_shapes(&tokens),
+        vec![
+            ("^", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            (":", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("^:", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            (":^", TokenType::Word),
+        ]
+    );
+}
+
+#[test]
+fn test_standalone_hasant_marker_is_a_phonetic_token() {
+    let tokenizer = Tokenizer::new();
+    let tokens = tokenizer.tokenize_text(",, k,, k,,k ,,");
+
+    assert_eq!(
+        token_shapes(&tokens),
+        vec![
+            (",,", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("k,,", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("k,,k", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            (",,", TokenType::Word),
+        ]
+    );
+}
+
+#[test]
+fn test_empty_phonetic_tokenization_is_safe() {
+    let tokenizer = Tokenizer::new();
+    assert!(tokenizer.tokenize_word("").is_empty());
+
+    let engine = ObadhEngine::new();
+    assert!(engine.tokenize_phonetic("").is_empty());
+}
+
+#[test]
+fn test_phonetic_tokenization_uses_definition_rules() {
+    let tokenizer = Tokenizer::new();
+
+    let cases = [
+        ("k", "k", PhoneticUnitType::Consonant),
+        ("kh", "kh", PhoneticUnitType::Consonant),
+        ("g", "g", PhoneticUnitType::Consonant),
+        ("Gh", "Gh", PhoneticUnitType::Consonant),
+        ("i", "i", PhoneticUnitType::Vowel),
+        ("I", "I", PhoneticUnitType::Vowel),
+        ("e", "e", PhoneticUnitType::Vowel),
+        ("E", "E", PhoneticUnitType::Vowel),
+        ("rr", "rr", PhoneticUnitType::SpecialForm),
+        (",,", ",,", PhoneticUnitType::ConsonantWithHasant),
+        ("kha", "kha", PhoneticUnitType::ConsonantWithVowel),
+        ("gha", "gha", PhoneticUnitType::ConsonantWithVowel),
+    ];
+
+    for (input, text, unit_type) in cases {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(units.len(), 1, "{input} should produce one unit");
+        assert_eq!(units[0].text, text);
+        assert_eq!(units[0].unit_type, unit_type);
     }
-    
-    // Test complex forms by using patterns that might be in our definitions
-    // Removing explicit hasant notation test which causes problems
-    let complex_words = ["kha", "gha", "nga"];
-    for word in complex_words {
-        let units = tokenizer.tokenize_word(word);
-        println!("Complex word '{}': {:?}", word, units);
-    }
+
+    let units = tokenizer.tokenize_word("nga");
+    assert_eq!(units.len(), 2);
+    assert_eq!(units[0].text, "ng");
+    assert_eq!(units[0].unit_type, PhoneticUnitType::SpecialForm);
+    assert_eq!(units[1].text, "a");
+    assert_eq!(units[1].unit_type, PhoneticUnitType::Vowel);
+
+    let units = tokenizer.tokenize_word("k2");
+    assert_eq!(
+        units
+            .iter()
+            .map(|unit| (unit.text.as_str(), unit.unit_type))
+            .collect::<Vec<_>>(),
+        vec![
+            ("k", PhoneticUnitType::Consonant),
+            ("2", PhoneticUnitType::Numeral),
+        ]
+    );
 }
 
 #[test]
 fn test_integration_with_engine() {
-    use obadh_engine::ObadhEngine;
-    
     let engine = ObadhEngine::new();
-    
-    // Test text tokenization through the engine using suggested example
-    let tokens = engine.tokenize("Amar nam, 1234.");
-    
-    println!("\nEngine tokenization of 'Amar nam, 1234.':");
-    for (i, token) in tokens.iter().enumerate() {
-        println!("Token {}: {:?} - '{}'", i, token.token_type, token.content);
-    }
-    
-    // Verify we get the expected number of tokens
-    assert_eq!(tokens.len(), 7);
-    
-    // Verify token types
-    assert_eq!(tokens[0].token_type, TokenType::Word);
-    assert_eq!(tokens[0].content, "Amar");
-    
-    assert_eq!(tokens[2].token_type, TokenType::Word);
-    assert_eq!(tokens[2].content, "nam");
-    
-    assert_eq!(tokens[5].token_type, TokenType::Number);
-    assert_eq!(tokens[5].content, "1234");
-    
-    // Test phonetic tokenization through the engine
-    // Just test that it works, without assuming specific patterns
-    let test_words = ["kha", "gha", "Amar", "nam"];
-    
-    for word in test_words {
-        let units = engine.tokenize_phonetic(word);
-        println!("Engine phonetic tokenization of '{}': {:?}", word, units);
-        
-        // Just verify we got some units back
-        assert!(!units.is_empty());
-        
-        // Print out the unit types for diagnostic purposes
-        for unit in &units {
-            println!("Unit: '{}' - {:?}", unit.text, unit.unit_type);
-        }
-    }
-} 
 
+    let tokens = engine.tokenize("Amar nam, 1234.");
+    assert_eq!(
+        token_shapes(&tokens),
+        vec![
+            ("Amar", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("nam", TokenType::Word),
+            (",", TokenType::Punctuation),
+            (" ", TokenType::Whitespace),
+            ("1234", TokenType::Number),
+            (".", TokenType::Punctuation),
+        ]
+    );
+
+    let units = engine.tokenize_phonetic("Amar");
+    assert_eq!(units.len(), 3);
+    assert_eq!(units[0].text, "A");
+    assert_eq!(units[0].unit_type, PhoneticUnitType::Vowel);
+    assert_eq!(units[1].text, "ma");
+    assert_eq!(units[1].unit_type, PhoneticUnitType::ConsonantWithVowel);
+    assert_eq!(units[2].text, "r");
+    assert_eq!(units[2].unit_type, PhoneticUnitType::Consonant);
+}
+
+#[test]
+fn test_phonetic_matching_uses_deterministic_longest_prefixes() {
+    let tokenizer = Tokenizer::new();
+
+    for input in ["t``", "T``"] {
+        let khanda_ta = tokenizer.tokenize_word(input);
+        assert_eq!(khanda_ta.len(), 1);
+        assert_eq!(khanda_ta[0].text, input);
+        assert_eq!(khanda_ta[0].unit_type, PhoneticUnitType::SpecialForm);
+    }
+
+    let vocalic_r = tokenizer.tokenize_word("rria");
+    assert_eq!(
+        vocalic_r
+            .iter()
+            .map(|unit| (unit.text.as_str(), unit.unit_type))
+            .collect::<Vec<_>>(),
+        vec![
+            ("rri", PhoneticUnitType::Vowel),
+            ("a", PhoneticUnitType::Vowel),
+        ]
+    );
+
+    let aspirated = tokenizer.tokenize_word("kha");
+    assert_eq!(aspirated.len(), 1);
+    assert_eq!(aspirated[0].text, "kha");
+    assert_eq!(aspirated[0].unit_type, PhoneticUnitType::ConsonantWithVowel);
+
+    let terminal_fallback = tokenizer.tokenize_word("ka");
+    assert_eq!(terminal_fallback.len(), 1);
+    assert_eq!(terminal_fallback[0].text, "ka");
+    assert_eq!(
+        terminal_fallback[0].unit_type,
+        PhoneticUnitType::ConsonantWithVowel
+    );
+
+    let diphthong = tokenizer.tokenize_word("kOU");
+    assert_eq!(diphthong.len(), 1);
+    assert_eq!(diphthong[0].text, "kOU");
+    assert_eq!(diphthong[0].unit_type, PhoneticUnitType::ConsonantWithVowel);
+}
+
+#[test]
+fn test_adjacent_rr_normalization_is_left_to_right() {
+    let tokenizer = Tokenizer::new();
+
+    let units = tokenizer.tokenize_word("rrrrka");
+    assert_eq!(
+        units
+            .iter()
+            .map(|unit| (unit.text.as_str(), unit.unit_type))
+            .collect::<Vec<_>>(),
+        vec![
+            ("rr", PhoneticUnitType::SpecialForm),
+            ("rrka", PhoneticUnitType::RephOverConsonantWithVowel),
+        ]
+    );
+
+    let units = tokenizer.tokenize_word("rrirrka");
+    assert_eq!(
+        units
+            .iter()
+            .map(|unit| (unit.text.as_str(), unit.unit_type))
+            .collect::<Vec<_>>(),
+        vec![
+            ("rri", PhoneticUnitType::Vowel),
+            ("rrka", PhoneticUnitType::RephOverConsonantWithVowel),
+        ]
+    );
+}

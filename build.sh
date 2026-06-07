@@ -50,6 +50,13 @@ check_requirements() {
     if ! command -v npm &> /dev/null; then
         error "Node.js/npm is not installed. Please install it from https://nodejs.org/"
     fi
+
+    # Check for Binaryen wasm-opt. wasm-pack's bundled optimizer can lag behind
+    # current Rust WASM features, so the build uses the system binary with
+    # explicit bulk-memory support.
+    if ! command -v wasm-opt &> /dev/null; then
+        warning "Binaryen wasm-opt is not installed. WASM optimization will be skipped."
+    fi
     
     # Change to www directory and install npm dependencies if needed
     if [ -d "www" ] && [ -f "www/package.json" ]; then
@@ -103,7 +110,8 @@ build_wasm() {
     info "Building WASM Package..."
     
     # Build WebAssembly package
-    wasm-pack build --target web --out-dir pkg || error "Failed to build WebAssembly package"
+    wasm-pack build --target web --out-dir pkg --no-opt --profile wasm-release || error "Failed to build WebAssembly package"
+    optimize_wasm
     
     # Check for www directory
     if [ ! -d "www" ]; then
@@ -126,6 +134,21 @@ build_wasm() {
     return 0
 }
 
+# Optimize generated WASM with Binaryen.
+optimize_wasm() {
+    if ! command -v wasm-opt &> /dev/null; then
+        warning "Skipping WASM optimization because wasm-opt is unavailable"
+        return 0
+    fi
+
+    for wasmfile in pkg/*.wasm; do
+        [ -e "$wasmfile" ] || continue
+        local optimized="${wasmfile}.opt"
+        wasm-opt --enable-bulk-memory -O "$wasmfile" -o "$optimized" || error "Failed to optimize $wasmfile"
+        mv "$optimized" "$wasmfile" || error "Failed to replace optimized WASM file"
+    done
+}
+
 # Build Tailwind CSS
 build_css() {
     info "Building CSS..."
@@ -144,7 +167,8 @@ build_dist() {
     
     # First build the WASM package
     info "Building WebAssembly package..."
-    wasm-pack build --target web --out-dir pkg || error "Failed to build WebAssembly package"
+    wasm-pack build --target web --out-dir pkg --no-opt --profile wasm-release || error "Failed to build WebAssembly package"
+    optimize_wasm
     
     # Change to www directory
     cd www || error "Failed to change to www directory"
@@ -337,4 +361,4 @@ case "$1" in
         ;;
 esac
 
-exit $? 
+exit $?

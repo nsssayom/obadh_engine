@@ -1,63 +1,47 @@
 # Known Issues in Obadh Engine
 
-This document tracks known issues and planned future work for the Obadh Engine.
+This document tracks current limitations and planned future work for the deterministic Obadh Engine core. It should not list already-fixed behavior as open work.
 
 ## Tokenizer Issues
 
-1. **Conjunct Formation**: Not all conjuncts are legal in Bengali. The current tokenizer attempts to form conjuncts too aggressively, which can lead to incorrect transliterations.
+1. **Conjunct Formation Policy**: The tokenizer filters implicit conjuncts through a compiled valid-conjunct trie. This prevents arbitrary consonant fusion, but some legal clusters still need better syllable-boundary policy so the engine can decide when implicit clustering is helpful and when the user should type an explicit `,,` boundary.
 
-2. **'chhi' Handling**: The sequence "chhi" is incorrectly tokenized as `ch,,hi` (forming a conjunct), but in proper Bengali it should render as "ছি" (ছ + ি) without a conjunct. Similar issues exist with other aspirated consonants.
+2. **Alias Admission**: Common "chh" and uppercase "C"/"Ch"/"Chh"/"CH"/"CHH" aliases are handled for ছ, including c+ছ conjunct aliases. Titlecase and all-caps aspirated digraphs such as "Kh"/"KH", "Gh"/"GH", "Jh"/"JH", "Th"/"TH", "Dh"/"DH", "Ph"/"PH", and "Bh"/"BH" compose through normal consonant, vowel, and canonical conjunct rules. The pronounced "kkh" alias family maps to orthographic ক্ষ alongside "ksh"/"kSh". Future aliases need an Obadh-specific linguistic or usability reason; external keyboard layouts are comparison data, not acceptance criteria.
 
 3. **Complex Rule Handling**: The tokenizer needs more sophisticated rules to handle special cases like:
    - When two consonants should form conjuncts vs. when they should remain separate
-   - Proper handling of consonant clusters like "ksh", "jn", etc.
+   - Proper handling of less common consonant clusters and cluster boundaries
 
-4. **Consonant Cluster Recognition**: The tokenizer does not correctly identify which consonant clusters should form conjuncts and which should remain separate. For example:
-   - "str" in "strI" should be transliterated as "স্ত্র" but currently becomes "স্তর"
-   - "kt" in "bhakt" should be transliterated as "ক্ত" but can be incorrectly handled
+4. **Consonant Cluster Recognition**: Current regression coverage protects representative valid clusters, explicit hasant behavior, reph, phola forms, and anusvara-bounded clusters. Broader implicit-cluster behavior still needs corpus-driven validation against deliberate Roman input patterns.
+
+5. **Duplicate Source Signal**: `data/conjuncts.csv` contains the duplicate Roman key `rrt` for both `র্ত` and `র্ৎ`. The engine keeps `rrt` mapped to `র্ত` and requires the composable signal <code>rrt``</code> for `র্ৎ`; <code>rrT``</code> remains an accepted alias.
 
 ## Transliterator Issues
 
-1. **Special Case Handling**: The transliterator needs better special case handling for sequences like:
-   - "chhi" → "ছি" (currently transliterates to "ছ্হি")
-   - "korchhi" → "করছি" (currently transliterates to "কর্ছহি")
-   - The entire sequence "strI bhakt prokash korchhi" → "স্ত্রী ভক্ত প্রকাশ করছি" (current: "স্তরী ভাক্ত প্রকাশ কর্ছহি")
+1. **Advanced Orthography Rules**: Some spellings need explicit, deterministic Roman input rather than whole-word exceptions. The engine should prefer composable rules and documented user input patterns over dictionary-style word overrides.
 
-2. **Aspirated Consonant Handling**: Aspirated consonants like "chh", "jh", "th", "bh" are sometimes incorrectly processed, especially when followed by vowels.
+2. **Corpus Validation**: Representative cluster, vowel, hasant, phola, mixed-script, CLI, and WASM cases are covered. The next validation gap is a larger corpus of deliberate Roman input patterns that can expose awkward but rule-correct spellings before higher-level suggestion systems exist.
 
-3. **Heuristic Improvements**: Better heuristics needed for common Bengali words and patterns.
+3. **Documentation Completeness**: The main deliberate-input contract is documented, but every accepted alias should continue to be tied back to a canonical rule signal in user-facing docs.
 
 ## Future Work
 
 1. Implement a more linguistically accurate algorithm for forming conjuncts based on Bengali orthography rules.
 
-2. Add special case handling for common word patterns.
+2. Expand deterministic phonetic and orthographic rules without hardcoded whole-word mappings.
 
-3. Add a dictionary-based approach to supplement the algorithmic transliteration for common words.
+3. Add tooling to audit a larger corpus of deliberate Roman input patterns against the deterministic engine.
 
-4. Reduce tokenizer warnings by cleaning up unused code.
+4. Maintain and expand the Criterion benchmark suite for tokenizer/transliterator hot paths as new deterministic rules are added.
 
 5. Expand test coverage to ensure all edge cases are handled correctly.
 
-6. Add a phonetic rule system that better matches Bengali orthography's special cases.
+6. Add a phonetic rule system that better matches Bengali orthography's special cases while preserving one canonical deliberate signal wherever possible.
 
-7. Consider implementing a preprocessing step that identifies known problematic patterns before tokenization.
+7. Consider implementing explicit normalization passes for documented Roman rule patterns before tokenization.
 
 ## Notes
 
-The current version of the engine works well for basic transliteration cases like:
-- "lal" → "লাল"
-- "jhuTi" → "ঝুটি"
-- "kakatuta" → "কাকাতুতা"
-- "ami banglay gan gai" → "আমি বাংলায় গান গাই"
+The current version has regression coverage for basic vowel and consonant composition, explicit hasant notation, valid conjunct filtering, phola forms, mixed-script preservation, numerals, and the CLI/library path. It also has a Criterion hot-path benchmark target for tokenizer and transliterator rule-stress inputs.
 
-But more complex cases involving conjuncts and special character combinations need improvement.
-
-## Specific Examples of Issues
-
-| Input | Current Output | Expected Output | Issue |
-|-------|---------------|-----------------|-------|
-| "chhi" | ছ্হি | ছি | Incorrect conjunct formation |
-| "korchhi" | কর্ছহি | করছি | Incorrect handling of "chhi" |
-| "strI" | স্তরী | স্ত্রী | Incorrect consonant cluster handling |
-| "bhakt" | ভাক্ত | ভক্ত | Unnecessary vowel insertion | 
+More complex cases involving conjuncts, vowel ambiguity, and deliberate input conventions need broader corpus-driven validation. That validation should expand deterministic rules, not introduce dictionary-style word overrides into the core engine.

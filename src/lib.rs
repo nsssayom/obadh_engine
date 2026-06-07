@@ -8,8 +8,8 @@ pub mod engine;
 pub mod wasm;
 
 // Re-export commonly used types for convenience
-pub use engine::{Sanitizer, SanitizeResult};
-pub use engine::{Tokenizer, Token, TokenType, PhoneticUnit, PhoneticUnitType};
+pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
+pub use engine::{SanitizeResult, Sanitizer};
 pub use wasm::ObadhaWasm;
 
 /// Main entry point for the Obadh transliteration engine
@@ -24,27 +24,37 @@ impl ObadhEngine {
             transliterator: engine::Transliterator::new(),
         }
     }
-    
+
     /// Transliterate Roman text to Bengali
     pub fn transliterate(&self, text: &str) -> String {
         self.transliterator.transliterate(text)
     }
-    
+
     /// Sanitize input text to ensure it contains only valid characters
     pub fn sanitize(&self, text: &str) -> SanitizeResult {
         self.transliterator.sanitize(text)
     }
-    
+
     /// Tokenize input text into words and other tokens
     pub fn tokenize(&self, text: &str) -> Vec<Token> {
         self.transliterator.tokenize(text)
     }
-    
+
+    /// Transliterate already-tokenized input to Bengali
+    pub fn transliterate_tokens(&self, tokens: &[Token]) -> String {
+        self.transliterator.transliterate_tokens(tokens)
+    }
+
+    /// Transliterate one token using its surrounding tokenized context.
+    pub fn transliterate_token_at(&self, tokens: &[Token], index: usize) -> Option<String> {
+        self.transliterator.transliterate_token_at(tokens, index)
+    }
+
     /// Tokenize a word into phonetic units for Bengali transliteration
     pub fn tokenize_phonetic(&self, word: &str) -> Vec<PhoneticUnit> {
         self.transliterator.tokenize_phonetic(word)
     }
-    
+
     /// Get a new tokenizer instance for custom tokenization
     pub fn get_tokenizer(&self) -> Tokenizer {
         Tokenizer::new()

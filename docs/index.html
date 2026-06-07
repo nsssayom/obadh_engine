@@ -48,7 +48,7 @@
         mode: 'simple',
         showRawOutput: false,
         darkMode: false,
-        version: '0.1.0',
+        version: '0.2.0',
         wasmLoaded: false,
         loadingError: null,
         
@@ -564,6 +564,9 @@
                       
                       <div class="text-gray-600 dark:text-gray-400">Type:</div>
                       <div class="text-gray-900 dark:text-gray-100" x-text="token.type"></div>
+
+                      <div class="text-gray-600 dark:text-gray-400">Output:</div>
+                      <div class="text-gray-900 dark:text-gray-100 font-bengali" x-text="token.transliterated ?? ''"></div>
                     </div>
                     
                     <div x-show="token.phonetic_units && token.phonetic_units.length > 0">
@@ -596,7 +599,7 @@
     <footer class="bg-white dark:bg-gray-800 py-4 border-t border-gray-200 dark:border-gray-700">
       <div class="container mx-auto px-4">
         <p class="text-center text-sm text-gray-500 dark:text-gray-400">
-          Powered by <span class="font-semibold text-primary-600 dark:text-primary-400">Obadh Engine</span> v<span x-text="version">0.1.0</span>
+          Powered by <span class="font-semibold text-primary-600 dark:text-primary-400">Obadh Engine</span> v<span x-text="version">0.2.0</span>
         </p>
       </div>
     </footer>
@@ -656,4 +659,4 @@
     });
   </script>
 </body>
-</html> 
+</html>

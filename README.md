@@ -1,24 +1,26 @@
 # Obadh Engine
 
-A linguistically accurate Roman to Bengali transliteration engine designed as a modern successor to Avro Phonetic Keyboard.
+A linguistically accurate Roman to Bengali transliteration engine for an Avro-successor Bangla typing system.
+
+Obadh is the deterministic, fast, dependency-light entry layer for that larger system. This crate is not a wholesale Avro-rule-table clone, not a spelling guesser, and not a word-by-word compatibility table: the core engine must be 100% rule-based, predictable, and explicit. Users are expected to type deliberately according to the documented Roman input rules; correction, suggestion, ranking, personalization, and dictionary assistance belong above this layer, not inside it.
 
 ## Quick Start for Developers
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/obadh_engine.git
+git clone https://github.com/nsssayom/obadh_engine.git
 cd obadh_engine
 
 # First time setup: Install required tools and dependencies
-rustup target add wasm32-unknown-unknown # Required for WASM builds
-cargo install wasm-pack # Install wasm-pack tool if not already installed
+rustup toolchain install 1.89.0 # Matches rust-toolchain.toml
+brew install wasm-pack binaryen # Provides wasm-pack and wasm-opt for optimized WASM builds
 cd www && npm install && cd .. # Install Node.js dependencies for the web interface
 
-# Run the transliterator with sample text
-cargo run --bin obadh -- "ami banglay gan gai"
+# Run the transliterator with rule-probe text
+cargo run --bin obadh -- 'kA khA gA t`` 12.34'
 
 # Try the debug mode with performance metrics
-cargo run --bin obadh -- --debug "ami banglay gan gai"
+cargo run --bin obadh -- --debug 'kA khA gA t`` 12.34'
 
 # Build a release binary
 ./build.sh bin
@@ -35,9 +37,13 @@ cargo test
 
 ## Overview
 
-Obadh Engine is a Rust-based transliteration system designed to convert Roman text to Bengali according to phonetic rules. It aims to provide accurate and natural-sounding transliterations with high fidelity to Bengali linguistic principles, while maintaining a clean, modern, and maintainable codebase.
+Obadh Engine is a Rust-based transliteration system designed to convert Roman text to Bengali according to explicit phonetic and orthographic rules. It aims to provide accurate transliteration with high fidelity to Bengali linguistic principles, while maintaining a clean, modern, and maintainable codebase.
 
-As a conceptual successor to Avro Phonetic Keyboard—which revolutionized Bengali typing by making it accessible to everyone—Obadh Engine carries the torch forward with improved efficiency, flexibility, and modern software engineering practices. While Avro was a groundbreaking milestone for Bengali computing, its aging codebase necessitates a modern alternative that can power the next generation of Bengali typing tools.
+As an Avro successor, Obadh keeps the familiar Roman-to-Bangla typing lineage while drawing a hard boundary around this crate: the core transliterator is deterministic infrastructure. It should not silently correct ambiguous input, infer intended words, or embed whole-word exceptions. If the user wants a specific Bengali spelling, the user must type the Roman sequence that encodes that spelling under the rules.
+
+## Development Status
+
+The repository is under active redevelopment. The current baseline has a green Rust test suite for sanitization, tokenization, valid conjunct filtering, explicit hasant notation, reph, phola forms, local orthographic rules, and the CLI/library path. Known gaps are tracked in `KNOWN_ISSUES.md`; the biggest remaining area is broader corpus validation of rule behavior against intentional Roman input patterns.
 
 ## Philosophy
 
@@ -45,11 +51,59 @@ Obadh Engine is built on these core principles:
 
 1. **Deterministic Transliteration**: The engine uses deterministic phonetic rules rather than machine learning approaches, ensuring consistent and predictable results.
 
-2. **ML/DL-Free Core**: We've intentionally kept the core engine free from machine learning dependencies. This allows downstream projects to choose their own ML/DL models for auto-complete and other enhanced features while using our robust transliteration engine as a foundation.
+2. **Rule-Based Base Layer**: The core engine must not depend on dictionary lookup, whole-word overrides, probabilistic correction, or hidden guesses. A given input must map to the same output every time for a clear rule-based reason.
 
-3. **Linguistic Accuracy**: The project prioritizes linguistic fidelity to Bengali rules over simplified approximations.
+3. **Deliberate User Input**: This layer assumes the user is intentionally typing the spelling they want. If a Bengali word has multiple plausible Roman forms, this engine should document and implement the rule path rather than guessing the user's intended word.
 
-4. **Modularity**: The codebase is designed to be integrated into other projects as a library or used as a standalone application.
+4. **Linguistic Accuracy**: The project prioritizes linguistic fidelity to Bengali rules over simplified approximations.
+
+5. **Modularity**: The codebase is designed to be integrated into other projects as a library or used as a standalone application.
+
+### Rule Admission Standard
+
+Avro compatibility is useful context, not an authority. A rule belongs in this core engine only when it improves deliberate Bengali typing under Obadh's own contract:
+
+- Prefer one canonical Roman signal for each Bengali spelling.
+- Allow aliases only when they have a strong phonetic, orthographic, or ergonomic reason.
+- Keep the canonical signal documented first; aliases must not become hidden correction behavior.
+- Add aliases through composable rule tables and tokenizer logic, never through whole-word mappings.
+- Reject broad compatibility aliases that only exist because another layout accepted them, especially if they consume ambiguous single-letter namespace or weaken user deliberateness.
+
+## Deliberate Input Contract
+
+This engine does not try to rescue casual or approximate Roman spellings. The user must type the Roman sequence that encodes the intended Bengali spelling under the rules. This is the core-layer contract; higher-level correction or suggestion systems must compose on top of it without weakening determinism here.
+
+Rule signals, not memorized words:
+
+| Roman Signal | Bengali Rule Intent |
+|--------------|---------------------|
+| `A` / `aa` | long আ / া |
+| `I` / `ee` / `ii` | long ঈ / ী |
+| `iyw` after a consonant/conjunct | composable ঈয় signal, e.g. `jatiywta` → `জাতীয়তা` |
+| `iywo` / `iywO` | inherent vs visible ও after ঈয়, e.g. `kiywo` → `কীয়`, `kiywO` → `কীয়ো` |
+| `u` / `oo` | short উ / ু |
+| `U` / `uu` | long ঊ / ূ |
+| `e` / `E` | এ / ে |
+| `O` | ও / ো |
+| `OI` | ঐ / ৈ |
+| `OU` | ঔ / ৌ |
+| `Sh` | ষ |
+| `Kh` / `KH`, `Gh` / `GH`, etc. | aspirated consonant aliases |
+| `ng` | anusvara ং |
+| `Ng` | velar nasal ঙ |
+| `ngg` / `nggh` | shorthand for ঙ্গ / ঙ্ঘ |
+| `jNG` / `jn` | জ্ঞ conjunct |
+| `rr` + valid cluster | reph over the full cluster, e.g. `rrkSh` → `র্ক্ষ` |
+| `y` | য-ফলা marker in valid conjunct clusters |
+| `w` | ব-ফলা marker in valid conjunct clusters |
+| `z` / `b` | regular য / ব bases; they compose with `y` / `w` only as declared clusters, e.g. `zy` → `য্য`, `bw` → `ব্ব` |
+| <code>t``</code> / <code>T``</code> | ৎ |
+| <code>rrt``</code> / <code>rrT``</code> | র্ৎ by composing reph with খণ্ড ত; <code>rrt</code> remains র্ত |
+| `,,` | explicit hasant / conjunct boundary command |
+| `^` | chandrabindu |
+| `:` | visarga |
+
+Casual Latin spellings are not correction requests in this layer. They are just input sequences. If a future product wants correction, suggestions, or personalization, it should build that above the deterministic engine.
 
 ## Features
 
@@ -105,23 +159,26 @@ cargo run --bin obadh -- [OPTIONS] [TEXT]
 
 Note: The `--` separator is required to pass arguments to the binary rather than to Cargo itself.
 
-Examples:
+Rule-probe commands:
 
 ```bash
-# Transliterate text
-cargo run --bin obadh -- "ami banglay gan gai"
+# Transliterate rule-probe text
+cargo run --bin obadh -- 'kA khA gA t`` 12.34'
 
 # Use debug mode with performance metrics
-cargo run --bin obadh -- --debug "ami banglay gan gai"
+cargo run --bin obadh -- --debug 'kA khA gA t`` 12.34'
 
 # Use verbose mode with pretty JSON output
-cargo run --bin obadh -- --verbose --pretty "ami banglay gan gai"
+cargo run --bin obadh -- --verbose --pretty 'kA khA gA t`` 12.34'
 
 # Run benchmark
-cargo run --bin obadh -- --benchmark 10 "ami banglay gan gai"
+cargo run --bin obadh -- --benchmark 10 'kA khA gA t`` 12.34'
 
 # Run benchmark with JSON output
-cargo run --bin obadh -- --benchmark 10 --debug "ami banglay gan gai"
+cargo run --bin obadh -- --benchmark 10 --debug 'kA khA gA t`` 12.34'
+
+# Run repeatable Criterion hot-path benchmarks
+cargo bench --bench hot_path
 ```
 
 ## Web Interface
@@ -172,8 +229,8 @@ async function transliterate(text) {
 }
 
 // Example usage
-transliterate("ami banglay gan gai").then(result => {
-  console.log(result); // আমি বাংলায় গান গাই
+transliterate("kA khA gA t`` 12.34").then(result => {
+  console.log(result); // কা খা গা ৎ ১২.৩৪
 });
 ```
 
@@ -193,8 +250,8 @@ async function transliterateWithMetrics(text) {
 }
 
 // Example usage
-transliterateWithMetrics("ami banglay gan gai").then(result => {
-  console.log(result.output); // আমি বাংলায় গান গাই
+transliterateWithMetrics("kA khA gA t`` 12.34").then(result => {
+  console.log(result.output); // কা খা গা ৎ ১২.৩৪
   console.log(`Total processing time: ${result.performance.total_ms.toFixed(2)} ms`);
 });
 ```
@@ -320,7 +377,7 @@ To use Obadh Engine as a library in your Rust project, add it to your `Cargo.tom
 
 ```toml
 [dependencies]
-obadh_engine = { git = "https://github.com/yourusername/obadh_engine.git" }
+obadh_engine = { git = "https://github.com/nsssayom/obadh_engine.git" }
 ```
 
 Then use it in your code:
@@ -332,10 +389,10 @@ fn main() {
     // Create a new engine instance
     let engine = ObadhEngine::new();
     
-    // Transliterate Roman text to Bengali
-    let bengali = engine.transliterate("ami banglay gan gai");
+    // Transliterate deliberate Roman rule signals to Bengali
+    let bengali = engine.transliterate("kA khA gA t`` 12.34");
     
-    println!("{}", bengali); // আমি বাংলায় গান গাই
+    println!("{}", bengali); // কা খা গা ৎ ১২.৩৪
 }
 ```
 
@@ -347,8 +404,8 @@ The main transliteration command-line interface:
 
 ```bash
 # Basic usage (outputs plain Bengali text)
-cargo run --bin obadh -- "ami banglay gan gai"
-# Output: আমি বাংলায় গান গাই
+cargo run --bin obadh -- 'kA khA gA t`` 12.34'
+# Output: কা খা গা ৎ ১২.৩৪
 
 # Process a file
 cat input.txt | cargo run --bin obadh
@@ -379,7 +436,7 @@ The binary will be available at `target/release/obadh`. You can install it to yo
 cargo install --path .
 
 # Now you can use the command directly
-obadh "ami banglay gan gai"
+obadh 'kA khA gA t`` 12.34'
 ```
 
 Alternatively, you can build everything at once including the CLI binary:
@@ -404,9 +461,12 @@ Alternatively, you can build everything at once including the CLI binary:
   - `transliterator.rs`: Main transliteration system
   - `sanitizer.rs`: Input text sanitization
 - `src/definitions/`: Bengali character and rule definitions
+  - Conjunct rules are compiled into static Rust tables; no CSV is parsed by the library, CLI, or WASM runtime
 - `src/wasm/`: WebAssembly bindings and web-specific functionality
 - `src/bin/`: Binary executables
   - `obadh.rs`: Main CLI application
+- `benches/`: Criterion benchmarks for tokenizer/transliterator hot paths
+- `data/`: Non-shipped source/audit material excluded from Cargo packages
 - `www/`: Web interface files
   - `index.html`: Main web application
   - `css/`: Stylesheets
@@ -473,7 +533,8 @@ For frontend developers who want to work on the web interface specifically, here
 
 1. Make sure you have installed:
    - [Node.js and npm](https://nodejs.org/) (v14 or later recommended)
-   - [Rust](https://www.rust-lang.org/tools/install) and [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/)
+   - [Rust](https://www.rust-lang.org/tools/install), using the pinned toolchain in `rust-toolchain.toml`
+   - [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) and Binaryen's `wasm-opt` for optimized WASM builds
 
 2. Install the npm dependencies:
    ```bash

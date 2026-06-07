@@ -1,13 +1,13 @@
 {
   "name": "obadh-engine-web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Web interface for the Obadh Engine - A Roman to Bengali transliteration engine",
   "scripts": {
-    "build": "tailwindcss -i ./css/input.css -o ./css/styles.css --minify",
-    "watch": "tailwindcss -i ./css/input.css -o ./css/styles.css --watch",
+    "build": "BROWSERSLIST_IGNORE_OLD_DATA=1 tailwindcss -i ./css/input.css -o ./css/styles.css --minify",
+    "watch": "BROWSERSLIST_IGNORE_OLD_DATA=1 tailwindcss -i ./css/input.css -o ./css/styles.css --watch",
     "serve": "http-server . -p 8080 --cors -c-1 -a localhost",
     "dev": "npm run watch & npm run serve",
-    "build-wasm": "cd .. && wasm-pack build --target web --out-dir pkg && npm run copy-wasm",
+    "build-wasm": "cd .. && ./build.sh wasm",
     "copy-wasm": "mkdir -p js && cp ../pkg/*.js js/ && cp ../pkg/*.wasm js/ && for jsfile in js/*.js; do sed -i.bak 's|import.meta.url, \"../pkg/|import.meta.url, \"|g' \"$jsfile\" && rm -f \"$jsfile.bak\"; done",
     "start": "npm run build && npm run serve",
     "build-dist": "npm run build-wasm && npm run build"
@@ -18,7 +18,7 @@
     "wasm",
     "webassembly"
   ],
-  "author": "",
+  "author": "NSS Sayom",
   "license": "MIT",
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.3",
