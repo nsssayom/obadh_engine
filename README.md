@@ -89,7 +89,7 @@ Rule signals, not memorized words:
 | `OU` | ঔ / ৌ |
 | `Sh` | ষ |
 | `Kh` / `KH`, `Gh` / `GH`, etc. | aspirated consonant aliases |
-| `ng` | anusvara ং |
+| `ng` / `M` | anusvara ং; use `M` before `g`/`gh` when you want literal ংগ/ংঘ instead of the `ngg`/`nggh` shorthand |
 | `Ng` | velar nasal ঙ |
 | `ngg` / `nggh` | shorthand for ঙ্গ / ঙ্ঘ |
 | `jNG` / `jn` | জ্ঞ conjunct |

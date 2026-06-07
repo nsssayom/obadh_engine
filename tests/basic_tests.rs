@@ -41,6 +41,8 @@ fn test_shared_definition_maps_expose_core_rules() {
     assert_eq!(diacritic_rules()[0], (",,", "্"));
     assert_eq!(diacritics_static().get("t``").copied(), Some("ৎ"));
     assert_eq!(diacritics_static().get("T``").copied(), Some("ৎ"));
+    assert_eq!(diacritics_static().get("M").copied(), Some("ং"));
+    assert_eq!(diacritic_value("M"), Some("ং"));
     assert_eq!(symbols_static().get(".").copied(), Some("।"));
     assert_eq!(symbol_value("."), Some("।"));
     assert_eq!(symbol_rules()[0], (".", "।"));

@@ -699,9 +699,9 @@ impl Transliterator {
                         // Handle Khanda Ta (special form of ta)
                         let khanda_ta = diacritic_value(unit.text.as_str()).unwrap_or("ৎ");
                         result.push_str(khanda_ta);
-                    } else if unit.text == "ng" {
+                    } else if matches!(unit.text.as_str(), "ng" | "M") {
                         // Handle anusvara (ং)
-                        if let Some(anusvara) = diacritic_value("ng") {
+                        if let Some(anusvara) = diacritic_value(unit.text.as_str()) {
                             result.push_str(anusvara);
                         } else {
                             result.push('ং');

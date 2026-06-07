@@ -111,6 +111,9 @@ Nasal input is deterministic and must preserve the user's intended spelling:
 - `ng` is anusvara:
   - Signal: `bangla` → `বাংলা`
   - Signal: `songket` → `সংকেত`
+- `M` is the explicit anusvara escape:
+  - Signal: `sMgo` → `সংগ`
+  - Use it before `g`/`gh` when you want literal ংগ/ংঘ rather than the `ngg`/`nggh` shorthand.
 - `Ng` is the velar nasal consonant:
   - Signal: `oNgko` → `অঙ্ক`
   - Signal: `oNggo` → `অঙ্গ`

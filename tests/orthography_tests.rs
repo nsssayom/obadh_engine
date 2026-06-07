@@ -562,6 +562,31 @@ fn test_plain_ng_remains_anusvara_before_non_g_velars() {
 }
 
 #[test]
+fn test_uppercase_m_is_explicit_anusvara_escape_before_g_velars() {
+    let tokenizer = Tokenizer::new();
+    let units = tokenizer.tokenize_word("sMgo");
+
+    assert_eq!(
+        units
+            .iter()
+            .map(|unit| (unit.text.as_str(), unit.unit_type))
+            .collect::<Vec<_>>(),
+        vec![
+            ("s", PhoneticUnitType::Consonant),
+            ("M", PhoneticUnitType::SpecialForm),
+            ("go", PhoneticUnitType::ConsonantWithTerminator),
+        ]
+    );
+
+    let engine = ObadhEngine::new();
+    assert_eq!(engine.transliterate("M sMgo sMgho"), "ং সংগ সংঘ");
+    assert_eq!(
+        engine.transliterate("songgo sMgo nggho sMgho"),
+        "সঙ্গ সংগ ঙ্ঘ সংঘ"
+    );
+}
+
+#[test]
 fn test_ri_phola_words_do_not_collapse_to_vocalic_r() {
     let engine = ObadhEngine::new();
 

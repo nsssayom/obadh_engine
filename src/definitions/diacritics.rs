@@ -19,6 +19,7 @@ const DIACRITIC_RULES: &[DiacriticRule] = &[
     ("t``", "ৎ"), // Khanda Ta
     ("T``", "ৎ"), // Khanda Ta alias
     ("ng", "ং"),  // Anusvara
+    ("M", "ং"),   // Explicit anusvara alias; useful before g/gh without invoking ngg/nggh
 ];
 
 fn build_diacritics() -> HashMap<&'static str, &'static str> {
@@ -43,7 +44,7 @@ pub fn diacritic_value(roman: &str) -> Option<&'static str> {
         "^" => Some("ঁ"),
         ":" => Some("ঃ"),
         "t``" | "T``" => Some("ৎ"),
-        "ng" => Some("ং"),
+        "ng" | "M" => Some("ং"),
         _ => None,
     }
 }
