@@ -1,8 +1,8 @@
 use obadh_engine::definitions::{
-    conjuncts, consonant_categories, consonant_system, consonant_value, consonants_static,
-    diacritic_rules, diacritic_value, diacritics_static, is_consonant, is_vowel, numeral_rules,
-    numerals, numerals_static, symbol_rules, symbol_value, symbols_static, vowel_rules,
-    vowel_value, vowels_static,
+    bengali_digit, conjuncts, consonant_categories, consonant_system, consonant_value,
+    consonants_static, diacritic_rules, diacritic_value, diacritics_static, is_consonant, is_vowel,
+    numeral_rules, numerals, numerals_static, symbol_rules, symbol_value, symbols_static,
+    vowel_rules, vowel_value, vowels_static,
 };
 use obadh_engine::ObadhEngine;
 
@@ -94,6 +94,20 @@ fn test_ascii_digits_render_as_bengali_digits() {
 
     assert_eq!(engine.transliterate("0123456789"), BENGALI_DIGITS);
     assert_eq!(engine.transliterate("k2 k20 a1b2"), "ক২ ক২০ আ১ব২");
+}
+
+#[test]
+fn test_direct_digit_lookup_matches_ordered_numeral_table() {
+    for &(roman, bengali) in numeral_rules() {
+        let digit = roman
+            .chars()
+            .next()
+            .expect("numeral rule keys are one ASCII digit");
+        assert_eq!(bengali_digit(digit), Some(bengali));
+    }
+
+    assert_eq!(bengali_digit('৯'), None);
+    assert_eq!(bengali_digit('x'), None);
 }
 
 #[test]
