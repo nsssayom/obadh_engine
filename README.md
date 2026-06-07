@@ -482,6 +482,8 @@ Alternatively, you can build everything at once including the CLI binary:
   - `package.json` - npm configuration
 - `tests/`: Test cases for the engine
 
+The Cargo package intentionally excludes source/audit data, tests, benchmarks, build scripts, and playground/GitHub Pages assets. The published crate ships the Rust library and binaries; `data/`, `www/`, and `docs/` remain repository material for development, verification, and deployment.
+
 ### Building
 
 The project includes a streamlined build script to simplify common tasks:

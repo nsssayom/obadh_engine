@@ -6,6 +6,7 @@ use obadh_engine::definitions::{
 };
 use obadh_engine::ObadhEngine;
 
+const CARGO_MANIFEST_DOC: &str = include_str!("../Cargo.toml");
 const CONSONANT_RULES_DOC: &str = include_str!("../data/rules/consonants.md");
 const README_DOC: &str = include_str!("../README.md");
 const KNOWN_ISSUES_DOC: &str = include_str!("../KNOWN_ISSUES.md");
@@ -230,6 +231,24 @@ fn deliberate_input_contract_documents_non_conjunct_ra_ya_zwnj_source_note() {
     );
 }
 
+#[test]
+fn cargo_package_excludes_non_runtime_audit_and_playground_assets() {
+    for excluded_path in [
+        "/benches/**",
+        "/data/**",
+        "/docs/**",
+        "/tests/**",
+        "/www/**",
+        "/Makefile",
+        "/build.sh",
+    ] {
+        assert!(
+            cargo_manifest_exclude_entries(CARGO_MANIFEST_DOC).contains(&excluded_path),
+            "Cargo package should exclude {excluded_path} from the shipped crate"
+        );
+    }
+}
+
 struct VowelTableRow<'a> {
     roman_input: &'a str,
     independent: &'a str,
@@ -415,6 +434,36 @@ fn parse_rule_probe_row(line_number: usize, line: &str) -> RuleProbeRow<'_> {
 fn single_code_span_text(cell: &str) -> Option<&str> {
     let spans = code_spans(cell);
     (spans.len() == 1).then_some(spans[0].text)
+}
+
+fn cargo_manifest_exclude_entries(manifest: &str) -> BTreeSet<&str> {
+    let mut entries = BTreeSet::new();
+    let mut in_exclude = false;
+
+    for line in manifest.lines() {
+        let line = line.trim();
+
+        if line.starts_with("exclude = [") {
+            in_exclude = true;
+            continue;
+        }
+
+        if in_exclude && line == "]" {
+            break;
+        }
+
+        if in_exclude {
+            let Some(entry) = line
+                .strip_prefix('"')
+                .and_then(|line| line.split_once('"').map(|(entry, _)| entry))
+            else {
+                continue;
+            };
+            entries.insert(entry);
+        }
+    }
+
+    entries
 }
 
 fn deliberate_input_contract_signal_cells(markdown: &str) -> Vec<&str> {

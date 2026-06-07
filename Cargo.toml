@@ -9,7 +9,15 @@ repository = "https://github.com/nsssayom/obadh_engine"
 license = "MIT"
 keywords = ["bengali", "transliteration", "linguistics", "i18n"]
 categories = ["text-processing", "internationalization"]
-exclude = ["/data/**"]
+exclude = [
+    "/benches/**",
+    "/data/**",
+    "/docs/**",
+    "/tests/**",
+    "/www/**",
+    "/Makefile",
+    "/build.sh",
+]
 
 [lib]
 crate-type = ["rlib", "cdylib"]
