@@ -129,15 +129,12 @@
             });
           }
           
-          // Log the state change to help with debugging
-          console.log('Raw JSON toggled:', this.showRawOutput);
         },
         
         updateCodeBlocks() {
           try {
             // Format the JSON nicely
             const jsonString = JSON.stringify(this.result, null, 2);
-            console.log('Updating code blocks with JSON data');
             
             if (this.mode === 'debug') {
               const debugEl = this.$refs.jsonCodeDebug;
@@ -616,18 +613,14 @@
 
     async function initWasm() {
       try {
-        console.log('Initializing Obadh Engine WASM module...');
         initializationAttempts++;
         
         // Initialize the WASM module
         await init();
-        console.log('WASM module initialized, creating engine instance...');
         
         // Create engine instance and options
         window.obadhaWasm = new ObadhaWasm();
         window.translitOptions = new TransliterationOptions();
-        
-        console.log('Obadh Engine WASM initialized successfully.');
         
         // Notify Alpine.js that initialization is complete
         window.dispatchEvent(new CustomEvent('wasm-loaded', { 
