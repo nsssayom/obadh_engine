@@ -2,6 +2,7 @@ use clap::{Arg, ArgAction, Command};
 use serde_json::{json, Value};
 use std::env;
 use std::io::{self, Read};
+use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 use obadh_engine::engine::{Token, TokenType, Transliterator};
@@ -10,52 +11,13 @@ use obadh_engine::engine::{Token, TokenType, Transliterator};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create CLI with clap
-    let matches = Command::new("obadh")
-        .version(VERSION)
-        .about("A deterministic Roman-to-Bengali transliteration engine")
-        .arg(
-            Arg::new("INPUT")
-                .help("Input text to transliterate")
-                .index(1),
-        )
-        .arg(
-            Arg::new("debug")
-                .short('d')
-                .long("debug")
-                .help("Output detailed information in JSON format")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("verbose")
-                .short('v')
-                .long("verbose")
-                .help("Output more detailed information in JSON format")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("benchmark")
-                .short('b')
-                .long("benchmark")
-                .help("Run benchmark with N iterations")
-                .num_args(0..=1)
-                .default_missing_value("1")
-                .value_parser(clap::value_parser!(usize)),
-        )
-        .arg(
-            Arg::new("pretty")
-                .short('p')
-                .long("pretty")
-                .help("Pretty-print the JSON output (only used with --debug or --verbose)")
-                .action(ArgAction::SetTrue),
-        )
-        .get_matches();
+    let matches = cli().get_matches();
 
     // Get command line flags
     let debug_mode = matches.get_flag("debug");
     let verbose_mode = matches.get_flag("verbose");
     let pretty_print = matches.get_flag("pretty");
-    let benchmark_iterations = matches.get_one::<usize>("benchmark").copied();
+    let benchmark_iterations = matches.get_one::<NonZeroU32>("benchmark").copied();
 
     // Get the input text from arguments or stdin
     let input = if let Some(text) = matches.get_one::<String>("INPUT") {
@@ -67,10 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if bytes_read == 0 {
             // No input provided, show usage
-            let _ = Command::new("obadh")
-                .version(VERSION)
-                .about("A deterministic Roman-to-Bengali transliteration engine")
-                .print_help();
+            let _ = cli().print_help();
             println!();
             return Ok(());
         }
@@ -100,6 +59,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", result);
         Ok(())
     }
+}
+
+fn cli() -> Command {
+    Command::new("obadh")
+        .version(VERSION)
+        .about("A deterministic Roman-to-Bengali transliteration engine")
+        .arg(
+            Arg::new("INPUT")
+                .help("Input text to transliterate")
+                .index(1),
+        )
+        .arg(
+            Arg::new("debug")
+                .short('d')
+                .long("debug")
+                .help("Output detailed information in JSON format")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .help("Output more detailed information in JSON format")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("benchmark")
+                .short('b')
+                .long("benchmark")
+                .help("Run benchmark with N positive iterations")
+                .num_args(0..=1)
+                .default_missing_value("1")
+                .value_parser(parse_benchmark_iterations),
+        )
+        .arg(
+            Arg::new("pretty")
+                .short('p')
+                .long("pretty")
+                .help("Pretty-print the JSON output (only used with --debug or --verbose)")
+                .action(ArgAction::SetTrue),
+        )
+}
+
+fn parse_benchmark_iterations(value: &str) -> Result<NonZeroU32, String> {
+    let iterations = value
+        .parse::<u32>()
+        .map_err(|error| format!("invalid benchmark iteration count: {error}"))?;
+
+    NonZeroU32::new(iterations)
+        .ok_or_else(|| String::from("benchmark iterations must be greater than zero"))
 }
 
 /// Process text with JSON output for debug/verbose mode
@@ -186,10 +195,12 @@ fn format_duration(duration: Duration) -> f64 {
 fn benchmark(
     transliterator: &Transliterator,
     input: &str,
-    iterations: usize,
+    iterations: NonZeroU32,
     json_output: bool,
     pretty_print: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let iteration_count = iterations.get();
+
     // Initialize timing variables
     let mut total_duration = Duration::new(0, 0);
     let mut sanitize_duration = Duration::new(0, 0);
@@ -197,7 +208,7 @@ fn benchmark(
     let mut transliterate_duration = Duration::new(0, 0);
 
     // Run the benchmark
-    for _ in 0..iterations {
+    for _ in 0..iteration_count {
         let profile = profile_transliteration(transliterator, input);
         sanitize_duration += profile.sanitize_duration;
         tokenize_duration += profile.tokenize_duration;
@@ -206,10 +217,10 @@ fn benchmark(
     }
 
     // Calculate averages
-    let avg_total = total_duration / iterations as u32;
-    let avg_sanitize = sanitize_duration / iterations as u32;
-    let avg_tokenize = tokenize_duration / iterations as u32;
-    let avg_transliterate = transliterate_duration / iterations as u32;
+    let avg_total = total_duration / iteration_count;
+    let avg_sanitize = sanitize_duration / iteration_count;
+    let avg_tokenize = tokenize_duration / iteration_count;
+    let avg_transliterate = transliterate_duration / iteration_count;
 
     // Output benchmark results
     let transliterated = transliterator.transliterate(input);
@@ -220,7 +231,7 @@ fn benchmark(
             "input": input,
             "output": transliterated,
             "benchmark": {
-                "iterations": iterations,
+                "iterations": iteration_count,
                 "avg_total_ms": format_duration(avg_total),
                 "avg_sanitize_ms": format_duration(avg_sanitize),
                 "avg_tokenize_ms": format_duration(avg_tokenize),
@@ -237,7 +248,7 @@ fn benchmark(
     } else {
         // Simple text output for benchmark results
         println!("Translation: {}", transliterated);
-        println!("Benchmark results ({} iterations):", iterations);
+        println!("Benchmark results ({} iterations):", iteration_count);
         println!("  Average total time: {:.4} ms", format_duration(avg_total));
         println!(
             "  Average sanitize time: {:.4} ms",
@@ -332,5 +343,38 @@ mod tests {
 
         assert_eq!(profile.output, transliterator.transliterate(input));
         assert!(!profile.tokens.is_empty());
+    }
+
+    #[test]
+    fn benchmark_iteration_parser_rejects_zero() {
+        assert_eq!(parse_benchmark_iterations("1").map(NonZeroU32::get), Ok(1));
+        assert_eq!(
+            parse_benchmark_iterations("0").unwrap_err(),
+            "benchmark iterations must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn cli_benchmark_flag_defaults_to_one_iteration() {
+        let matches = cli()
+            .try_get_matches_from(["obadh", "--benchmark"])
+            .expect("benchmark flag without value should use default_missing_value");
+
+        assert_eq!(
+            matches
+                .get_one::<NonZeroU32>("benchmark")
+                .copied()
+                .map(NonZeroU32::get),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn cli_benchmark_flag_rejects_zero_iterations() {
+        let error = cli()
+            .try_get_matches_from(["obadh", "--benchmark", "0", "ami"])
+            .expect_err("zero iterations should be rejected");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
     }
 }

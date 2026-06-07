@@ -457,7 +457,7 @@ Alternatively, you can build everything at once including the CLI binary:
 - `-d, --debug`: Output information in JSON format with basic performance metrics
 - `-v, --verbose`: Output detailed information in JSON format including token analysis
 - `-p, --pretty`: Pretty-print the JSON output (only used with --debug or --verbose)
-- `-b, --benchmark [N]`: Run benchmark with N iterations (default: 1)
+- `-b, --benchmark [N]`: Run benchmark with N positive iterations (default: 1)
 
 ### Project Structure
 
