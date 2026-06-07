@@ -76,9 +76,22 @@ fn documented_simplified_rule_signals_match_runtime_behavior() {
 #[test]
 fn deliberate_input_rule_probe_corpus_matches_runtime_behavior() {
     let engine = ObadhEngine::new();
+    let rows = deliberate_input_corpus_rows(DELIBERATE_INPUT_CORPUS_DOC);
     let mut inputs = BTreeSet::new();
+    let mut categories = BTreeSet::new();
 
-    for row in deliberate_input_corpus_rows(DELIBERATE_INPUT_CORPUS_DOC) {
+    assert_eq!(
+        rows.len(),
+        11,
+        "rule probe corpus should keep the deliberate seed coverage set complete"
+    );
+
+    for row in rows {
+        assert!(
+            categories.insert(row.category),
+            "rule probe corpus should not duplicate category {:?}",
+            row.category
+        );
         assert!(
             inputs.insert(row.roman_input),
             "rule probe corpus should not duplicate Roman input {:?}",
@@ -87,7 +100,8 @@ fn deliberate_input_rule_probe_corpus_matches_runtime_behavior() {
         assert_eq!(
             engine.transliterate(row.roman_input),
             row.bengali_output,
-            "rule probe corpus row in category {:?} should match runtime",
+            "rule probe corpus row {} in category {:?} should match runtime",
+            row.line_number,
             row.category
         );
     }
@@ -244,6 +258,7 @@ struct NumeralTableRow<'a> {
 }
 
 struct RuleProbeRow<'a> {
+    line_number: usize,
     category: &'a str,
     roman_input: &'a str,
     bengali_output: &'a str,
@@ -344,23 +359,57 @@ fn parse_numeral_table_row(line: &str) -> Option<NumeralTableRow<'_>> {
     })
 }
 
-fn deliberate_input_corpus_rows(markdown: &str) -> impl Iterator<Item = RuleProbeRow<'_>> {
-    markdown
+fn deliberate_input_corpus_rows(markdown: &str) -> Vec<RuleProbeRow<'_>> {
+    let rows = markdown
         .lines()
-        .skip_while(|line| !line.starts_with("| Category | Roman Input | Bengali Output |"))
+        .enumerate()
+        .skip_while(|(_, line)| !line.starts_with("| Category | Roman Input | Bengali Output |"))
         .skip(2)
-        .take_while(|line| line.starts_with('|'))
-        .filter_map(parse_rule_probe_row)
+        .take_while(|(_, line)| line.starts_with('|'))
+        .map(|(line_index, line)| parse_rule_probe_row(line_index + 1, line))
+        .collect::<Vec<_>>();
+
+    assert!(
+        !rows.is_empty(),
+        "rule probe corpus table is missing or empty"
+    );
+
+    rows
 }
 
-fn parse_rule_probe_row(line: &str) -> Option<RuleProbeRow<'_>> {
-    let mut columns = line.trim_matches('|').split('|').map(str::trim);
+fn parse_rule_probe_row(line_number: usize, line: &str) -> RuleProbeRow<'_> {
+    let columns = line
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect::<Vec<_>>();
 
-    Some(RuleProbeRow {
-        category: columns.next()?,
-        roman_input: single_code_span_text(columns.next()?)?,
-        bengali_output: single_code_span_text(columns.next()?)?,
-    })
+    assert_eq!(
+        columns.len(),
+        4,
+        "Malformed rule probe corpus row {line_number}: expected 4 columns, got {}",
+        columns.len()
+    );
+
+    assert!(
+        !columns[0].is_empty(),
+        "Rule probe corpus row {line_number} should have a category"
+    );
+    assert!(
+        !columns[3].is_empty(),
+        "Rule probe corpus row {line_number} should explain the contract"
+    );
+
+    RuleProbeRow {
+        line_number,
+        category: columns[0],
+        roman_input: single_code_span_text(columns[1]).unwrap_or_else(|| {
+            panic!("Rule probe corpus row {line_number} should have one Roman input code span")
+        }),
+        bengali_output: single_code_span_text(columns[2]).unwrap_or_else(|| {
+            panic!("Rule probe corpus row {line_number} should have one Bengali output code span")
+        }),
+    }
 }
 
 fn single_code_span_text(cell: &str) -> Option<&str> {
