@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use obadh_engine::definitions::{
     consonant_categories, consonant_value, diacritic_rules, diacritic_value, is_vowel,
-    symbol_rules, symbol_value, vowel_value,
+    numeral_rules, symbol_rules, symbol_value, vowel_value,
 };
 use obadh_engine::ObadhEngine;
 
@@ -68,6 +68,28 @@ fn documented_simplified_rule_signals_match_runtime_behavior() {
             "documented simplified rule signal {:?} on line {} should match runtime",
             example.roman_input,
             example.line_number
+        );
+    }
+}
+
+#[test]
+fn documented_numeral_table_matches_runtime_rules() {
+    let documented_rows = simplified_numeral_table_rows(SIMPLIFIED_RULES_DOC).collect::<Vec<_>>();
+
+    assert_eq!(
+        documented_rows.len(),
+        numeral_rules().len(),
+        "simplified rules doc should list every runtime numeral rule"
+    );
+
+    for (&(roman, bengali), row) in numeral_rules().iter().zip(documented_rows) {
+        assert_eq!(
+            row.latin, roman,
+            "documented numeral row should follow runtime numeral order"
+        );
+        assert_eq!(
+            row.bengali, bengali,
+            "documented Bengali numeral for {roman:?} should match runtime"
         );
     }
 }
@@ -195,6 +217,11 @@ struct DocumentedExample<'a> {
     bengali_output: &'a str,
 }
 
+struct NumeralTableRow<'a> {
+    latin: &'a str,
+    bengali: &'a str,
+}
+
 #[derive(Clone, Copy)]
 struct CodeSpan<'a> {
     start: usize,
@@ -270,6 +297,24 @@ fn documented_dependent_vowel(value: &str) -> Option<&str> {
     } else {
         Some(value)
     }
+}
+
+fn simplified_numeral_table_rows(markdown: &str) -> impl Iterator<Item = NumeralTableRow<'_>> {
+    markdown
+        .lines()
+        .skip_while(|line| !line.starts_with("| Latin | Bengali |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(parse_numeral_table_row)
+}
+
+fn parse_numeral_table_row(line: &str) -> Option<NumeralTableRow<'_>> {
+    let mut columns = line.trim_matches('|').split('|').map(str::trim);
+
+    Some(NumeralTableRow {
+        latin: columns.next()?,
+        bengali: columns.next()?,
+    })
 }
 
 fn deliberate_input_contract_signal_cells(markdown: &str) -> Vec<&str> {

@@ -1,7 +1,8 @@
 use obadh_engine::definitions::{
     conjuncts, consonant_categories, consonant_system, consonant_value, consonants_static,
-    diacritic_rules, diacritic_value, diacritics_static, is_consonant, is_vowel, numerals,
-    symbol_rules, symbol_value, symbols_static, vowel_rules, vowel_value, vowels_static,
+    diacritic_rules, diacritic_value, diacritics_static, is_consonant, is_vowel, numeral_rules,
+    numerals, numerals_static, symbol_rules, symbol_value, symbols_static, vowel_rules,
+    vowel_value, vowels_static,
 };
 use obadh_engine::ObadhEngine;
 
@@ -46,7 +47,9 @@ fn test_shared_definition_maps_expose_core_rules() {
     assert_eq!(symbols_static().get(".").copied(), Some("।"));
     assert_eq!(symbol_value("."), Some("।"));
     assert_eq!(symbol_rules()[0], (".", "।"));
-    assert_eq!(numerals().get("9").copied(), Some("৯"));
+    assert_eq!(numerals_static().get("9").copied(), Some("\u{09ef}"));
+    assert_eq!(numeral_rules()[0], ("0", "\u{09e6}"));
+    assert_eq!(numerals().get("9").copied(), Some("\u{09ef}"));
     assert_eq!(conjuncts().create_conjunct("kkh"), Some("ক্ষ"));
     assert_eq!(conjuncts().create_conjunct("rrg"), Some("র্গ"));
     assert_eq!(conjuncts().create_conjunct("rrt"), Some("র্ত"));

@@ -20,7 +20,7 @@ pub use consonants::{
     is_consonant,
 };
 pub use diacritics::{diacritic_rules, diacritic_value, diacritics, diacritics_static};
-pub use numerals::numerals;
+pub use numerals::{bengali_digit, numeral_rules, numerals, numerals_static};
 pub use symbols::{symbol_rules, symbol_value, symbols, symbols_static};
 pub use vowels::{is_vowel, vowel_rules, vowel_value, vowels, vowels_static};
 
@@ -62,6 +62,14 @@ mod tests {
         for &(roman, bengali) in symbol_rules() {
             assert_eq!(symbol_value(roman), Some(bengali));
         }
+
+        for &(roman, bengali) in numeral_rules() {
+            let digit = roman
+                .chars()
+                .next()
+                .expect("numeral rule keys are one ASCII digit");
+            assert_eq!(bengali_digit(digit), Some(bengali));
+        }
     }
 
     #[test]
@@ -70,5 +78,6 @@ mod tests {
         assert_eq!(vowel_value("ei").map(|vowel| vowel.independent), None);
         assert_eq!(diacritic_value("~~"), None);
         assert_eq!(symbol_value(","), None);
+        assert_eq!(bengali_digit('x'), None);
     }
 }

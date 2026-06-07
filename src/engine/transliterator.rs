@@ -2,7 +2,7 @@
 //!
 //! This module contains the core logic for transliterating Roman text to Bengali.
 //!
-//! For detailed implementation rules, see docs/simplified_rules.md
+//! For detailed implementation rules, see data/rules/simplified_rules.md
 
 use super::sanitizer::{SanitizeResult, Sanitizer};
 use super::text_boundary::{
