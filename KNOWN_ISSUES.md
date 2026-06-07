@@ -20,9 +20,11 @@ This document tracks current limitations and planned future work for the determi
 
 1. **Advanced Orthography Rules**: Some spellings need explicit, deterministic Roman input rather than whole-word exceptions. The engine should prefer composable rules and documented user input patterns over dictionary-style word overrides.
 
-2. **Corpus Validation**: Representative cluster, vowel, hasant, phola, mixed-script, CLI, and WASM cases are covered. The next validation gap is a larger corpus of deliberate Roman input patterns that can expose awkward but rule-correct spellings before higher-level suggestion systems exist.
+2. **Non-Conjunct Ra-Ya Form**: `data/rules/conjunct.wiki` distinguishes conjunct `র্য` from the ZWNJ-separated loanword form `র‌্য` used in spellings such as `র‌্যাব`, `র‌্যাম`, and `র‌্যাঁদা`. The engine preserves joiner characters in mixed input, but it does not yet provide a documented Roman signal for the exact `র` + U+200C + virama + `য` composition. Any future rule for this form must be explicit, must not collapse `র্য` and `র‌্য`, and must not import broad Avro-style ya-phola aliases without an Obadh-specific reason.
 
-3. **Documentation Completeness**: The main deliberate-input contract is documented, but every accepted alias should continue to be tied back to a canonical rule signal in user-facing docs.
+3. **Corpus Validation**: Representative cluster, vowel, hasant, phola, mixed-script, CLI, and WASM cases are covered. The next validation gap is a larger corpus of deliberate Roman input patterns that can expose awkward but rule-correct spellings before higher-level suggestion systems exist.
+
+4. **Documentation Completeness**: The main deliberate-input contract is documented, but every accepted alias should continue to be tied back to a canonical rule signal in user-facing docs.
 
 ## Future Work
 

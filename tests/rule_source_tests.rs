@@ -2,6 +2,8 @@ use obadh_engine::definitions::{diacritic_rules, diacritic_value, is_vowel, vowe
 use obadh_engine::ObadhEngine;
 
 const README_DOC: &str = include_str!("../README.md");
+const KNOWN_ISSUES_DOC: &str = include_str!("../KNOWN_ISSUES.md");
+const CONJUNCT_RULES_DOC: &str = include_str!("../data/rules/conjunct.wiki");
 const VOWEL_RULES_DOC: &str = include_str!("../data/rules/vowels.md");
 
 #[test]
@@ -51,6 +53,22 @@ fn deliberate_input_contract_documents_every_diacritic_rule() {
             "runtime diacritic signal {roman:?} is missing from README deliberate input contract"
         );
     }
+}
+
+#[test]
+fn known_issues_tracks_non_conjunct_ra_ya_zwnj_source_note() {
+    let zwnj_ra_ya = "র\u{200C}\u{09CD}য";
+
+    assert!(
+        CONJUNCT_RULES_DOC.contains(zwnj_ra_ya),
+        "source conjunct notes should retain the non-conjunct ra-ya ZWNJ example"
+    );
+    assert!(
+        KNOWN_ISSUES_DOC.contains("Non-Conjunct Ra-Ya Form")
+            && KNOWN_ISSUES_DOC.contains(zwnj_ra_ya)
+            && KNOWN_ISSUES_DOC.contains("U+200C"),
+        "KNOWN_ISSUES.md should document the unresolved non-conjunct ra-ya ZWNJ form"
+    );
 }
 
 struct VowelTableRow<'a> {
