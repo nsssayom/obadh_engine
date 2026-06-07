@@ -94,6 +94,7 @@ Rule signals, not memorized words:
 | `ngg` / `nggh` | shorthand for ঙ্গ / ঙ্ঘ |
 | `jNG` / `jn` | জ্ঞ conjunct |
 | `rr` + valid cluster | reph over the full cluster, e.g. `rrkSh` → `র্ক্ষ` |
+| `rZy` / `rZY` | non-conjunct ZWNJ-separated `র‌্য` form, e.g. `rZyab` → `র‌্যাব`; use `rrYa` for conjunct `র্যা` |
 | `y` | য-ফলা marker in valid conjunct clusters |
 | `w` | ব-ফলা marker in valid conjunct clusters |
 | `z` / `b` | regular য / ব bases; they compose with `y` / `w` only as declared clusters, e.g. `zy` → `য্য`, `bw` → `ব্ব` |

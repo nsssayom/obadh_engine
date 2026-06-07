@@ -135,6 +135,34 @@ pub(super) fn normalize_velar_nasal_conjunct_aliases(units: &mut Vec<PhoneticUni
     units.truncate(write);
 }
 
+pub(super) fn normalize_non_conjunct_ra_ya_zwnj(units: &mut Vec<PhoneticUnit>) {
+    let Some(first_match) = first_non_conjunct_ra_ya_zwnj(units) else {
+        return;
+    };
+
+    let mut read = first_match;
+    let mut write = first_match;
+
+    while read < units.len() {
+        if is_non_conjunct_ra_ya_zwnj_at(units, read) {
+            units[write] = PhoneticUnit {
+                text: String::from("rZ,,y"),
+                unit_type: PhoneticUnitType::Conjunct,
+                position: units[read].position,
+            };
+            read += 3;
+            write += 1;
+            continue;
+        }
+
+        move_unit(units, read, write);
+        read += 1;
+        write += 1;
+    }
+
+    units.truncate(write);
+}
+
 fn first_redundant_reph_hasant(units: &[PhoneticUnit]) -> Option<usize> {
     (0..units.len().saturating_sub(2)).find(|&index| is_redundant_reph_hasant_at(units, index))
 }
@@ -186,4 +214,18 @@ fn velar_nasal_conjunct_tail(text: &str) -> Option<&'static str> {
         "gh" | "Gh" | "GH" => Some("gh"),
         _ => None,
     }
+}
+
+fn first_non_conjunct_ra_ya_zwnj(units: &[PhoneticUnit]) -> Option<usize> {
+    (0..units.len().saturating_sub(2)).find(|&index| is_non_conjunct_ra_ya_zwnj_at(units, index))
+}
+
+fn is_non_conjunct_ra_ya_zwnj_at(units: &[PhoneticUnit], index: usize) -> bool {
+    index + 2 < units.len()
+        && units[index].unit_type == PhoneticUnitType::Consonant
+        && units[index].text == "r"
+        && units[index + 1].unit_type == PhoneticUnitType::Unknown
+        && units[index + 1].text == "Z"
+        && units[index + 2].unit_type == PhoneticUnitType::Consonant
+        && matches!(units[index + 2].text.as_str(), "y" | "Y")
 }

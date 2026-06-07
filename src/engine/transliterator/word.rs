@@ -15,6 +15,7 @@ use crate::engine::tokenizer::{PhoneticUnit, PhoneticUnitType};
 impl Transliterator {
     fn conjunct_component(&self, part: &str) -> Option<&'static str> {
         match part {
+            "rZ" => Some("র\u{200C}"),
             "y" | "Y" => Some("য"),
             "w" => Some("ব"),
             _ => consonant_value(part),

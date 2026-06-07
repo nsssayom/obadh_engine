@@ -56,7 +56,7 @@ fn deliberate_input_contract_documents_every_diacritic_rule() {
 }
 
 #[test]
-fn known_issues_tracks_non_conjunct_ra_ya_zwnj_source_note() {
+fn deliberate_input_contract_documents_non_conjunct_ra_ya_zwnj_source_note() {
     let zwnj_ra_ya = "র\u{200C}\u{09CD}য";
 
     assert!(
@@ -64,10 +64,12 @@ fn known_issues_tracks_non_conjunct_ra_ya_zwnj_source_note() {
         "source conjunct notes should retain the non-conjunct ra-ya ZWNJ example"
     );
     assert!(
-        KNOWN_ISSUES_DOC.contains("Non-Conjunct Ra-Ya Form")
-            && KNOWN_ISSUES_DOC.contains(zwnj_ra_ya)
-            && KNOWN_ISSUES_DOC.contains("U+200C"),
-        "KNOWN_ISSUES.md should document the unresolved non-conjunct ra-ya ZWNJ form"
+        README_DOC.contains("`rZy`") && README_DOC.contains(zwnj_ra_ya),
+        "README deliberate input contract should document the non-conjunct ra-ya ZWNJ signal"
+    );
+    assert!(
+        !KNOWN_ISSUES_DOC.contains("Non-Conjunct Ra-Ya Form"),
+        "KNOWN_ISSUES.md should not list the implemented non-conjunct ra-ya signal as open work"
     );
 }
 

@@ -801,6 +801,45 @@ fn test_regular_ya_base_accepts_declared_ya_phola_cluster() {
 }
 
 #[test]
+fn test_non_conjunct_ra_ya_zwnj_signal_is_explicit_and_narrow() {
+    let tokenizer = Tokenizer::new();
+    let engine = ObadhEngine::new();
+
+    for input in ["rZy", "rZY"] {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| (unit.text.as_str(), unit.unit_type))
+                .collect::<Vec<_>>(),
+            vec![("rZ,,y", PhoneticUnitType::Conjunct)],
+            "{input} should canonicalize to the narrow non-conjunct ra-ya signal"
+        );
+    }
+
+    for input in ["rZya", "rZYa"] {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| (unit.text.as_str(), unit.unit_type))
+                .collect::<Vec<_>>(),
+            vec![("rZ,,ya", PhoneticUnitType::ConjunctWithVowel)],
+            "{input} should accept the existing y/Y phola marker spelling"
+        );
+    }
+
+    assert_eq!(
+        engine.transliterate("rZy rZya rZyab rZyam rZya^da"),
+        "র\u{200C}্য র\u{200C}্যা র\u{200C}্যাব র\u{200C}্যাম র\u{200C}্যাঁদা"
+    );
+    assert_eq!(engine.transliterate("rrYa"), "র্যা");
+    assert_ne!(engine.transliterate("rZya"), engine.transliterate("rrYa"));
+
+    assert_eq!(engine.transliterate("Zya kZya rZga"), "Zয়া কZয়া রZগা");
+}
+
+#[test]
 fn test_explicit_hasant_accepts_declared_phola_clusters_only() {
     let tokenizer = Tokenizer::new();
 

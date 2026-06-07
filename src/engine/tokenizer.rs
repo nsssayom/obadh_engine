@@ -132,6 +132,7 @@ impl Tokenizer {
         }
 
         let mut has_long_iya_marker_candidate = false;
+        let mut has_non_conjunct_ra_ya_zwnj_candidate = false;
 
         // Process the base word without diacritics
         while _i < processed_word.len() {
@@ -156,6 +157,10 @@ impl Tokenizer {
                 let unknown_text = &processed_word[_i.._i + char_len];
                 if unknown_text == "w" && is_long_iya_marker_at(processed_word, _i) {
                     has_long_iya_marker_candidate = true;
+                } else if unknown_text == "Z"
+                    && is_non_conjunct_ra_ya_zwnj_marker_at(processed_word, _i)
+                {
+                    has_non_conjunct_ra_ya_zwnj_candidate = true;
                 }
 
                 units.push(PhoneticUnit {
@@ -168,7 +173,11 @@ impl Tokenizer {
         }
 
         // Post-processing to identify conjuncts and other complex forms
-        identify_complex_forms(units, has_long_iya_marker_candidate);
+        identify_complex_forms(
+            units,
+            has_long_iya_marker_candidate,
+            has_non_conjunct_ra_ya_zwnj_candidate,
+        );
 
         append_trailing_diacritics(units, trailing_diacritics);
     }
@@ -186,6 +195,14 @@ fn unmatched_unit_type(text: &str) -> PhoneticUnitType {
     } else {
         PhoneticUnitType::Unknown
     }
+}
+
+fn is_non_conjunct_ra_ya_zwnj_marker_at(text: &str, byte_index: usize) -> bool {
+    let bytes = text.as_bytes();
+
+    byte_index > 0
+        && bytes.get(byte_index - 1) == Some(&b'r')
+        && matches!(bytes.get(byte_index + 1), Some(b'y') | Some(b'Y'))
 }
 
 fn move_unit(units: &mut [PhoneticUnit], read: usize, write: usize) {

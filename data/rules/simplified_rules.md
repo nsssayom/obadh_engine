@@ -151,3 +151,14 @@ There's special handling for য-ফলা and ব-ফলা:
   - `kz` → `কয` (k + ya, no conjunct)
   - `kb` → `কব` (k + ba, no conjunct)
   - `zoy` → `যয়` (the `o` terminator blocks `zy`)
+
+### Non-Conjunct র‌্য Signal
+
+The source conjunct notes distinguish true conjunct `র্য` from the ZWNJ-separated `র‌্য` form used in loanword spellings such as `র‌্যাব`:
+
+- `rrYa` → `র্যা` (conjunct `র্য` plus vowel)
+- `rZya` / `rZYa` → `র‌্যা` (`র` + U+200C + virama + `য` plus vowel)
+- `rZyab` → `র‌্যাব`
+- `rZya^da` → `র‌্যাঁদা`
+
+`Z` is intentionally narrow here. It is not a general Avro-style ya-phola alias and does not rewrite unrelated sequences such as `Zya` or `kZya`.
