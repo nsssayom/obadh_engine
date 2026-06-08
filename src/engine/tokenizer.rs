@@ -121,6 +121,7 @@ impl Tokenizer {
 
     pub(crate) fn tokenize_word_into(&self, word: &str, units: &mut Vec<PhoneticUnit>) {
         units.clear();
+        reserve_word_unit_capacity(units, word);
         // Process the word character by character
         let mut _i = 0;
 
@@ -189,6 +190,13 @@ fn unmatched_unit_type(text: &str) -> PhoneticUnitType {
     }
 }
 
+fn reserve_word_unit_capacity(units: &mut Vec<PhoneticUnit>, word: &str) {
+    let max_units = word.len();
+    if units.capacity() < max_units {
+        units.reserve(max_units);
+    }
+}
+
 fn move_unit(units: &mut [PhoneticUnit], read: usize, write: usize) {
     if write != read {
         units[write] = PhoneticUnit {
@@ -204,5 +212,31 @@ fn reph_base_part(unit: &PhoneticUnit) -> Option<&str> {
         unit.text.strip_prefix("rr").filter(|part| !part.is_empty())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokenize_word_into_reserves_for_byte_bounded_unit_count() {
+        let tokenizer = Tokenizer::new();
+        let mut units = Vec::new();
+        let word = "rrkShkShmyntrngghya";
+
+        tokenizer.tokenize_word_into(word, &mut units);
+
+        assert!(units.capacity() >= word.len());
+    }
+
+    #[test]
+    fn tokenize_word_into_reuses_larger_existing_capacity() {
+        let tokenizer = Tokenizer::new();
+        let mut units = Vec::with_capacity(64);
+
+        tokenizer.tokenize_word_into("kk", &mut units);
+
+        assert_eq!(units.capacity(), 64);
     }
 }
