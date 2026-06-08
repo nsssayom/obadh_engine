@@ -20,6 +20,19 @@ pkg/
 node_modules/
 www/node_modules/
 
+# ML datasets, training runs, and exported model artifacts
+__pycache__/
+*.py[cod]
+ml/data/raw/
+ml/data/processed/
+ml/runs/
+models/*/*.onnx
+models/*/*.ort
+models/*/*.pt
+models/*/*.pth
+models/*/*.mlmodel
+models/*/*.mlpackage
+
 # Package locks
 # Comment the following line if you want to keep package-lock.json in version control
 #www/package-lock.json

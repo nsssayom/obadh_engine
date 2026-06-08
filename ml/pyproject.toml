@@ -1,0 +1,30 @@
+[project]
+name = "obadh-ml"
+version = "0.1.0"
+description = "Local ML tooling for Obadh transliteration reranking"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+train = [
+    "torch>=2.6",
+]
+export = [
+    "onnx>=1.17",
+    "onnxruntime>=1.20",
+    "coremltools>=8.0; platform_system == 'Darwin'",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -13,6 +13,8 @@ exclude = [
     "/benches/**",
     "/data/**",
     "/docs/**",
+    "/ml/**",
+    "/models/**",
     "/tests/**",
     "/www/**",
     "/Makefile",
@@ -32,6 +34,11 @@ bench = false
 [[bin]]
 name = "tokenizer"
 path = "src/bin/tokenizer.rs"
+bench = false
+
+[[bin]]
+name = "obadh-ml-features"
+path = "src/bin/ml_features.rs"
 bench = false
 
 [[bench]]
