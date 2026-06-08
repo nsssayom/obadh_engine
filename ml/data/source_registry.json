@@ -1,0 +1,72 @@
+{
+  "schema": "obadh.ml.source_registry.v0",
+  "updated": "2026-06-08",
+  "excluded_sources": [
+    {
+      "id": "aksharantar",
+      "name": "Aksharantar",
+      "decision": "excluded",
+      "reason": "Not approved for Obadh Bengali model training; do not ingest or use."
+    }
+  ],
+  "sources": [
+    {
+      "id": "dakshina_bn",
+      "name": "Google Dakshina Bengali",
+      "status": "candidate_benchmark",
+      "license": "CC BY-SA 4.0",
+      "url": "https://github.com/google-research-datasets/dakshina",
+      "row_shape": "word lexicon plus sentence validation data",
+      "intended_use": "clean benchmark/evaluation and limited supervised training",
+      "risks": [
+        "Wikipedia-derived domain",
+        "not enough conversational BN-BD coverage",
+        "share-alike license obligations"
+      ]
+    },
+    {
+      "id": "banglatlit",
+      "name": "BanglaTLit",
+      "status": "candidate",
+      "license": "MIT",
+      "url": "https://github.com/farhanishmam/BanglaTLit",
+      "row_shape": "sentence-level romanized Bangla and Bangla pairs",
+      "intended_use": "candidate conversational source after segmentation and audit",
+      "risks": [
+        "sentence-level rows need word extraction",
+        "social-media and technical-domain noise",
+        "mixed English/product/security terms",
+        "spelling variation and annotation errors"
+      ]
+    },
+    {
+      "id": "sknahin_bengali_transliteration",
+      "name": "SKNahin/bengali-transliteration-data",
+      "status": "candidate_pending_license",
+      "license": "unknown",
+      "url": "https://huggingface.co/datasets/SKNahin/bengali-transliteration-data",
+      "row_shape": "small sentence-level social-media pairs",
+      "intended_use": "candidate conversational source after license confirmation and audit",
+      "risks": [
+        "small dataset",
+        "license/provenance unclear from visible card",
+        "social-media and domain noise",
+        "sentence-level rows need word extraction"
+      ]
+    },
+    {
+      "id": "kaggle_bangla_tlit_fpt",
+      "name": "Bangla Transliteration Further Pretraining Dataset",
+      "status": "candidate_manual_review",
+      "license": "manual_review_required",
+      "url": "https://www.kaggle.com/datasets/farihatanjimshifat1/bangla-transliteration-further-pretraining-dataset",
+      "row_shape": "manual inspection required",
+      "intended_use": "candidate only after authenticated download, checksum, and audit",
+      "risks": [
+        "Kaggle access/authentication required",
+        "license must be checked on the dataset page",
+        "may be unpaired pretraining text rather than supervised word pairs"
+      ]
+    }
+  ]
+}

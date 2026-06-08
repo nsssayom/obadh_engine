@@ -60,10 +60,21 @@ ml/runs/
 Recommended dataset order:
 
 1. Dakshina Bengali (`bn`) for clean benchmark and evaluation.
-2. Aksharantar Bengali for larger-scale training once licensing and split policy
-   are locked for the product.
-3. Future private keyboard telemetry only if it is opt-in, local/privacy-safe,
+2. BanglaTLit-style conversational Bangla sources only after source-specific
+   audit, sentence segmentation, deduplication, and licensing review.
+3. SKNahin/Kaggle/community datasets only after manual source inspection,
+   checksum registration, and admission reports.
+4. Future private keyboard telemetry only if it is opt-in, local/privacy-safe,
    and clearly separated from this public training pipeline.
+
+Excluded source:
+
+- Aksharantar must not be used for Obadh's Bengali model. It is too risky for
+  Bangladeshi Bangla quality and is not part of the approved data path.
+
+Every non-Dakshina source starts as `candidate` until an audit report proves it
+is suitable for the specific model stage. Popularity, row count, or a dataset
+card language label is not enough.
 
 ## Typical Flow
 
@@ -77,6 +88,16 @@ python ml/scripts/build_obadh_features.py \
   --split train \
   --output ml/data/processed/dakshina_bn_train.features.jsonl \
   --release
+
+# Audit any candidate pair file before feature extraction/training.
+python ml/scripts/audit_pairs.py \
+  --input candidate.tsv \
+  --format tsv \
+  --latin-column roman \
+  --target-column bangla \
+  --source-id candidate_source \
+  --mode word \
+  --report ml/data/processed/candidate.audit.json
 ```
 
 Training should only begin after the feature vocabulary, target piece

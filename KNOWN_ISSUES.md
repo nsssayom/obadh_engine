@@ -38,7 +38,7 @@ This document tracks current limitations and planned future work for the determi
 
 7. Consider implementing explicit normalization passes for documented Roman rule patterns before tokenization.
 
-8. Build and evaluate the first local ML layer above the deterministic engine: feature-vocabulary locking, Bengali output-piece vocabulary design, Dakshina/Aksharantar split policy, BiGRU-CTC training, mobile latency measurement, Core ML/ONNX export comparison, and deterministic fallback integration.
+8. Build and evaluate the first local ML layer above the deterministic engine: feature-vocabulary locking, Bengali output-piece vocabulary design, source-admission audits for Dakshina and candidate Bangladeshi conversational datasets, BiGRU-CTC training, mobile latency measurement, Core ML/ONNX export comparison, and deterministic fallback integration.
 
 ## Notes
 
