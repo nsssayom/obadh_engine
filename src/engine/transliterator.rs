@@ -19,6 +19,7 @@ mod boundary;
 mod components;
 mod conjunct;
 mod parts;
+mod syllable;
 mod word;
 
 use boundary::{is_decimal_separator, is_decimal_separator_at, TokenNumberBoundary};
