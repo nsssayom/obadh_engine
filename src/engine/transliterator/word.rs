@@ -112,9 +112,7 @@ impl Transliterator {
                 PhoneticUnitType::Conjunct => {
                     let parts = ConjunctParts::from_text(&unit.text);
 
-                    if let Some(rendered) = self.render_conjunct_parts(parts.as_slice()) {
-                        result.push_str(&rendered);
-                    } else {
+                    if !self.append_conjunct_parts(result, parts.as_slice()) {
                         result.push_str(&unit.text);
                     }
                 }
@@ -128,8 +126,7 @@ impl Transliterator {
                         {
                             parts.replace_last(last_consonant);
 
-                            if let Some(rendered) = self.render_conjunct_parts(parts.as_slice()) {
-                                result.push_str(&rendered);
+                            if self.append_conjunct_parts(result, parts.as_slice()) {
                                 if !matches!(last_consonant, "y" | "Y" | "w")
                                     && self.should_suppress_visible_a(vowel_part, following_units)
                                 {
@@ -157,8 +154,7 @@ impl Transliterator {
                         {
                             parts.replace_last(last_consonant);
 
-                            if let Some(rendered) = self.render_conjunct_parts(parts.as_slice()) {
-                                result.push_str(&rendered);
+                            if self.append_conjunct_parts(result, parts.as_slice()) {
                                 if terminator_part == "o" {
                                     if is_last_unit && matches!(last_consonant, "y" | "Y" | "w") {
                                         self.append_dependent_vowel(result, "O");
@@ -169,10 +165,7 @@ impl Transliterator {
                             } else {
                                 result.push_str(&unit.text);
                             }
-                        } else if let Some(rendered) = self.render_conjunct_parts(parts.as_slice())
-                        {
-                            result.push_str(&rendered);
-                        } else {
+                        } else if !self.append_conjunct_parts(result, parts.as_slice()) {
                             result.push_str(&unit.text);
                         }
                     } else {

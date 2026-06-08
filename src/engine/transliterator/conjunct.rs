@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::definitions::{consonant_value, diacritics::HASANT};
 
 use super::Transliterator;
@@ -19,32 +17,55 @@ impl Transliterator {
         }
     }
 
-    pub(super) fn render_conjunct_parts(&self, parts: &[&str]) -> Option<Cow<'static, str>> {
+    pub(super) fn append_conjunct_parts(&self, output: &mut String, parts: &[&str]) -> bool {
+        let checkpoint = output.len();
+        if self.append_conjunct_parts_unchecked(output, parts) {
+            true
+        } else {
+            output.truncate(checkpoint);
+            false
+        }
+    }
+
+    fn append_conjunct_parts_unchecked(&self, output: &mut String, parts: &[&str]) -> bool {
         if parts.len() < 2 {
-            return None;
+            return false;
         }
 
         if let Some(mapped) = self.conjuncts.create_conjunct_from_parts(parts) {
-            return Some(Cow::Borrowed(mapped));
+            output.push_str(mapped);
+            return true;
         }
 
         if parts.first() == Some(&"rr") {
-            let tail = self.render_conjunct_parts(&parts[1..])?;
-            let mut rendered = String::with_capacity("র".len() + HASANT.len() + tail.len());
-            Self::append_reph_prefix(&mut rendered);
-            rendered.push_str(tail.as_ref());
-            return Some(Cow::Owned(rendered));
+            Self::append_reph_prefix(output);
+            return self.append_conjunct_parts_unchecked(output, &parts[1..]);
         }
 
-        let mut rendered = String::new();
-
         for (index, part) in parts.iter().enumerate() {
-            rendered.push_str(self.conjunct_component(part)?);
+            let Some(component) = self.conjunct_component(part) else {
+                return false;
+            };
+            output.push_str(component);
             if index < parts.len() - 1 {
-                rendered.push_str(HASANT);
+                output.push_str(HASANT);
             }
         }
 
-        Some(Cow::Owned(rendered))
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_conjunct_parts_rolls_back_invalid_parts() {
+        let transliterator = Transliterator::new();
+        let mut output = String::from("আগে");
+
+        assert!(!transliterator.append_conjunct_parts(&mut output, &["rr", "not-a-part"]));
+        assert_eq!(output, "আগে");
     }
 }
