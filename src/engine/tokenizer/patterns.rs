@@ -29,15 +29,13 @@ struct TrieEdge {
 }
 
 impl PatternTrie {
-    fn from_patterns<I>(patterns: I) -> Self
-    where
-        I: IntoIterator<Item = (&'static str, PhoneticUnitType)>,
-    {
+    fn from_patterns(patterns: &[(&'static str, PhoneticUnitType)]) -> Self {
         let mut trie = Self {
-            nodes: vec![TrieNode::default()],
+            nodes: Vec::with_capacity(pattern_trie_node_capacity(patterns)),
         };
+        trie.nodes.push(TrieNode::default());
 
-        for (pattern, unit_type) in patterns {
+        for &(pattern, unit_type) in patterns {
             trie.insert(pattern, unit_type);
         }
 
@@ -109,11 +107,14 @@ impl TrieNode {
 
 pub(super) fn phonetic_pattern_trie_static() -> &'static PatternTrie {
     static INSTANCE: OnceLock<PatternTrie> = OnceLock::new();
-    INSTANCE.get_or_init(|| PatternTrie::from_patterns(phonetic_patterns()))
+    INSTANCE.get_or_init(|| {
+        let patterns = phonetic_patterns();
+        PatternTrie::from_patterns(&patterns)
+    })
 }
 
 fn phonetic_patterns() -> Vec<(&'static str, PhoneticUnitType)> {
-    let mut patterns = Vec::new();
+    let mut patterns = Vec::with_capacity(phonetic_pattern_count());
 
     if vowel_rules().iter().any(|(roman, _)| *roman == "o") {
         patterns.push(("o", PhoneticUnitType::TerminatingVowel));
@@ -149,13 +150,39 @@ fn phonetic_patterns() -> Vec<(&'static str, PhoneticUnitType)> {
     patterns
 }
 
+fn phonetic_pattern_count() -> usize {
+    let has_terminating_o = vowel_rules().iter().any(|(roman, _)| *roman == "o") as usize;
+    let vowel_count_without_terminating_o = vowel_rules()
+        .iter()
+        .filter(|(roman, _)| *roman != "o")
+        .count();
+    let consonant_count = consonant_categories()
+        .into_iter()
+        .map(<[_]>::len)
+        .sum::<usize>();
+
+    has_terminating_o
+        + 1
+        + diacritic_rules().len()
+        + symbol_rules().len()
+        + consonant_count
+        + vowel_count_without_terminating_o
+}
+
+fn pattern_trie_node_capacity(patterns: &[(&'static str, PhoneticUnitType)]) -> usize {
+    1 + patterns
+        .iter()
+        .map(|(pattern, _)| pattern.len())
+        .sum::<usize>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn pattern_trie_uses_longest_prefix_match() {
-        let trie = PatternTrie::from_patterns([
+        let trie = PatternTrie::from_patterns(&[
             ("rr", PhoneticUnitType::SpecialForm),
             ("r", PhoneticUnitType::Consonant),
             ("rri", PhoneticUnitType::Vowel),
@@ -169,9 +196,25 @@ mod tests {
     #[test]
     #[should_panic(expected = "duplicate phonetic pattern: aa")]
     fn pattern_trie_rejects_duplicate_patterns() {
-        let _ = PatternTrie::from_patterns([
+        let _ = PatternTrie::from_patterns(&[
             ("aa", PhoneticUnitType::Vowel),
             ("aa", PhoneticUnitType::Consonant),
         ]);
+    }
+
+    #[test]
+    fn phonetic_patterns_reserve_exact_rule_count() {
+        let patterns = phonetic_patterns();
+
+        assert_eq!(patterns.len(), phonetic_pattern_count());
+        assert_eq!(patterns.capacity(), phonetic_pattern_count());
+    }
+
+    #[test]
+    fn pattern_trie_presizes_maximum_node_count() {
+        let patterns = phonetic_patterns();
+        let trie = PatternTrie::from_patterns(&patterns);
+
+        assert!(trie.nodes.capacity() >= pattern_trie_node_capacity(&patterns));
     }
 }
