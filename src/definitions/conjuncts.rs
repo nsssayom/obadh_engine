@@ -4,10 +4,12 @@
 //! based on phonetic components. The engine uses this compiled Rust rule table
 //! directly; source CSV data is not parsed or shipped on the runtime path.
 
+mod canonical;
 mod rules;
 mod trie;
 
 use crate::definitions::consonant_value;
+use canonical::{canonical_conjunct_part, is_special_form_key};
 use rules::CONJUNCT_RULES;
 use trie::ConjunctTrie;
 
@@ -53,10 +55,6 @@ impl ConjunctDefinitions {
         self.conjunct_trie.value(node)
     }
 
-    fn canonical_conjunct_part<'a>(&self, part: &'a str) -> &'a str {
-        canonical_conjunct_part(part)
-    }
-
     /// Create a conjunct from already-tokenized component parts without
     /// allocating a joined key.
     pub fn create_conjunct_from_parts(&self, parts: &[&str]) -> Option<&'static str> {
@@ -68,7 +66,7 @@ impl ConjunctDefinitions {
         for part in parts {
             node = self
                 .conjunct_trie
-                .advance(node, self.canonical_conjunct_part(part))?;
+                .advance(node, canonical_conjunct_part(part))?;
         }
 
         self.conjunct_trie.value(node)
@@ -87,7 +85,7 @@ impl ConjunctDefinitions {
     /// Advance an incremental conjunct match by one romanized component.
     pub(crate) fn advance_conjunct_match(&self, node: usize, part: &str) -> Option<usize> {
         self.conjunct_trie
-            .advance(node, self.canonical_conjunct_part(part))
+            .advance(node, canonical_conjunct_part(part))
     }
 
     /// Return the conjunct value at an incremental trie cursor, if terminal.
@@ -137,7 +135,7 @@ impl ConjunctDefinitions {
         for component in components {
             let Some(next_node) = self
                 .conjunct_trie
-                .advance(node, self.canonical_conjunct_part(component))
+                .advance(node, canonical_conjunct_part(component))
             else {
                 return false;
             };
@@ -162,28 +160,6 @@ impl Default for ConjunctDefinitions {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn canonical_conjunct_part(part: &str) -> &str {
-    match part {
-        "chh" | "C" | "Ch" | "CH" | "Chh" | "CHH" => "ch",
-        "Kh" | "KH" => "kh",
-        "Gh" | "GH" => "gh",
-        "J" => "j",
-        "Jh" | "JH" => "jh",
-        "TH" => "Th",
-        "DH" => "Dh",
-        "Ph" | "PH" | "f" => "ph",
-        "Bh" | "BH" | "v" => "bh",
-        "Y" => "y",
-        "S" => "sh",
-        "SH" => "Sh",
-        _ => part,
-    }
-}
-
-fn is_special_form_key(form: &str) -> bool {
-    matches!(form, "rr" | "y" | "Y" | "w")
 }
 
 /// Return a singleton instance of ConjunctDefinitions
