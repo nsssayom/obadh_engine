@@ -11,10 +11,12 @@ This implementation takes a structured approach to Bengali transliteration, focu
 Vowels are handled in different modes based on their position and context:
 
 - **Independent Vowels**: When vowels appear on their own
-  - Signal: `o` → `অ`, `O` → `ও`, `ee` → `ঈ`, `oo` → `উ`, `uu` → `ঊ`
+  - Signal: `a` → `আ`, `A` → `আ`, `aY` → `অ্যা`, `AY` → `অ্যা`, `i` → `ই`, `I` → `ঈ`, `u` → `উ`, `U` → `ঊ`, `e` → `এ`, `E` → `এ`, `O` → `ও`
+  - Repeated lowercase signal: `aa` → `আআ`, `ee` → `এএ`, `ii` → `ইই`, `oo` → `অঅ`, `uu` → `উউ`
 
 - **Vowel Modifiers**: When vowels follow consonants
-  - Signal: `ka` → `কা`, `ki` → `কি`, `kee` → `কী`, `koo` → `কু`, `kuu` → `কূ`
+  - Signal: `ka` → `কা`, `kaY` → `ক্যা`, `ki` → `কি`, `kI` → `কী`, `ku` → `কু`, `kU` → `কূ`, `ke` → `কে`
+  - Repeated lowercase signal after consonants: `kaa` → `কাআ`, `kee` → `কেএ`, `kii` → `কিই`, `koo` → `কঅ`, `kuu` → `কুউ`
   - Signal: `tiyw` → `তীয়`, `jatiywta` → `জাতীয়তা`
 
 - **Inherent Vowel**: The implied 'অ' sound after consonants
@@ -146,6 +148,7 @@ There's special handling for য-ফলা and ব-ফলা:
   - `y`/`Y` and `w` are accepted as phola markers only inside declared valid conjunct clusters; invalid explicit clusters remain decomposed
   - After a short-i-bearing consonant or conjunct, `iyw` is a deliberate long-ঈয় signal rather than a ব-ফলা command: `tiyw` → `তীয়`, `ktiYwta` → `ক্তীয়তা`
   - Lowercase `o` after that signal stays an inherent-vowel terminator (`kiywo` → `কীয়`); uppercase `O` gives visible ও-কার (`kiywO` → `কীয়ো`)
+  - `aY`/`AY` are the deliberate অ্যা vowel signals: `aYp` / `AYp` → `অ্যাপ`; lowercase `ayp` remains `আয়প`
 
 - **Regular `z` and `b` do not become phola markers by themselves**:
   - `kz` → `কয` (k + ya, no conjunct)

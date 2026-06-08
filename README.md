@@ -80,16 +80,18 @@ The full consonant signal table is maintained in `data/rules/consonants.md` and 
 | Roman Signal | Bengali Rule Intent |
 |--------------|---------------------|
 | `o` | inherent অ as an initial vowel or lowercase terminator; separates consonants without visible ও (`kok` → `কক`) and leaves terminated clusters unmarked (`kko` → `ক্ক`) |
-| `A` / `aa` | long আ / া |
-| `I` / `ee` / `ii` | long ঈ / ী |
+| `a` / `A` | আ / া |
+| `aY` / `AY` | অ্যা / ্যা, e.g. `aYp` / `AYp` → `অ্যাপ`; lowercase `ayp` remains `আয়প` |
+| `I` | long ঈ / ী |
 | `iyw` after a consonant/conjunct | composable ঈয় signal, e.g. `jatiywta` → `জাতীয়তা` |
 | `iywo` / `iywO` | inherent vs visible ও after ঈয়, e.g. `kiywo` → `কীয়`, `kiywO` → `কীয়ো` |
-| `u` / `oo` | short উ / ু |
-| `U` / `uu` | long ঊ / ূ |
+| `u` | short উ / ু |
+| `U` | long ঊ / ূ |
 | `e` / `E` | এ / ে |
 | `O` | ও / ো |
 | `OI` | ঐ / ৈ |
 | `OU` | ঔ / ৌ |
+| doubled lowercase vowels | not aliases: `aa` → `আআ`, `ee` → `এএ`, `ii` → `ইই`, `oo` → `অঅ`, `uu` → `উউ` |
 | `Sh` | ষ |
 | `Kh` / `KH`, `Gh` / `GH`, etc. | aspirated consonant aliases |
 | `ng` / `M` | anusvara ং; use `M` before `g`/`gh` when you want literal ংগ/ংঘ instead of the `ngg`/`nggh` shorthand |

@@ -16,6 +16,8 @@ This source-controlled corpus exercises rule signals, not memorized words. It is
 | Jna pronunciation | `jNG jn gg ggan biggan gog` | `জ্ঞ জ্ঞ জ্ঞ জ্ঞান বিজ্ঞান গগ` | `gg` is a pronounced shorthand for orthographic জ্ঞ; use `gog` for literal গগ. |
 | Long iya | `tiyw kiywo kiywO` | `তীয় কীয় কীয়ো` | `iyw` is the composable long-ঈয় signal. |
 | Vocalic r | `rri krri rria rrhi` | `ঋ কৃ ঋআ র্হি` | `rri` is the vocalic ঋ signal; `rr` remains reph before consonants. |
+| App vowel signal | `aYp AYp ayp Ayp app kaY kay` | `অ্যাপ অ্যাপ আয়প আয়প আপ্প ক্যা কায়` | `aY`/`AY` are অ্যা vowel signals; lowercase `y` remains the ordinary য় path. |
+| Repeated vowel freedom | `a A aa i I ii e E ee o O oo u U uu kaa kee kii koo kuu kU uuupintocala` | `আ আ আআ ই ঈ ইই এ এ এএ অ ও অঅ উ ঊ উউ কাআ কেএ কিই কঅ কুউ কূ উউউপিন্তচালা` | Doubled lowercase vowels are not aliases; repeated signals remain repeated for deliberate invented strings. |
 | Vowel sequences | `kai kau kia kio keo` | `কাই কাউ কিয়া কিও কেও` | Documented vowel sequences compose as rule units, not guessed spellings. |
 | Marked vowel boundary | `k,,i k^a k:a` | `ক্ই কঁআ কঃআ` | Vowels after explicit hasant, chandrabindu, or visarga start independently. |
 | Non-conjunct ra-ya | `rZyab rrYa Zya kZya` | `র‌্যাব র্যা Zয়া কZয়া` | `rZy` is a narrow ZWNJ signal; unrelated `Z` is not an alias. |

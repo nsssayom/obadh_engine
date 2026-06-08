@@ -29,21 +29,29 @@ fn test_shared_definition_maps_expose_core_rules() {
     assert!(consonant_system().retroflexes.contains(&("T", "ট")));
     assert_eq!(consonant_categories()[0][0], ("k", "ক"));
     assert_eq!(
-        vowels_static().get("aa").map(|vowel| vowel.independent),
+        vowels_static().get("a").map(|vowel| vowel.independent),
         Some("আ")
     );
-    assert_eq!(vowel_value("aa").map(|vowel| vowel.independent), Some("আ"));
-    assert!(is_vowel("aa"));
+    assert_eq!(vowel_value("A").map(|vowel| vowel.independent), Some("আ"));
+    assert_eq!(
+        vowel_value("aY").map(|vowel| (vowel.independent, vowel.dependent)),
+        Some(("অ্যা", Some("্যা")))
+    );
+    assert_eq!(
+        vowel_value("AY").map(|vowel| (vowel.independent, vowel.dependent)),
+        Some(("অ্যা", Some("্যা")))
+    );
+    assert!(is_vowel("A"));
     assert!(!is_vowel("kh"));
     assert_eq!(vowel_rules()[0].0, "o");
     assert_eq!(
-        vowels_static().get("oo").map(|vowel| vowel.independent),
+        vowels_static().get("u").map(|vowel| vowel.independent),
         Some("উ")
     );
-    assert_eq!(
-        vowels_static().get("uu").map(|vowel| vowel.independent),
-        Some("ঊ")
-    );
+    for repeated_vowel in ["aa", "ee", "ii", "oo", "uu"] {
+        assert!(!is_vowel(repeated_vowel));
+        assert!(vowels_static().get(repeated_vowel).is_none());
+    }
     assert_eq!(diacritics_static().get(",,").copied(), Some("্"));
     assert_eq!(diacritic_value(",,"), Some("্"));
     assert_eq!(diacritic_rules()[0], (",,", "্"));

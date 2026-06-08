@@ -1,4 +1,11 @@
-use obadh_engine::{ObadhEngine, PhoneticUnitType, Tokenizer};
+use obadh_engine::{ObadhEngine, PhoneticUnit, PhoneticUnitType, Tokenizer};
+
+fn phonetic_shapes(units: &[PhoneticUnit]) -> Vec<(&str, PhoneticUnitType)> {
+    units
+        .iter()
+        .map(|unit| (unit.text.as_str(), unit.unit_type))
+        .collect()
+}
 
 #[test]
 fn test_documented_aspirated_cha_alias() {
@@ -54,7 +61,7 @@ fn test_titlecase_aspirated_digraph_aliases_are_composable() {
     }
 
     for input in [
-        "Khi", "GhA", "Jhu", "Phe", "BhI", "KHi", "GHee", "JHoo", "JHuu", "PHu", "BHI",
+        "Khi", "GhA", "Jhu", "Phe", "BhI", "KHi", "GHI", "JHu", "JHU", "PHu", "BHI",
     ] {
         let units = tokenizer.tokenize_word(input);
         assert_eq!(units.len(), 1);
@@ -64,7 +71,7 @@ fn test_titlecase_aspirated_digraph_aliases_are_composable() {
     let engine = ObadhEngine::new();
     assert_eq!(
         engine.transliterate(
-            "Kh Gh Jh Ph Bh KH GH JH PH BH Khi GhA Jhu Phe BhI KHi GHee JHoo JHuu PHu BHI"
+            "Kh Gh Jh Ph Bh KH GH JH PH BH Khi GhA Jhu Phe BhI KHi GHI JHu JHU PHu BHI"
         ),
         "খ ঘ ঝ ফ ভ খ ঘ ঝ ফ ভ খি ঘা ঝু ফে ভী খি ঘী ঝু ঝূ ফু ভী"
     );
@@ -80,7 +87,7 @@ fn test_uppercase_aspirated_aliases_cover_retroflex_cha_and_sha() {
         assert_eq!(units[0].unit_type, PhoneticUnitType::Consonant);
     }
 
-    for input in ["CHi", "CHHi", "THa", "DHii", "SHa"] {
+    for input in ["CHi", "CHHi", "THa", "DHI", "SHa"] {
         let units = tokenizer.tokenize_word(input);
         assert_eq!(units.len(), 1);
         assert_eq!(units[0].unit_type, PhoneticUnitType::ConsonantWithVowel);
@@ -88,7 +95,7 @@ fn test_uppercase_aspirated_aliases_cover_retroflex_cha_and_sha() {
 
     let engine = ObadhEngine::new();
     assert_eq!(
-        engine.transliterate("CH CHH TH DH SH CHi CHHi THa DHii SHa"),
+        engine.transliterate("CH CHH TH DH SH CHi CHHi THa DHI SHa"),
         "ছ ছ ঠ ঢ ষ ছি ছি ঠা ঢী ষা"
     );
 }
@@ -165,7 +172,7 @@ fn test_aliases_for_orthographic_jna_conjunct() {
     let tokenizer = Tokenizer::new();
 
     for input in [
-        "jn", "Jn", "gg", "jnan", "Jnaan", "ggan", "rrjn", "rrJna", "rrgga",
+        "jn", "Jn", "gg", "jnan", "Jnan", "ggan", "rrjn", "rrJna", "rrgga",
     ] {
         let units = tokenizer.tokenize_word(input);
         assert!(
@@ -185,7 +192,7 @@ fn test_aliases_for_orthographic_jna_conjunct() {
 
     let engine = ObadhEngine::new();
     assert_eq!(
-        engine.transliterate("jNG JNG jn Jn gg jnan Jnaan ggan bijnaan biggan rrjna rrgga gog"),
+        engine.transliterate("jNG JNG jn Jn gg jnan Jnan ggan bijnan biggan rrjna rrgga gog"),
         "জ্ঞ জ্ঞ জ্ঞ জ্ঞ জ্ঞ জ্ঞান জ্ঞান জ্ঞান বিজ্ঞান বিজ্ঞান র্জ্ঞা র্জ্ঞা গগ"
     );
 }
@@ -249,38 +256,116 @@ fn test_vocalic_r_vowel_wins_over_shorter_reph_signal() {
 }
 
 #[test]
-fn test_aa_alias_is_single_long_a_vowel() {
+fn test_repeated_lowercase_vowels_remain_repeated_input() {
     let tokenizer = Tokenizer::new();
 
-    let standalone = tokenizer.tokenize_word("aa");
-    assert_eq!(standalone.len(), 1);
-    assert_eq!(standalone[0].text, "aa");
-    assert_eq!(standalone[0].unit_type, PhoneticUnitType::Vowel);
-
-    let after_consonant = tokenizer.tokenize_word("kaa");
-    assert_eq!(after_consonant.len(), 1);
-    assert_eq!(after_consonant[0].text, "kaa");
-    assert_eq!(
-        after_consonant[0].unit_type,
-        PhoneticUnitType::ConsonantWithVowel
-    );
+    for (input, expected_units) in [
+        (
+            "aa",
+            vec![
+                ("a", PhoneticUnitType::Vowel),
+                ("a", PhoneticUnitType::Vowel),
+            ],
+        ),
+        (
+            "ee",
+            vec![
+                ("e", PhoneticUnitType::Vowel),
+                ("e", PhoneticUnitType::Vowel),
+            ],
+        ),
+        (
+            "ii",
+            vec![
+                ("i", PhoneticUnitType::Vowel),
+                ("i", PhoneticUnitType::Vowel),
+            ],
+        ),
+        (
+            "oo",
+            vec![
+                ("o", PhoneticUnitType::TerminatingVowel),
+                ("o", PhoneticUnitType::TerminatingVowel),
+            ],
+        ),
+        (
+            "uu",
+            vec![
+                ("u", PhoneticUnitType::Vowel),
+                ("u", PhoneticUnitType::Vowel),
+            ],
+        ),
+        (
+            "kaa",
+            vec![
+                ("ka", PhoneticUnitType::ConsonantWithVowel),
+                ("a", PhoneticUnitType::Vowel),
+            ],
+        ),
+        (
+            "kee",
+            vec![
+                ("ke", PhoneticUnitType::ConsonantWithVowel),
+                ("e", PhoneticUnitType::Vowel),
+            ],
+        ),
+        (
+            "kii",
+            vec![
+                ("ki", PhoneticUnitType::ConsonantWithVowel),
+                ("i", PhoneticUnitType::Vowel),
+            ],
+        ),
+        (
+            "koo",
+            vec![
+                ("ko", PhoneticUnitType::ConsonantWithTerminator),
+                ("o", PhoneticUnitType::TerminatingVowel),
+            ],
+        ),
+        (
+            "kuu",
+            vec![
+                ("ku", PhoneticUnitType::ConsonantWithVowel),
+                ("u", PhoneticUnitType::Vowel),
+            ],
+        ),
+    ] {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(
+            phonetic_shapes(&units),
+            expected_units,
+            "{input} should tokenize as repeated input, not as one vowel alias"
+        );
+    }
 
     let engine = ObadhEngine::new();
-    assert_eq!(engine.transliterate("aa A kaa kA"), "আ আ কা কা");
+    assert_eq!(
+        engine.transliterate("aa ee ii oo uu kaa kee kii koo kuu"),
+        "আআ এএ ইই অঅ উউ কাআ কেএ কিই কঅ কুউ"
+    );
+    assert_eq!(
+        engine.transliterate("u U uu kuu kuU uuupintocala"),
+        "উ ঊ উউ কুউ কুঊ উউউপিন্তচালা"
+    );
 }
 
 #[test]
-fn test_doubled_vowel_aliases_are_single_rule_units() {
+fn test_documented_vowel_signals_are_single_rule_units() {
     let tokenizer = Tokenizer::new();
 
-    for input in ["ee", "ii", "oo", "uu"] {
+    for input in [
+        "a", "A", "aY", "AY", "i", "I", "u", "U", "e", "E", "O", "OI", "OU",
+    ] {
         let units = tokenizer.tokenize_word(input);
         assert_eq!(units.len(), 1, "{input} should be one vowel unit");
         assert_eq!(units[0].text, input);
         assert_eq!(units[0].unit_type, PhoneticUnitType::Vowel);
     }
 
-    for input in ["kee", "kii", "koo", "kuu"] {
+    for input in [
+        "ka", "kA", "kaY", "kAY", "ki", "kI", "ku", "kU", "ke", "kE", "kO", "kOI", "kOU",
+    ] {
         let units = tokenizer.tokenize_word(input);
         assert_eq!(
             units.len(),
@@ -292,8 +377,54 @@ fn test_doubled_vowel_aliases_are_single_rule_units() {
     }
 
     let engine = ObadhEngine::new();
-    assert_eq!(engine.transliterate("ee ii oo uu"), "ঈ ঈ উ ঊ");
-    assert_eq!(engine.transliterate("kee kii koo kuu"), "কী কী কু কূ");
+    assert_eq!(
+        engine.transliterate("a A aY AY i I u U e E O OI OU"),
+        "আ আ অ্যা অ্যা ই ঈ উ ঊ এ এ ও ঐ ঔ"
+    );
+    assert_eq!(
+        engine.transliterate("ka kA kaY kAY ki kI ku kU ke kE kO kOI kOU"),
+        "কা কা ক্যা ক্যা কি কী কু কূ কে কে কো কৈ কৌ"
+    );
+}
+
+#[test]
+fn test_app_vowel_signals_are_deliberate() {
+    let tokenizer = Tokenizer::new();
+
+    for input in ["aYp", "AYp"] {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(
+            phonetic_shapes(&units),
+            vec![
+                (&input[..2], PhoneticUnitType::Vowel),
+                ("p", PhoneticUnitType::Consonant),
+            ],
+            "{input} should use the atomic অ্যা signal before p"
+        );
+    }
+
+    let lowercase = tokenizer.tokenize_word("ayp");
+    assert_eq!(
+        phonetic_shapes(&lowercase),
+        vec![
+            ("a", PhoneticUnitType::Vowel),
+            ("y", PhoneticUnitType::Consonant),
+            ("p", PhoneticUnitType::Consonant),
+        ],
+        "lowercase y should remain the ordinary য় consonant path"
+    );
+
+    let after_consonant = tokenizer.tokenize_word("kaY");
+    assert_eq!(
+        phonetic_shapes(&after_consonant),
+        vec![("kaY", PhoneticUnitType::ConsonantWithVowel)]
+    );
+
+    let engine = ObadhEngine::new();
+    assert_eq!(
+        engine.transliterate("aYp AYp ayp Ayp app kaY kay"),
+        "অ্যাপ অ্যাপ আয়প আয়প আপ্প ক্যা কায়"
+    );
 }
 
 #[test]
@@ -672,9 +803,9 @@ fn test_iyw_long_iya_signal_does_not_mutate_vocalic_rri() {
             ],
         ),
         (
-            "kiiyw",
+            "kIyw",
             vec![
-                ("kii", PhoneticUnitType::ConsonantWithVowel),
+                ("kI", PhoneticUnitType::ConsonantWithVowel),
                 ("y", PhoneticUnitType::Consonant),
                 ("w", PhoneticUnitType::Unknown),
             ],
@@ -700,7 +831,7 @@ fn test_iyw_long_iya_signal_does_not_mutate_vocalic_rri() {
     }
 
     let engine = ObadhEngine::new();
-    assert_eq!(engine.transliterate("krriyw kiiyw kaiyw"), "কৃয়w কীয়w কাইয়w");
+    assert_eq!(engine.transliterate("krriyw kIyw kaiyw"), "কৃয়w কীয়w কাইয়w");
 }
 
 #[test]

@@ -43,7 +43,6 @@ mod tests {
 
     #[test]
     fn split_consonant_vowel_checks_longest_vowel_suffix_first() {
-        assert_eq!(split_consonant_vowel("kaa"), Some(("k", "aa")));
         assert_eq!(split_consonant_vowel("kOU"), Some(("k", "OU")));
         assert_eq!(split_consonant_vowel("krri"), Some(("k", "rri")));
         assert_eq!(split_consonant_vowel("chhi"), Some(("chh", "i")));

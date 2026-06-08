@@ -5,11 +5,12 @@
 | Roman Input | Independent Vowel | Vowel Symbol (Kar) | Name |
 |-------------|-------------------|-------------------|------|
 | o | অ | - (inherent) | অ-কার (a-kar) |
-| A / aa | আ | া | আ-কার (aa-kar) |
+| a / A | আ | া | আ-কার (aa-kar) |
+| aY / AY | অ্যা | ্যা | অ্যা-কার (ae-kar with য-ফলা shape) |
 | i | ই | ি | ই-কার (i-kar) |
-| I / ee / ii | ঈ | ী | ঈ-কার (dirgho i-kar) |
-| u / oo | উ | ু | উ-কার (u-kar) |
-| U / uu | ঊ | ূ | ঊ-কার (dirgho u-kar) |
+| I | ঈ | ী | ঈ-কার (dirgho i-kar) |
+| u | উ | ু | উ-কার (u-kar) |
+| U | ঊ | ূ | ঊ-কার (dirgho u-kar) |
 | e / E | এ | ে | এ-কার (e-kar) |
 | OI | ঐ | ৈ | ঐ-কার (oi-kar) |
 | O | ও | ো | ও-কার (o-kar) |
@@ -29,16 +30,17 @@
 
 | Position | Roman Signal | Bengali Output | Explanation |
 |----------|--------------|----------------|-------------|
-| Vowel initial | `A` / `aa` | আ | long আ as an independent vowel |
-| Vowel initial | `I` / `ee` / `ii` | ঈ | long ঈ as an independent vowel |
-| Vowel initial | `u` / `oo` | উ | short উ as an independent vowel |
-| Vowel initial | `U` / `uu` | ঊ | long ঊ as an independent vowel |
+| Vowel initial | `a` / `A` | আ | আ as an independent vowel |
+| Vowel initial | `aY` / `AY` | অ্যা | explicit অ্যা as an independent vowel |
+| Vowel initial | `I` | ঈ | long ঈ as an independent vowel |
+| Vowel initial | `u` | উ | short উ as an independent vowel |
+| Vowel initial | `U` | ঊ | long ঊ as an independent vowel |
 | Vowel initial | `e` / `E` | এ | এ as an independent vowel |
 | After consonant | `k` + `i` | কি | ি after ক |
-| After consonant | `k` + `ee` / `ii` | কী | ী after ক |
+| After consonant | `k` + `aY` / `AY` | ক্যা | ্যা after ক |
+| After consonant | `k` + `I` | কী | ী after ক |
 | After consonant | `t` + `u` | তু | ু after ত |
-| After consonant | `t` + `oo` | তু | ু after ত |
-| After consonant | `t` + `uu` | তূ | ূ after ত |
+| After consonant | `t` + `U` | তূ | ূ after ত |
 | After consonant/conjunct | `tiyw`, `ktiYwta` | তীয়, ক্তীয়তা | typed long-ঈয় signal |
 
 ## 3. Vowel 'o' as Conjunct Breaker
@@ -59,7 +61,6 @@ This is crucial when you need to represent two consecutive same letters without 
 
 | Combination | Roman Input | Bengali Output |
 |-------------|-------------|----------------|
-| a + a | aa | আ |
 | a + i | ai | আই |
 | a + u | au | আউ |
 | a + e | ae | আএ |
@@ -68,8 +69,8 @@ This is crucial when you need to represent two consecutive same letters without 
 | i + o | io | ইও |
 | e + o | eo | এও |
 
-> `aa` is a special case equivalent to independent আ (`A`) and আ-কার.
-> `ee`/`ii` are explicit long-vowel aliases for `I`. `oo` is an accepted short-উ alias in Obadh's explicit vowel table; use `U` or `uu` for long ঊ.
+> Doubled lowercase vowels are not long-vowel aliases. They compose as typed: `aa` → `আআ`, `ee` → `এএ`, `ii` → `ইই`, `oo` → `অঅ`, and `uu` → `উউ`. After consonants they still compose from individual signals, e.g. `kaa` → `কাআ`, `kee` → `কেএ`, `kii` → `কিই`, `koo` → `কঅ`, and `kuu` → `কুউ`.
+> `aY`/`AY` are atomic অ্যা vowel signals. They let deliberate forms such as `aYp`/`AYp` → `অ্যাপ` and `kaY` → `ক্যা` compose without a word rule. Lowercase `ay` remains আ + য় (`ayp` → `আয়প`).
 > Lowercase `oi`/`ou` remain vowel sequences such as `boi` → `বই`; use uppercase `OI`/`OU` for ঐ/ঔ.
 
 The same vowel-sequence rules compose after consonants by using the dependent form of the first vowel plus any following independent vowel or glide.
@@ -101,6 +102,7 @@ The following examples show how vowels combine with consonants:
 | Combination | Roman Input | Bengali Output | 
 |-------------|-------------|----------------|
 | ক + আ | ka | কা |
+| ক + অ্যা | kaY | ক্যা |
 | ক + ি | ki | কি |
 | ক + ী | kI | কী |
 | ক + ু | ku | কু |
