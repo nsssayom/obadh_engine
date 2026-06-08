@@ -10,8 +10,14 @@ This source-controlled corpus exercises rule signals, not memorized words. It is
 | Khanda-ta reph | <code>rrt rrt`` rr,,t`` rrt``sa</code> | `র্ত র্ৎ র্ৎ র্ৎসা` | `rrt` remains র্ত; খণ্ড ত uses the explicit <code>t``</code> signal. |
 | Reph cluster | `rrkSh rrk,,Sh rrsk rrs,,ka` | `র্ক্ষ র্ক্ষ র্স্ক র্স্কা` | Reph composes over declared valid clusters, implicit or explicit. |
 | Phola markers | `ky k,,w zya bwa Rw` | `ক্য ক্ব য্যা ব্বা ড়w` | `y`/`w` are phola markers only in declared clusters. |
+| Base vs phola separation | `kz kb zoy zy bw` | `কয কব যয় য্য ব্ব` | `z`/`b` remain base letters; `y`/`w` become phola markers only through declared clusters. |
 | Nasal signals | `ngg sMgo songskrriti shongkha` | `ঙ্গ সংগ সংস্কৃতি শংখা` | `ngg` is velar conjunct shorthand; `M` preserves literal anusvara. |
+| Nasal escape | `songgo sMgo nggho sMgho` | `সঙ্গ সংগ ঙ্ঘ সংঘ` | `M` forces literal anusvara before `g`/`gh`; `ngg`/`nggh` remain deliberate velar conjunct shorthand. |
 | Long iya | `tiyw kiywo kiywO` | `তীয় কীয় কীয়ো` | `iyw` is the composable long-ঈয় signal. |
+| Vocalic r | `rri krri rria rrhi` | `ঋ কৃ ঋআ র্হি` | `rri` is the vocalic ঋ signal; `rr` remains reph before consonants. |
+| Vowel sequences | `kai kau kia kio keo` | `কাই কাউ কিয়া কিও কেও` | Documented vowel sequences compose as rule units, not guessed spellings. |
+| Marked vowel boundary | `k,,i k^a k:a` | `ক্ই কঁআ কঃআ` | Vowels after explicit hasant, chandrabindu, or visarga start independently. |
 | Non-conjunct ra-ya | `rZyab rrYa Zya kZya` | `র‌্যাব র্যা Zয়া কZয়া` | `rZy` is a narrow ZWNJ signal; unrelated `Z` is not an alias. |
+| Aspirated alias composition | `KhA KHy acCHHa` | `খা খ্য আচ্ছা` | Accepted aspirated aliases canonicalize into ordinary rule components before vowel/conjunct handling. |
 | External alias rejection | `q G gg pph p,,ph` | `q G গগ পফ প্ফ` | Unknown broad aliases remain literal; explicit hasant stays available. |
 | Symbols and numbers | `12.34 12.34. $` | `১২.৩৪ ১২.৩৪। ৳` | Decimal periods stay ASCII between number-bearing tokens. |
