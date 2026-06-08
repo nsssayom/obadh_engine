@@ -95,7 +95,7 @@ The full consonant signal table is maintained in `data/rules/consonants.md` and 
 | `ng` / `M` | anusvara ং; use `M` before `g`/`gh` when you want literal ংগ/ংঘ instead of the `ngg`/`nggh` shorthand |
 | `Ng` | velar nasal ঙ |
 | `ngg` / `nggh` | shorthand for ঙ্গ / ঙ্ঘ |
-| `jNG` / `jn` | জ্ঞ conjunct |
+| `jNG` / `jn` / `gg` | জ্ঞ conjunct; `gg` is the pronounced shorthand, while literal গগ is `gog` |
 | `rr` + valid cluster | reph over the full cluster, e.g. `rrkSh` → `র্ক্ষ` |
 | `rZy` / `rZY` | non-conjunct ZWNJ-separated `র‌্য` form, e.g. `rZyab` → `র‌্যাব`; use `rrYa` for conjunct `র্যা` |
 | `y` | য-ফলা marker in valid conjunct clusters |

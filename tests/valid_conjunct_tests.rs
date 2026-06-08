@@ -622,6 +622,7 @@ fn jna_alias_keys(components: &[&str]) -> BTreeSet<String> {
         if matches!(components[index], "j" | "J") && components[index + 1] == "NG" {
             keys.extend(replace_component_pair(components, index, "jn"));
             keys.extend(replace_component_pair(components, index, "Jn"));
+            keys.extend(replace_component_pair(components, index, "gg"));
         }
     }
 

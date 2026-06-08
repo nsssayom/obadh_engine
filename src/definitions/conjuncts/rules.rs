@@ -113,6 +113,7 @@ pub(super) const CONJUNCT_RULES: &[ConjunctRule] = &[
     ConjunctRule("JNG", "জ্ঞ"),
     ConjunctRule("jn", "জ্ঞ"),
     ConjunctRule("Jn", "জ্ঞ"),
+    ConjunctRule("gg", "জ্ঞ"),
     ConjunctRule("jw", "জ্ব"),
     ConjunctRule("Jw", "জ্ব"),
     ConjunctRule("jy", "জ্য"),

@@ -161,10 +161,12 @@ fn test_pronounced_kkh_alias_for_orthographic_ksh() {
 }
 
 #[test]
-fn test_jn_alias_for_orthographic_jna_conjunct() {
+fn test_aliases_for_orthographic_jna_conjunct() {
     let tokenizer = Tokenizer::new();
 
-    for input in ["jn", "Jn", "jnan", "Jnaan", "rrjn", "rrJna"] {
+    for input in [
+        "jn", "Jn", "gg", "jnan", "Jnaan", "ggan", "rrjn", "rrJna", "rrgga",
+    ] {
         let units = tokenizer.tokenize_word(input);
         assert!(
             units.iter().any(|unit| {
@@ -183,8 +185,8 @@ fn test_jn_alias_for_orthographic_jna_conjunct() {
 
     let engine = ObadhEngine::new();
     assert_eq!(
-        engine.transliterate("jNG JNG jn Jn jnan Jnaan bijnaan rrjna"),
-        "জ্ঞ জ্ঞ জ্ঞ জ্ঞ জ্ঞান জ্ঞান বিজ্ঞান র্জ্ঞা"
+        engine.transliterate("jNG JNG jn Jn gg jnan Jnaan ggan bijnaan biggan rrjna rrgga gog"),
+        "জ্ঞ জ্ঞ জ্ঞ জ্ঞ জ্ঞ জ্ঞান জ্ঞান জ্ঞান বিজ্ঞান বিজ্ঞান র্জ্ঞা র্জ্ঞা গগ"
     );
 }
 
@@ -199,22 +201,10 @@ fn test_external_layout_aliases_are_not_imported_without_obadh_rule_reason() {
         assert_eq!(units[0].unit_type, PhoneticUnitType::Unknown);
     }
 
-    let gg_units = tokenizer.tokenize_word("gg");
-    assert_eq!(
-        gg_units
-            .iter()
-            .map(|unit| (unit.text.as_str(), unit.unit_type))
-            .collect::<Vec<_>>(),
-        vec![
-            ("g", PhoneticUnitType::Consonant),
-            ("g", PhoneticUnitType::Consonant),
-        ]
-    );
-
     let engine = ObadhEngine::new();
     assert_eq!(
-        engine.transliterate("q qa Q G Ga gg jNG jn"),
-        "q qআ Q G Gআ গগ জ্ঞ জ্ঞ"
+        engine.transliterate("q qa Q G Ga gog jNG jn gg"),
+        "q qআ Q G Gআ গগ জ্ঞ জ্ঞ জ্ঞ"
     );
 }
 

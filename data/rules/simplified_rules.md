@@ -35,7 +35,7 @@ Consonants are handled in different modes:
   - Signal: `kk` → `ক্ক`, `kt` → `ক্ত`
   - Created by adding hasant (্) between consonants
   - Aspirated aliases compose through canonical conjunct rules: `KHy` → `খ্য`, `acCHHa` → `আচ্ছা`
-  - জ্ঞ can be typed by component signal `jNG` or shorthand `jn`: `jnan` → `জ্ঞান`
+  - জ্ঞ can be typed by component signal `jNG`, shorthand `jn`, or pronounced shorthand `gg`: `jnan`/`ggan` → `জ্ঞান`
 
 ### 3. Special Reph Form
 
