@@ -29,6 +29,12 @@ impl BengaliVowel {
 /// A Roman input rule and its complete Bengali vowel output.
 pub type VowelRule = (&'static str, BengaliVowel);
 
+/// Maximum Roman byte length of any vowel rule key.
+///
+/// Vowel keys are ASCII rule signals, so this also bounds the suffix scan used
+/// when splitting already-tokenized consonant-vowel units.
+pub(crate) const MAX_VOWEL_RULE_BYTES: usize = 3;
+
 const VOWEL_RULES: &[VowelRule] = &[
     // Inherent vowel (no visible kar when used with consonants)
     ("o", BengaliVowel::new("অ", None)),
@@ -138,4 +144,25 @@ pub fn vowel_modifiers() -> HashMap<&'static str, &'static str> {
     }
 
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_vowel_rule_bytes_matches_rule_table() {
+        assert!(
+            VOWEL_RULES.iter().all(|(roman, _)| roman.is_ascii()),
+            "vowel rule keys are byte-scanned ASCII signals"
+        );
+        assert_eq!(
+            MAX_VOWEL_RULE_BYTES,
+            VOWEL_RULES
+                .iter()
+                .map(|(roman, _)| roman.len())
+                .max()
+                .expect("vowel rule table should not be empty")
+        );
+    }
 }
