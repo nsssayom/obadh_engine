@@ -4,7 +4,14 @@ use obadh_engine::definitions::{
     numeral_rules, numerals, numerals_static, symbol_rules, symbol_value, symbols_static,
     vowel_rules, vowel_value, vowels_static,
 };
-use obadh_engine::ObadhEngine;
+use obadh_engine::{ObadhEngine, PhoneticUnit, PhoneticUnitType, Tokenizer};
+
+fn phonetic_shapes(units: &[PhoneticUnit]) -> Vec<(&str, PhoneticUnitType)> {
+    units
+        .iter()
+        .map(|unit| (unit.text.as_str(), unit.unit_type))
+        .collect()
+}
 
 #[test]
 fn test_engine_creation() {
@@ -223,4 +230,35 @@ fn test_contextual_token_transliteration_matches_tokenized_render() {
         engine.transliterate_tokens(&tokens)
     );
     assert_eq!(engine.transliterate_token_at(&tokens, tokens.len()), None);
+}
+
+#[test]
+fn test_reusable_phonetic_tokenization_matches_allocating_api() {
+    let engine = ObadhEngine::new();
+    let mut units = Vec::with_capacity(64);
+
+    engine.tokenize_phonetic_into("rrkSh", &mut units);
+    assert_eq!(
+        phonetic_shapes(&units),
+        phonetic_shapes(&engine.tokenize_phonetic("rrkSh"))
+    );
+    assert_eq!(units.capacity(), 64);
+
+    engine.tokenize_phonetic_into("kOU^:", &mut units);
+    assert_eq!(
+        phonetic_shapes(&units),
+        vec![
+            ("kOU", PhoneticUnitType::ConsonantWithVowel),
+            ("^", PhoneticUnitType::SpecialForm),
+            (":", PhoneticUnitType::SpecialForm),
+        ]
+    );
+    assert_eq!(units.capacity(), 64);
+
+    let tokenizer = Tokenizer::new();
+    tokenizer.tokenize_word_into("kkA", &mut units);
+    assert_eq!(
+        phonetic_shapes(&units),
+        vec![("k,,kA", PhoneticUnitType::ConjunctWithVowel)]
+    );
 }

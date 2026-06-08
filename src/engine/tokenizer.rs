@@ -119,7 +119,12 @@ impl Tokenizer {
         units
     }
 
-    pub(crate) fn tokenize_word_into(&self, word: &str, units: &mut Vec<PhoneticUnit>) {
+    /// Tokenize a word into a caller-owned phonetic-unit buffer.
+    ///
+    /// The buffer is cleared before use, but its existing allocation is reused.
+    /// This is the preferred path for high-frequency callers such as editors or
+    /// typing frontends that repeatedly analyze one changing word.
+    pub fn tokenize_word_into(&self, word: &str, units: &mut Vec<PhoneticUnit>) {
         units.clear();
         reserve_word_unit_capacity(units, word);
         // Process the word character by character

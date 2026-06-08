@@ -60,6 +60,15 @@ impl ObadhEngine {
         self.transliterator.tokenize_phonetic(word)
     }
 
+    /// Tokenize a word into a caller-owned phonetic-unit buffer.
+    ///
+    /// The buffer is cleared before use and then reused. Prefer this method for
+    /// high-frequency editor or typing integrations that repeatedly analyze the
+    /// active word.
+    pub fn tokenize_phonetic_into(&self, word: &str, units: &mut Vec<PhoneticUnit>) {
+        self.transliterator.tokenize_phonetic_into(word, units);
+    }
+
     /// Get a new tokenizer instance for custom tokenization
     pub fn get_tokenizer(&self) -> Tokenizer {
         Tokenizer::new()

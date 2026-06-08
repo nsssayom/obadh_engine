@@ -303,6 +303,14 @@ impl Transliterator {
         self.tokenizer.tokenize_word(word)
     }
 
+    /// Tokenize a word into a caller-owned phonetic-unit buffer.
+    ///
+    /// The buffer is cleared before use and then reused, which avoids repeated
+    /// allocation in high-frequency typing integrations.
+    pub fn tokenize_phonetic_into(&self, word: &str, units: &mut Vec<PhoneticUnit>) {
+        self.tokenizer.tokenize_word_into(word, units);
+    }
+
     /// Sanitize the input text, ensuring it contains only allowed characters
     pub fn sanitize(&self, text: &str) -> SanitizeResult {
         self.sanitizer.sanitize(text)

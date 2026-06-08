@@ -404,6 +404,19 @@ fn main() {
 }
 ```
 
+For high-frequency editor integrations, reuse a phonetic-unit buffer while the
+active word changes:
+
+```rust
+use obadh_engine::{ObadhEngine, PhoneticUnit};
+
+let engine = ObadhEngine::new();
+let mut units: Vec<PhoneticUnit> = Vec::new();
+
+engine.tokenize_phonetic_into("rrkSh", &mut units);
+engine.tokenize_phonetic_into("kOU^:", &mut units);
+```
+
 ## CLI Interface
 
 ### The `obadh` Command
