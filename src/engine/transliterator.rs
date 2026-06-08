@@ -17,6 +17,7 @@ use crate::definitions::{
 
 mod boundary;
 mod components;
+mod conjunct;
 mod parts;
 mod word;
 
