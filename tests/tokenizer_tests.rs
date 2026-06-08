@@ -93,6 +93,33 @@ fn test_standalone_hasant_marker_is_a_phonetic_token() {
 }
 
 #[test]
+fn test_text_tokenization_tracks_numeric_words_incrementally() {
+    let tokenizer = Tokenizer::new();
+    let tokens = tokenizer.tokenize_text("123 ১২৩ a1 1a ^12 12^ k,, 1,,");
+
+    assert_eq!(
+        token_shapes(&tokens),
+        vec![
+            ("123", TokenType::Number),
+            (" ", TokenType::Whitespace),
+            ("১২৩", TokenType::Number),
+            (" ", TokenType::Whitespace),
+            ("a1", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("1a", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("^12", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("12^", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("k,,", TokenType::Word),
+            (" ", TokenType::Whitespace),
+            ("1,,", TokenType::Word),
+        ]
+    );
+}
+
+#[test]
 fn test_empty_phonetic_tokenization_is_safe() {
     let tokenizer = Tokenizer::new();
     assert!(tokenizer.tokenize_word("").is_empty());
