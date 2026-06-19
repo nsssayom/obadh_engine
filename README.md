@@ -94,6 +94,7 @@ The full consonant signal table is maintained in `data/rules/consonants.md` and 
 | doubled lowercase vowels | not aliases: `aa` → `আআ`, `ee` → `এএ`, `ii` → `ইই`, `oo` → `অঅ`, `uu` → `উউ` |
 | `Sh` | ষ |
 | `Kh` / `KH`, `Gh` / `GH`, etc. | aspirated consonant aliases |
+| opposite-case fallback | if a one-letter alphabetic rule is missing in the typed case but exists in the opposite case, Obadh uses the exact canonical rule; currently this admits `B` / `G` / `K` / `P` / `F` / `V` / `L` / `H` while protecting exact signals such as `T`, `D`, `N`, `S`, `I`, `U`, `O`, `Y`, `M`, and narrow `Z` |
 | `ng` / `M` | anusvara ং; use `M` before `g`/`gh` when you want literal ংগ/ংঘ instead of the `ngg`/`nggh` shorthand |
 | `Ng` | velar nasal ঙ |
 | `ngg` / `nggh` | shorthand for ঙ্গ / ঙ্ঘ |
@@ -419,31 +420,6 @@ engine.tokenize_phonetic_into("rrkSh", &mut units);
 engine.tokenize_phonetic_into("kOU^:", &mut units);
 ```
 
-### ML Feature Extraction
-
-The deterministic engine exposes a versioned structural feature contract for
-local ML layers that sit above Obadh. This is not part of the deterministic hot
-path and does not change transliteration behavior.
-
-```rust
-use obadh_engine::ObadhEngine;
-
-let engine = ObadhEngine::new();
-let features = engine.ml_features("aYp");
-
-assert_eq!(features.schema, "obadh.ml.features.v0");
-assert_eq!(features.deterministic, "অ্যাপ");
-```
-
-For dataset preparation, use the streaming feature binary:
-
-```bash
-printf 'aYp\nbiggan\n' | cargo run --bin obadh-ml-features
-```
-
-Unsupported input is reported in the feature document instead of being silently
-cleaned. Training pipelines should skip or audit rejected rows explicitly.
-
 ## CLI Interface
 
 ### The `obadh` Command
@@ -514,10 +490,6 @@ Alternatively, you can build everything at once including the CLI binary:
 - `src/wasm/`: WebAssembly bindings and web-specific functionality
 - `src/bin/`: Binary executables
   - `obadh.rs`: Main CLI application
-  - `ml_features.rs`: Streaming feature JSON emitter for local ML dataset preparation
-- `src/ml/`: Versioned structural feature schema for ML layers above the deterministic engine
-- `ml/`: Python-side local ML tooling for dataset preparation, model definitions, export, and evaluation scaffolding
-- `models/`: Metadata roots for trained model releases; large generated artifacts are ignored
 - `benches/`: Criterion benchmarks for tokenizer/transliterator hot paths
 - `data/`: Non-shipped source/audit material excluded from Cargo packages, including documented rule tables and the deliberate input rule-probe corpus
 - `www/`: Web interface files
@@ -527,7 +499,7 @@ Alternatively, you can build everything at once including the CLI binary:
   - `package.json` - npm configuration
 - `tests/`: Test cases for the engine
 
-The Cargo package intentionally excludes source/audit data, Python ML tooling, model artifact roots, tests, benchmarks, build scripts, and playground/GitHub Pages assets. The published crate ships the Rust library and binaries; `data/`, `ml/`, `models/`, `www/`, and `docs/` remain repository material for development, verification, and deployment.
+The Cargo package intentionally excludes source/audit data, tests, benchmarks, build scripts, and playground/GitHub Pages assets. The published crate ships the Rust library and binaries; `data/`, `www/`, and `docs/` remain repository material for development, verification, and deployment.
 
 ### Building
 

@@ -6,7 +6,7 @@ This document tracks current limitations and planned future work for the determi
 
 1. **Conjunct Formation Policy**: The tokenizer filters implicit conjuncts through a compiled valid-conjunct trie. This prevents arbitrary consonant fusion, but some legal clusters still need better syllable-boundary policy so the engine can decide when implicit clustering is helpful and when the user should type an explicit `,,` boundary.
 
-2. **Alias Admission**: Common "chh" and uppercase "C"/"Ch"/"Chh"/"CH"/"CHH" aliases are handled for ছ, including c+ছ conjunct aliases. Titlecase and all-caps aspirated digraphs such as "Kh"/"KH", "Gh"/"GH", "Jh"/"JH", "Th"/"TH", "Dh"/"DH", "Ph"/"PH", and "Bh"/"BH" compose through normal consonant, vowel, and canonical conjunct rules. The pronounced "kkh" alias family maps to orthographic ক্ষ alongside "ksh"/"kSh", and `gg` maps to orthographic জ্ঞ alongside `jNG`/`jn`. Future aliases need an Obadh-specific linguistic or usability reason; external keyboard layouts are comparison data, not acceptance criteria.
+2. **Alias Admission**: Common "chh" and uppercase "C"/"Ch"/"Chh"/"CH"/"CHH" aliases are handled for ছ, including c+ছ conjunct aliases. Titlecase and all-caps aspirated digraphs such as "Kh"/"KH", "Gh"/"GH", "Jh"/"JH", "Th"/"TH", "Dh"/"DH", "Ph"/"PH", and "Bh"/"BH" compose through normal consonant, vowel, and canonical conjunct rules. Missing one-letter alphabetic case variants are generated from the exact rule table only when the typed case is unclaimed and not reserved; today that admits `B`/`G`/`K`/`P`/`F`/`V`/`L`/`H`, while exact signals such as `T`, `D`, `N`, `S`, `I`, `U`, `O`, `Y`, `M`, and narrow `Z` remain protected. The pronounced "kkh" alias family maps to orthographic ক্ষ alongside "ksh"/"kSh", and `gg` maps to orthographic জ্ঞ alongside `jNG`/`jn`. Future aliases need an Obadh-specific linguistic or usability reason; external keyboard layouts are comparison data, not acceptance criteria.
 
 3. **Complex Rule Handling**: The tokenizer needs more sophisticated rules to handle special cases like:
    - When two consonants should form conjuncts vs. when they should remain separate
@@ -37,8 +37,6 @@ This document tracks current limitations and planned future work for the determi
 6. Add a phonetic rule system that better matches Bengali orthography's special cases while preserving one canonical deliberate signal wherever possible.
 
 7. Consider implementing explicit normalization passes for documented Roman rule patterns before tokenization.
-
-8. Build and evaluate the first local ML layer above the deterministic engine: feature-vocabulary locking, Bengali output-piece vocabulary design, source-admission audits for Dakshina and candidate Bangladeshi conversational datasets, BiGRU-CTC training, mobile latency measurement, Core ML/ONNX export comparison, and deterministic fallback integration.
 
 ## Notes
 

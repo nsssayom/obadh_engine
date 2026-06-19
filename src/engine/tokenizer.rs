@@ -150,7 +150,7 @@ impl Tokenizer {
                 };
                 scan_hints.observe_unit(&unit, units.last());
                 units.push(unit);
-                _i += rule_match.text.len();
+                _i += rule_match.byte_len;
                 continue;
             }
 

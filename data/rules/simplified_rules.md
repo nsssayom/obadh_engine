@@ -29,9 +29,12 @@ Consonants are handled in different modes:
 - **Independent**: Individual consonants with inherent vowel
   - Signal: `k` → `ক`, `kh` → `খ`
   - Aspirated aliases accept documented titlecase/all-caps forms: `Kh`/`KH` → `খ`, `Chh`/`CHH` → `ছ`
+  - Missing one-letter alphabetic case variants fall back internally to the exact opposite-case rule signal when that opposite-case signal exists and the typed case is unclaimed. Today this admits `B`, `G`, `K`, `P`, `F`, `V`, `L`, and `H`.
+  - Exact signals are never overridden by fallback: `T`, `D`, `N`, `S`, `I`, `U`, `O`, `Y`, `M`, and narrow `Z` keep their documented meanings
 
 - **With Vowel Modifiers**: Consonants followed by explicit vowels
   - Signal: `ka` → `কা`, `ki` → `কি`, `KHi` → `খি`, `CHHi` → `ছি`
+  - Case fallback composes before vowel attachment: `Biggan` → `বিজ্ঞান`, `Khela` → `খেলা`, `Ga` → `গা`
 
 - **Conjuncts**: Multiple consonants combined with hasant
   - Signal: `kk` → `ক্ক`, `kt` → `ক্ত`

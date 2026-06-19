@@ -22,5 +22,6 @@ This source-controlled corpus exercises rule signals, not memorized words. It is
 | Marked vowel boundary | `k,,i k^a k:a` | `ক্ই কঁআ কঃআ` | Vowels after explicit hasant, chandrabindu, or visarga start independently. |
 | Non-conjunct ra-ya | `rZyab rrYa Zya kZya` | `র‌্যাব র্যা Zয়া কZয়া` | `rZy` is a narrow ZWNJ signal; unrelated `Z` is not an alias. |
 | Aspirated alias composition | `KhA KHy acCHHa` | `খা খ্য আচ্ছা` | Accepted aspirated aliases canonicalize into ordinary rule components before vowel/conjunct handling. |
-| External alias rejection | `q G pph p,,ph` | `q G পফ প্ফ` | Unknown broad aliases remain literal; explicit hasant stays available. |
+| Case fallback | `Biggan Ggan BhalO Khela Ga T D N Zya` | `বিজ্ঞান জ্ঞান ভালো খেলা গা ট ড ণ Zয়া` | Unclaimed opposite-case rule signals fall back to the exact canonical signal; exact uppercase signals and narrow `Z` remain protected. |
+| External alias rejection | `q Q pph p,,ph` | `q Q পফ প্ফ` | Unknown broad aliases remain literal; explicit hasant stays available. |
 | Symbols and numbers | `12.34 12.34. $` | `১২.৩৪ ১২.৩৪। ৳` | Decimal periods stay ASCII between number-bearing tokens. |

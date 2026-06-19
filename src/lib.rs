@@ -5,16 +5,11 @@
 
 pub mod definitions;
 pub mod engine;
-pub mod ml;
 pub mod wasm;
 
 // Re-export commonly used types for convenience
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};
-pub use ml::{
-    MlFeatureDocument, MlFeatureSlot, MlPhoneticUnitFeatures, MlTokenFeatures,
-    FEATURE_SCHEMA_VERSION, FEATURE_SLOTS_PER_UNIT,
-};
 pub use wasm::ObadhaWasm;
 
 /// Main entry point for the Obadh transliteration engine
@@ -77,15 +72,6 @@ impl ObadhEngine {
     /// Get a new tokenizer instance for custom tokenization
     pub fn get_tokenizer(&self) -> Tokenizer {
         Tokenizer::new()
-    }
-
-    /// Extract versioned structural features for ML layers above Obadh.
-    ///
-    /// This API is intentionally separate from the deterministic transliteration
-    /// hot path. Unsupported input is reported instead of cleaned so training
-    /// pipelines can skip or audit rejected rows explicitly.
-    pub fn ml_features(&self, text: &str) -> MlFeatureDocument {
-        ml::extract_features(&self.transliterator, text)
     }
 }
 

@@ -178,6 +178,55 @@ fn test_phonetic_tokenization_uses_definition_rules() {
 }
 
 #[test]
+fn test_phonetic_tokenization_canonicalizes_safe_case_fallbacks() {
+    let tokenizer = Tokenizer::new();
+
+    for (input, expected) in [
+        ("B", "b"),
+        ("G", "g"),
+        ("P", "p"),
+        ("F", "f"),
+        ("K", "k"),
+        ("L", "l"),
+        ("V", "v"),
+        ("H", "h"),
+    ] {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| (unit.text.as_str(), unit.unit_type))
+                .collect::<Vec<_>>(),
+            vec![(expected, PhoneticUnitType::Consonant)],
+            "{input} should canonicalize to {expected}"
+        );
+    }
+
+    for (input, expected_type) in [
+        ("T", PhoneticUnitType::Consonant),
+        ("D", PhoneticUnitType::Consonant),
+        ("N", PhoneticUnitType::Consonant),
+        ("S", PhoneticUnitType::Consonant),
+        ("I", PhoneticUnitType::Vowel),
+        ("U", PhoneticUnitType::Vowel),
+        ("O", PhoneticUnitType::Vowel),
+        ("Y", PhoneticUnitType::Consonant),
+        ("M", PhoneticUnitType::SpecialForm),
+        ("Z", PhoneticUnitType::Unknown),
+    ] {
+        let units = tokenizer.tokenize_word(input);
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| (unit.text.as_str(), unit.unit_type))
+                .collect::<Vec<_>>(),
+            vec![(input, expected_type)],
+            "{input} should keep its exact protected behavior"
+        );
+    }
+}
+
+#[test]
 fn test_integration_with_engine() {
     let engine = ObadhEngine::new();
 

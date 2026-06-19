@@ -198,10 +198,34 @@ fn test_aliases_for_orthographic_jna_conjunct() {
 }
 
 #[test]
-fn test_external_layout_aliases_are_not_imported_without_obadh_rule_reason() {
+fn test_collision_safe_case_fallback_for_unclaimed_uppercase_consonants() {
+    let engine = ObadhEngine::new();
+
+    assert_eq!(
+        engine.transliterate("biggan Biggan Ggan BhalO Khela Pori Feri Vab Lalu Hori"),
+        "বিজ্ঞান বিজ্ঞান জ্ঞান ভালো খেলা পরি ফেরি ভাব লালু হরি"
+    );
+    assert_eq!(
+        engine.transliterate("G Ga K Ka P Pa B Ba F Fa V Va L La H Ha"),
+        "গ গা ক কা প পা ব বা ফ ফা ভ ভা ল লা হ হা"
+    );
+}
+
+#[test]
+fn test_case_fallback_does_not_override_deliberate_uppercase_signals() {
+    let engine = ObadhEngine::new();
+
+    assert_eq!(
+        engine.transliterate("T D N S I U O Y M Zya q Q"),
+        "ট ড ণ শ ঈ ঊ ও য় ং Zয়া q Q"
+    );
+}
+
+#[test]
+fn test_unreserved_external_layout_aliases_are_not_imported_without_obadh_rule_reason() {
     let tokenizer = Tokenizer::new();
 
-    for input in ["q", "Q", "G"] {
+    for input in ["q", "Q", "Z"] {
         let units = tokenizer.tokenize_word(input);
         assert_eq!(units.len(), 1);
         assert_eq!(units[0].text, input);
@@ -210,8 +234,8 @@ fn test_external_layout_aliases_are_not_imported_without_obadh_rule_reason() {
 
     let engine = ObadhEngine::new();
     assert_eq!(
-        engine.transliterate("q qa Q G Ga gog jNG jn gg"),
-        "q qআ Q G Gআ গগ জ্ঞ জ্ঞ জ্ঞ"
+        engine.transliterate("q qa Q Z Zya gog jNG jn gg"),
+        "q qআ Q Z Zয়া গগ জ্ঞ জ্ঞ জ্ঞ"
     );
 }
 

@@ -48,3 +48,4 @@ This document is the source contract for runtime consonant rule keys. Consonant 
 - Regular `b` is the base consonant ব.
 - `y` / `Y` and `w` are phola markers only inside declared valid conjunct clusters.
 - Titlecase and all-caps aspirated aliases are not independent correction behavior; they canonicalize into the same consonant components before conjunct formation.
+- Missing one-letter alphabetic case variants are accepted as fallback to the exact opposite-case signal only when the typed case is unclaimed and not reserved. Today this admits `B`, `G`, `K`, `P`, `F`, `V`, `L`, and `H` as fallback to their lowercase rules for autocapitalized deliberate input such as `Biggan` → `বিজ্ঞান`; it does not override exact signals such as `T`, `D`, `N`, `S`, `I`, `U`, `O`, `Y`, `M`, or the narrow `Z` marker.
