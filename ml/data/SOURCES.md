@@ -61,3 +61,17 @@ Required before training:
 The audit is intentionally broad. It checks script, Unicode, punctuation, row
 shape, length ratio, duplicates, and obvious domain/markup/code leakage. It does
 not assume one specific contamination mode.
+
+## Corpus v0 Runner
+
+`ml/scripts/prepare_corpus.py` reads a manifest and writes:
+
+- per-source audit reports under `reports/`
+- admitted JSONL shards under `accepted/`
+- one corpus admission summary JSON
+
+Use `ml/data/corpus_v0_manifest.example.json` as the starting manifest. Dakshina
+`dev` and `test` are benchmark-only in the runner and cannot be admitted into a
+training corpus. Sentence-level sources such as BanglaTLit and SKNahin should
+initially use `admit: false`; they need a segmentation pass before they can feed
+the word-level BiGRU-CTC model.

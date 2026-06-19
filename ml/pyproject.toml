@@ -9,6 +9,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ingest = [
+    "pandas>=2.2",
+    "pyarrow>=16.0",
+]
 train = [
     "torch>=2.6",
 ]

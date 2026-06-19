@@ -98,6 +98,11 @@ python ml/scripts/audit_pairs.py \
   --source-id candidate_source \
   --mode word \
   --report ml/data/processed/candidate.audit.json
+
+# Run manifest-driven corpus admission.
+python ml/scripts/prepare_corpus.py \
+  --manifest ml/data/corpus_v0_manifest.example.json \
+  --output-dir ml/data/processed/corpus_v0
 ```
 
 Training should only begin after the feature vocabulary, target piece

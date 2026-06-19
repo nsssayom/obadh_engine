@@ -1,0 +1,67 @@
+{
+  "schema": "obadh.ml.corpus_manifest.v0",
+  "corpus_id": "corpus_v0",
+  "sources": [
+    {
+      "id": "dakshina_bn_train",
+      "kind": "dakshina_bn",
+      "path": "ml/data/raw/dakshina_dataset_v1.0",
+      "split": "train",
+      "mode": "word",
+      "admit": true
+    },
+    {
+      "id": "dakshina_bn_dev",
+      "kind": "dakshina_bn",
+      "path": "ml/data/raw/dakshina_dataset_v1.0",
+      "split": "dev",
+      "mode": "word",
+      "admit": false
+    },
+    {
+      "id": "dakshina_bn_test",
+      "kind": "dakshina_bn",
+      "path": "ml/data/raw/dakshina_dataset_v1.0",
+      "split": "test",
+      "mode": "word",
+      "admit": false
+    },
+    {
+      "id": "banglatlit_train",
+      "kind": "banglatlit",
+      "path": "ml/data/raw/banglatlit/train.csv",
+      "split": "train",
+      "mode": "sentence",
+      "admit": false,
+      "audit": {
+        "max_latin_chars": 1500,
+        "max_target_chars": 1500,
+        "allow_sentence_punctuation": true
+      }
+    },
+    {
+      "id": "sknahin_train",
+      "kind": "sknahin",
+      "path": "ml/data/raw/sknahin/train.csv",
+      "split": "train",
+      "mode": "sentence",
+      "admit": false,
+      "audit": {
+        "max_latin_chars": 300,
+        "max_target_chars": 300,
+        "allow_sentence_punctuation": true
+      }
+    },
+    {
+      "id": "kaggle_manual_candidate",
+      "kind": "kaggle_manual",
+      "path": "ml/data/raw/kaggle/bangla_transliteration.csv",
+      "format": "csv",
+      "latin_column": "roman",
+      "target_column": "bangla",
+      "split": "candidate",
+      "mode": "sentence",
+      "admit": false
+    }
+  ]
+}

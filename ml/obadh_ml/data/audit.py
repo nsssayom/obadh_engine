@@ -65,6 +65,8 @@ class PairAuditResult:
     accepted: bool
     latin: str
     target: str
+    split: str | None
+    metadata: Mapping[str, Any]
     normalized_latin: str
     normalized_target: str
     issues: list[AuditIssue]
@@ -94,6 +96,8 @@ class AuditSummary:
 def audit_records(
     records: Iterable[PairRecord],
     config: AuditConfig,
+    *,
+    source_id: str | None = None,
 ) -> tuple[list[PairAuditResult], AuditSummary]:
     results = [audit_pair(record, config) for record in records]
     issue_counts: Counter[str] = Counter()
@@ -120,7 +124,7 @@ def audit_records(
 
     summary = AuditSummary(
         schema=AUDIT_SCHEMA_VERSION,
-        source_id=results[0].source_id if results else "unknown",
+        source_id=source_id or (results[0].source_id if results else "unknown"),
         mode=config.mode,
         total_rows=len(results),
         accepted_rows=accepted_rows,
@@ -156,6 +160,8 @@ def audit_pair(record: PairRecord, config: AuditConfig) -> PairAuditResult:
         accepted=accepted,
         latin=record.latin,
         target=record.target,
+        split=record.split,
+        metadata=record.metadata,
         normalized_latin=normalized_latin,
         normalized_target=normalized_target,
         issues=issues,
