@@ -4,9 +4,10 @@ use wasm_bindgen::prelude::*;
 use web_sys::Performance;
 
 use crate::{
-    AutocorrectConfig, AutocorrectDecision, AutocorrectEngine, CandidateFeatures,
-    CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon, FstSuggestOptions, Lexicon,
-    LexiconEntry, LexiconStats, ObadhEngine,
+    roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
+    CandidateFeatures, CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon,
+    FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats, ObadhEngine,
+    RomanRepairOptions, RomanRepairedOutput, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 
 const AUTOCORRECT_RERANK_POOL_SIZE: usize = 512;
@@ -109,6 +110,12 @@ pub struct AutocorrectCandidateInfo {
     pub edit_cost: u16,
     pub frequency: u64,
     pub score: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roman_repair: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roman_repair_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roman_repair_cost: Option<u16>,
     pub features: [i16; crate::AUTOCORRECT_FEATURE_DIM],
 }
 
@@ -483,8 +490,22 @@ fn fst_autocorrect_result(
     elapsed_ms: f64,
 ) -> Result<AutocorrectLabResult, JsValue> {
     let obadh_output = obadh.transliterate(roman_input);
+    let repair_records = fst_roman_repairs(roman_input, obadh, &obadh_output);
+    let repaired_baselines = repair_records
+        .iter()
+        .map(|repair| FstRepairedBaseline {
+            roman_input: repair.roman_input.as_str(),
+            bangla_output: repair.bangla_output.as_str(),
+            repair_kind: repair.repair_kind,
+            repair_cost: repair.repair_cost,
+        })
+        .collect::<Vec<_>>();
     let decision = lexicon
-        .suggest(&obadh_output, fst_autocorrect_lab_options())
+        .suggest_with_repaired_baselines(
+            &obadh_output,
+            &repaired_baselines,
+            fst_autocorrect_lab_options(),
+        )
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     Ok(AutocorrectLabResult {
         roman_input: roman_input.to_string(),
@@ -519,6 +540,9 @@ fn autocorrect_candidate_info(candidate: &CorrectionCandidate) -> AutocorrectCan
         edit_cost: candidate.edit_cost.0,
         frequency: candidate.frequency as u64,
         score: candidate.score as i64,
+        roman_repair: None,
+        roman_repair_kind: None,
+        roman_repair_cost: None,
         features: candidate_features_array(candidate.features),
     }
 }
@@ -530,8 +554,26 @@ fn fst_autocorrect_candidate_info(candidate: FstCandidate) -> AutocorrectCandida
         edit_cost: candidate.edit_cost,
         frequency: candidate.frequency,
         score: candidate.score,
+        roman_repair: candidate.roman_repair,
+        roman_repair_kind: candidate.roman_repair_kind,
+        roman_repair_cost: candidate.roman_repair_cost,
         features: [0; crate::AUTOCORRECT_FEATURE_DIM],
     }
+}
+
+fn fst_roman_repairs(
+    input: &str,
+    obadh: &ObadhEngine,
+    obadh_output: &str,
+) -> Vec<RomanRepairedOutput> {
+    roman_repaired_outputs(
+        input,
+        obadh_output,
+        RomanRepairOptions {
+            max_repairs: DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
+        },
+        |repair| obadh.transliterate(repair),
+    )
 }
 
 fn correction_source_name(source: CorrectionSource) -> &'static str {

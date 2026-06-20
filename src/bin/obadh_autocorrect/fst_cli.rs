@@ -3,8 +3,9 @@ use std::io::BufWriter;
 use std::path::PathBuf;
 
 use obadh_engine::{
-    FstCandidate, FstLexicon, FstSuggestOptions, ObadhEngine, DEFAULT_FST_MAX_DISTANCE,
-    DEFAULT_FST_PREFIX_CANDIDATES,
+    roman_repaired_outputs, FstCandidate, FstLexicon, FstRepairedBaseline, FstSuggestOptions,
+    ObadhEngine, RomanRepairOptions, RomanRepairedOutput, DEFAULT_FST_MAX_DISTANCE,
+    DEFAULT_FST_PREFIX_CANDIDATES, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 use serde::Serialize;
 
@@ -39,6 +40,7 @@ pub struct FstInspectReport {
 pub struct FstSuggestReport {
     input: String,
     obadh_output: String,
+    roman_repairs: Vec<FstRomanRepairReport>,
     exact_frequency: Option<u64>,
     max_distance: u32,
     max_edit_cost: Option<u16>,
@@ -55,6 +57,20 @@ struct FstSuggestCandidate {
     edit_cost: u16,
     frequency: u64,
     score: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    roman_repair: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    roman_repair_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    roman_repair_cost: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+struct FstRomanRepairReport {
+    input: String,
+    output: String,
+    kind: &'static str,
+    cost: u16,
 }
 
 pub fn default_max_distance() -> u32 {
@@ -118,8 +134,19 @@ pub fn suggest_fst(
 ) -> Result<FstSuggestReport, Box<dyn std::error::Error>> {
     let obadh = ObadhEngine::new();
     let obadh_output = obadh.transliterate(input);
-    let result = lexicon_model.suggest(
+    let repair_records = fst_roman_repairs(input, &obadh, &obadh_output);
+    let repaired_baselines = repair_records
+        .iter()
+        .map(|repair| FstRepairedBaseline {
+            roman_input: repair.roman_input.as_str(),
+            bangla_output: repair.bangla_output.as_str(),
+            repair_kind: repair.repair_kind,
+            repair_cost: repair.repair_cost,
+        })
+        .collect::<Vec<_>>();
+    let result = lexicon_model.suggest_with_repaired_baselines(
         &obadh_output,
+        &repaired_baselines,
         FstSuggestOptions {
             max_distance,
             max_edit_cost,
@@ -137,6 +164,15 @@ pub fn suggest_fst(
     Ok(FstSuggestReport {
         input: input.to_string(),
         obadh_output,
+        roman_repairs: repair_records
+            .into_iter()
+            .map(|repair| FstRomanRepairReport {
+                input: repair.roman_input,
+                output: repair.bangla_output,
+                kind: repair.repair_kind,
+                cost: repair.repair_cost,
+            })
+            .collect(),
         exact_frequency: result.exact_frequency,
         max_distance: result.max_distance,
         max_edit_cost: result.max_edit_cost,
@@ -172,5 +208,23 @@ fn fst_suggest_candidate(candidate: FstCandidate) -> FstSuggestCandidate {
         edit_cost: candidate.edit_cost,
         frequency: candidate.frequency,
         score: candidate.score,
+        roman_repair: candidate.roman_repair,
+        roman_repair_kind: candidate.roman_repair_kind,
+        roman_repair_cost: candidate.roman_repair_cost,
     }
+}
+
+fn fst_roman_repairs(
+    input: &str,
+    obadh: &ObadhEngine,
+    obadh_output: &str,
+) -> Vec<RomanRepairedOutput> {
+    roman_repaired_outputs(
+        input,
+        obadh_output,
+        RomanRepairOptions {
+            max_repairs: DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
+        },
+        |repair| obadh.transliterate(repair),
+    )
 }

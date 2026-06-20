@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
 use std::error::Error;
 use std::fmt;
 
@@ -11,6 +11,12 @@ use super::edit::weighted_edit_distance;
 pub const DEFAULT_FST_MAX_DISTANCE: u32 = 1;
 pub const DEFAULT_FST_PREFIX_CANDIDATES: usize = 24;
 pub const FST_MAX_LEVENSHTEIN_DISTANCE: u32 = 2;
+const SCORE_FREQUENCY_SCALE: f64 = 1024.0;
+const SURFACE_EDIT_COST_SCALE: i64 = 1536;
+const PREFIX_COMPLETION_PENALTY: i64 = 192;
+const ROMAN_REPAIR_EXACT_BONUS: i64 = 768;
+const ROMAN_REPAIR_COST_SCALE: i64 = 1024;
+const ROMAN_REPAIR_SURFACE_COST_SCALE: i64 = 128;
 
 #[derive(Debug)]
 pub struct FstLexicon<D: AsRef<[u8]> = Vec<u8>> {
@@ -37,6 +43,15 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
     pub fn suggest(
         &self,
         baseline: &str,
+        options: FstSuggestOptions,
+    ) -> Result<FstSuggestResult, FstSuggestError> {
+        self.suggest_with_repaired_baselines(baseline, &[], options)
+    }
+
+    pub fn suggest_with_repaired_baselines(
+        &self,
+        baseline: &str,
+        repaired_baselines: &[FstRepairedBaseline<'_>],
         options: FstSuggestOptions,
     ) -> Result<FstSuggestResult, FstSuggestError> {
         if options.max_distance > FST_MAX_LEVENSHTEIN_DISTANCE {
@@ -105,6 +120,16 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
             }
         }
 
+        for repair in repaired_baselines {
+            if repair.repair_cost == 0 || repair.bangla_output == baseline {
+                continue;
+            }
+
+            if let Some(frequency) = self.exact_frequency(repair.bangla_output) {
+                insert_repaired_baseline_candidate(&mut seeds, repair, frequency, baseline);
+            }
+        }
+
         let mut ranked = seeds.into_values().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
             right
@@ -128,6 +153,14 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
             candidates: ranked,
         })
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FstRepairedBaseline<'a> {
+    pub roman_input: &'a str,
+    pub bangla_output: &'a str,
+    pub repair_kind: &'static str,
+    pub repair_cost: u16,
 }
 
 impl FstLexicon<Vec<u8>> {
@@ -176,6 +209,12 @@ pub struct FstCandidate {
     pub edit_cost: u16,
     pub frequency: u64,
     pub score: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roman_repair: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roman_repair_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roman_repair_cost: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -183,6 +222,7 @@ pub enum FstCandidateSource {
     Exact,
     EditDistance,
     PrefixCompletion,
+    RomanRepairExact,
 }
 
 impl FstCandidateSource {
@@ -191,6 +231,7 @@ impl FstCandidateSource {
             Self::Exact => "fst_exact",
             Self::EditDistance => "fst_edit_distance",
             Self::PrefixCompletion => "fst_prefix_completion",
+            Self::RomanRepairExact => "fst_roman_repair_exact",
         }
     }
 
@@ -198,7 +239,8 @@ impl FstCandidateSource {
         match self {
             Self::Exact => 0,
             Self::EditDistance => 0,
-            Self::PrefixCompletion => 192,
+            Self::PrefixCompletion => PREFIX_COMPLETION_PENALTY,
+            Self::RomanRepairExact => 0,
         }
     }
 }
@@ -242,21 +284,59 @@ fn insert_fst_candidate(
         edit_cost,
         frequency,
         score,
+        roman_repair: None,
+        roman_repair_kind: None,
+        roman_repair_cost: None,
     };
-    seeds
-        .entry(candidate.text.clone())
-        .and_modify(|existing| {
-            if candidate.score > existing.score {
-                *existing = candidate.clone();
+    insert_best_candidate(seeds, candidate);
+}
+
+fn insert_repaired_baseline_candidate(
+    seeds: &mut BTreeMap<String, FstCandidate>,
+    repair: &FstRepairedBaseline<'_>,
+    frequency: u64,
+    baseline: &str,
+) {
+    let edit_cost = weighted_edit_distance(baseline, repair.bangla_output).0;
+    let score = roman_repair_candidate_score(edit_cost, repair.repair_cost, frequency);
+    let candidate = FstCandidate {
+        text: repair.bangla_output.to_string(),
+        source: FstCandidateSource::RomanRepairExact,
+        edit_cost,
+        frequency,
+        score,
+        roman_repair: Some(repair.roman_input.to_string()),
+        roman_repair_kind: Some(repair.repair_kind),
+        roman_repair_cost: Some(repair.repair_cost),
+    };
+    insert_best_candidate(seeds, candidate);
+}
+
+fn insert_best_candidate(seeds: &mut BTreeMap<String, FstCandidate>, candidate: FstCandidate) {
+    match seeds.entry(candidate.text.clone()) {
+        Entry::Occupied(mut entry) => {
+            if candidate.score > entry.get().score {
+                entry.insert(candidate);
             }
-        })
-        .or_insert(candidate);
+        }
+        Entry::Vacant(entry) => {
+            entry.insert(candidate);
+        }
+    }
 }
 
 fn fst_candidate_score(source: FstCandidateSource, edit_cost: u16, frequency: u64) -> i64 {
-    ((frequency.saturating_add(1) as f64).ln() * 1024.0).round() as i64
-        - (edit_cost as i64 * 1536)
-        - source.penalty()
+    frequency_score(frequency) - (edit_cost as i64 * SURFACE_EDIT_COST_SCALE) - source.penalty()
+}
+
+fn roman_repair_candidate_score(edit_cost: u16, repair_cost: u16, frequency: u64) -> i64 {
+    frequency_score(frequency) + ROMAN_REPAIR_EXACT_BONUS
+        - (repair_cost as i64 * ROMAN_REPAIR_COST_SCALE)
+        - (edit_cost as i64 * ROMAN_REPAIR_SURFACE_COST_SCALE)
+}
+
+fn frequency_score(frequency: u64) -> i64 {
+    ((frequency.saturating_add(1) as f64).ln() * SCORE_FREQUENCY_SCALE).round() as i64
 }
 
 #[derive(Debug, Clone)]
@@ -431,7 +511,7 @@ fn is_utf8_continuation(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{FstLexicon, FstSuggestOptions};
+    use super::{FstCandidateSource, FstLexicon, FstRepairedBaseline, FstSuggestOptions};
 
     #[test]
     fn fst_suggest_handles_bangla_unicode_edit_distance() {
@@ -476,6 +556,40 @@ mod tests {
             .candidates
             .iter()
             .any(|candidate| candidate.text == "কেমন"));
+    }
+
+    #[test]
+    fn repaired_roman_baseline_can_beat_expensive_bangla_surface_edit() {
+        let lexicon = test_lexicon([("অকালপক্ক", 18), ("অকাল্পক্কো", 1)]);
+        let repairs = [FstRepairedBaseline {
+            roman_input: "okalopokk",
+            bangla_output: "অকালপক্ক",
+            repair_kind: "inserted_separator_o",
+            repair_cost: 1,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines(
+                "অকল্পক্ক",
+                &repairs,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("repair candidate should be returned");
+        assert_eq!(first.text, "অকালপক্ক");
+        assert_eq!(first.source, FstCandidateSource::RomanRepairExact);
+        assert_eq!(first.roman_repair.as_deref(), Some("okalopokk"));
+        assert_eq!(first.roman_repair_kind, Some("inserted_separator_o"));
+        assert_eq!(first.roman_repair_cost, Some(1));
     }
 
     fn test_lexicon<const N: usize>(entries: [(&str, u64); N]) -> FstLexicon<Vec<u8>> {

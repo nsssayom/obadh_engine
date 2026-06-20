@@ -202,6 +202,54 @@ fn autocorrect_cli_builds_and_queries_fst_lexicon() {
 }
 
 #[test]
+fn autocorrect_cli_prefers_one_step_roman_repair_over_expensive_surface_edit() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-roman-repair");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "অকালপক্ক\t18\nঅকাল্পক্কো\t1\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "okalpokk",
+        "--max-distance",
+        "2",
+        "--max-candidates",
+        "64",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "অকল্পক্ক");
+    assert!(json["roman_repairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|repair| repair["input"] == "okalopokk" && repair["output"] == "অকালপক্ক"));
+
+    let first = &json["candidates"].as_array().unwrap()[0];
+    assert_eq!(first["text"], "অকালপক্ক");
+    assert_eq!(first["source"], "fst_roman_repair_exact");
+    assert_eq!(first["roman_repair"], "okalopokk");
+    assert_eq!(first["roman_repair_kind"], "inserted_separator_o");
+    assert_eq!(first["roman_repair_cost"], 1);
+}
+
+#[test]
 fn autocorrect_cli_builds_lexicon_from_multiple_sources() {
     let workspace = TempWorkspace::new("obadh-autocorrect-cli-merge-lexicons");
     let primary = workspace.path("primary.tsv");

@@ -11,16 +11,21 @@ mod edit;
 mod fst_lexicon;
 mod lexicon;
 mod ranker;
+mod roman_repair;
 
 pub use artifact::LexiconArtifactError;
 pub use edit::{weighted_edit_distance, EditCost};
 pub use fst_lexicon::{
-    FstCandidate, FstCandidateSource, FstLexicon, FstSuggestError, FstSuggestOptions,
-    FstSuggestResult, DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES,
+    FstCandidate, FstCandidateSource, FstLexicon, FstRepairedBaseline, FstSuggestError,
+    FstSuggestOptions, FstSuggestResult, DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES,
     FST_MAX_LEVENSHTEIN_DISTANCE,
 };
 pub use lexicon::{Lexicon, LexiconEntry, LexiconStats};
 pub use ranker::{
     AutocorrectConfig, AutocorrectDecision, AutocorrectEngine, CandidateFeatures,
     CorrectionCandidate, CorrectionRequest, CorrectionSource, AUTOCORRECT_FEATURE_DIM,
+};
+pub use roman_repair::{
+    roman_repair_beam, roman_repaired_outputs, RomanRepair, RomanRepairKind, RomanRepairOptions,
+    RomanRepairedOutput, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };

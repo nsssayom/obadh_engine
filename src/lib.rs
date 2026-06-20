@@ -10,12 +10,13 @@ pub mod wasm;
 
 // Re-export commonly used types for convenience
 pub use autocorrect::{
-    weighted_edit_distance, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
-    CandidateFeatures, CorrectionCandidate, CorrectionRequest, CorrectionSource, EditCost,
-    FstCandidate, FstCandidateSource, FstLexicon, FstSuggestError, FstSuggestOptions,
-    FstSuggestResult, Lexicon, LexiconArtifactError, LexiconEntry, LexiconStats,
-    AUTOCORRECT_FEATURE_DIM, DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES,
-    FST_MAX_LEVENSHTEIN_DISTANCE,
+    roman_repair_beam, roman_repaired_outputs, weighted_edit_distance, AutocorrectConfig,
+    AutocorrectDecision, AutocorrectEngine, CandidateFeatures, CorrectionCandidate,
+    CorrectionRequest, CorrectionSource, EditCost, FstCandidate, FstCandidateSource, FstLexicon,
+    FstRepairedBaseline, FstSuggestError, FstSuggestOptions, FstSuggestResult, Lexicon,
+    LexiconArtifactError, LexiconEntry, LexiconStats, RomanRepair, RomanRepairKind,
+    RomanRepairOptions, RomanRepairedOutput, AUTOCORRECT_FEATURE_DIM, DEFAULT_FST_MAX_DISTANCE,
+    DEFAULT_FST_PREFIX_CANDIDATES, DEFAULT_ROMAN_REPAIR_BEAM_SIZE, FST_MAX_LEVENSHTEIN_DISTANCE,
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};
