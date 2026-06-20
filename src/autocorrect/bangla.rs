@@ -8,6 +8,11 @@ pub(crate) enum UnitClass {
 
 pub(crate) fn bangla_units(text: &str) -> Vec<&str> {
     let mut units = Vec::new();
+    for_each_bangla_unit_range(text, |start, end, _| units.push(&text[start..end]));
+    units
+}
+
+fn for_each_bangla_unit_range(text: &str, mut visit: impl FnMut(usize, usize, bool)) {
     let mut start: Option<usize> = None;
     let mut end = 0;
     let mut join_next = false;
@@ -28,17 +33,15 @@ pub(crate) fn bangla_units(text: &str) -> Vec<&str> {
         }
 
         let unit_start = start.expect("unit start should be set");
-        units.push(&text[unit_start..end]);
+        visit(unit_start, end, false);
         start = Some(index);
         end = index + ch.len_utf8();
         join_next = false;
     }
 
     if let Some(unit_start) = start {
-        units.push(&text[unit_start..end]);
+        visit(unit_start, end, true);
     }
-
-    units
 }
 
 pub(crate) fn unit_class(ch: char) -> UnitClass {
@@ -93,6 +96,69 @@ pub(crate) fn phonetic_skeleton(text: &str) -> String {
     }
 
     skeleton
+}
+
+pub(crate) fn differs_only_by_nasal_or_breath_mark(left: &str, right: &str) -> bool {
+    if left == right {
+        return false;
+    }
+
+    strip_nasal_and_breath_marks(left).eq(strip_nasal_and_breath_marks(right))
+        && (has_nasal_or_breath_mark(left) || has_nasal_or_breath_mark(right))
+}
+
+pub(crate) fn for_each_chandrabindu_variant(text: &str, mut visit: impl FnMut(&str)) {
+    if text.is_empty() || text.chars().any(is_nasal_or_breath_mark) {
+        return;
+    }
+
+    let mut variant = String::with_capacity(text.len() + CHANDRABINDU.len_utf8());
+
+    for_each_bangla_unit_range(text, |start, end, is_final| {
+        if !can_take_autocorrect_chandrabindu(&text[start..end], is_final) {
+            return;
+        }
+
+        variant.clear();
+        variant.push_str(&text[..end]);
+        variant.push(CHANDRABINDU);
+        variant.push_str(&text[end..]);
+        visit(&variant);
+    });
+}
+
+const CHANDRABINDU: char = '\u{0981}';
+
+fn can_take_autocorrect_chandrabindu(unit: &str, is_final: bool) -> bool {
+    if unit.chars().any(is_explicit_vowel_carrier) {
+        return true;
+    }
+
+    !is_final && unit.chars().all(|ch| unit_class(ch) == UnitClass::Other)
+}
+
+fn is_explicit_vowel_carrier(ch: char) -> bool {
+    is_independent_vowel(ch)
+        || matches!(
+            ch,
+            '\u{09BE}'..='\u{09C4}'
+                | '\u{09C7}'..='\u{09C8}'
+                | '\u{09CB}'..='\u{09CC}'
+                | '\u{09D7}'
+                | '\u{09E2}'..='\u{09E3}'
+        )
+}
+
+fn strip_nasal_and_breath_marks(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars().filter(|ch| !is_nasal_or_breath_mark(*ch))
+}
+
+fn has_nasal_or_breath_mark(text: &str) -> bool {
+    text.chars().any(is_nasal_or_breath_mark)
+}
+
+fn is_nasal_or_breath_mark(ch: char) -> bool {
+    matches!(ch, '\u{0981}'..='\u{0983}')
 }
 
 fn skeleton_char(ch: char) -> Option<char> {
@@ -152,7 +218,10 @@ fn fold_aspiration(ch: char) -> Option<char> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bangla_units, phonetic_skeleton};
+    use super::{
+        bangla_units, differs_only_by_nasal_or_breath_mark, for_each_chandrabindu_variant,
+        phonetic_skeleton,
+    };
 
     #[test]
     fn bangla_units_group_vowel_signs_and_conjuncts() {
@@ -168,5 +237,33 @@ mod tests {
         assert_eq!(phonetic_skeleton("বিজ্ঞান"), "বজন");
         assert_eq!(phonetic_skeleton("অঞ্চল"), phonetic_skeleton("আনছল"));
         assert_eq!(phonetic_skeleton("অক্ষর"), phonetic_skeleton("আক্ষার"));
+    }
+
+    #[test]
+    fn nasal_or_breath_mark_variants_require_same_base_surface() {
+        assert!(differs_only_by_nasal_or_breath_mark("চাদ", "চাঁদ"));
+        assert!(differs_only_by_nasal_or_breath_mark("সংগ", "সগ"));
+        assert!(!differs_only_by_nasal_or_breath_mark("চাদ", "চাদ"));
+        assert!(!differs_only_by_nasal_or_breath_mark("চাদ", "চাদর"));
+        assert!(!differs_only_by_nasal_or_breath_mark("চাল", "চাঁদ"));
+    }
+
+    #[test]
+    fn chandrabindu_variants_insert_at_bangla_unit_boundaries() {
+        let mut variants = Vec::new();
+        for_each_chandrabindu_variant("চাদ", |variant| variants.push(variant.to_string()));
+
+        assert!(variants.iter().any(|variant| variant == "চাঁদ"));
+        assert!(!variants.iter().any(|variant| variant == "চঁাদ"));
+        assert!(!variants.iter().any(|variant| variant == "চাদঁ"));
+        assert!(!variants.iter().any(|variant| variant == "চাংদ"));
+        assert!(!variants.iter().any(|variant| variant == "চাঃদ"));
+    }
+
+    #[test]
+    fn chandrabindu_variants_skip_already_marked_words() {
+        let mut variants = Vec::new();
+        for_each_chandrabindu_variant("চাঁদ", |variant| variants.push(variant.to_string()));
+        assert!(variants.is_empty());
     }
 }

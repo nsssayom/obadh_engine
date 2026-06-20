@@ -1,6 +1,4 @@
-use crate::definitions::conjuncts::conjuncts;
-
-use super::super::tokenizer::{PhoneticUnit, PhoneticUnitType, Token, TokenType};
+use super::super::tokenizer::{Token, TokenType};
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct TokenNumberBoundary {
@@ -42,42 +40,6 @@ fn next_token_starts_with_number(text: &str, byte_index: usize) -> bool {
     text.get(byte_index..)
         .and_then(|suffix| suffix.chars().next())
         .is_some_and(|character| character.is_numeric())
-}
-
-#[inline]
-fn is_cluster_unit(unit: &PhoneticUnit) -> bool {
-    matches!(
-        unit.unit_type,
-        PhoneticUnitType::Conjunct
-            | PhoneticUnitType::ConjunctWithVowel
-            | PhoneticUnitType::ConjunctWithTerminator
-            | PhoneticUnitType::RephOverConsonant
-            | PhoneticUnitType::RephOverConsonantWithVowel
-            | PhoneticUnitType::RephOverConsonantWithTerminator
-    )
-}
-
-#[inline]
-pub(super) fn starts_with_cluster(units: &[PhoneticUnit]) -> bool {
-    if units.first().is_some_and(is_cluster_unit) {
-        return true;
-    }
-
-    let [first, second, ..] = units else {
-        return false;
-    };
-
-    if first.unit_type != PhoneticUnitType::Consonant
-        || !matches!(
-            second.unit_type,
-            PhoneticUnitType::Consonant | PhoneticUnitType::Unknown
-        )
-        || !matches!(second.text.as_str(), "y" | "Y" | "w")
-    {
-        return false;
-    }
-
-    conjuncts().can_form_conjunct_from_parts(&[first.text.as_str(), second.text.as_str()])
 }
 
 #[inline]

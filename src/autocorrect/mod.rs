@@ -10,6 +10,7 @@ mod bangla;
 mod edit;
 mod fst_lexicon;
 mod lexicon;
+mod morphology;
 mod ranker;
 mod roman_repair;
 

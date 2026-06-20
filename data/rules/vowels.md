@@ -52,6 +52,7 @@ One of the most important special rules is using the vowel `o` to prevent conjun
 | `kk` | ক্ক | Forms conjunct: ক + ্ + ক |
 | `kok` | কক | Prevents conjunct by inserting inherent অ between consonants |
 | `kOk` | কোক | Inserts the visible ও / ো vowel |
+| `bhokt` | ভক্ত | Uses lowercase `o` as the deliberate inherent-vowel signal before `kt` |
 
 This is crucial when you need to represent two consecutive same letters without forming a conjunct. The vowel 'o' acts as a separator while being minimally pronounced in natural speech.
 
@@ -70,6 +71,7 @@ This is crucial when you need to represent two consecutive same letters without 
 | e + o | eo | এও |
 
 > Doubled lowercase vowels are not long-vowel aliases. They compose as typed: `aa` → `আআ`, `ee` → `এএ`, `ii` → `ইই`, `oo` → `অঅ`, and `uu` → `উউ`. After consonants they still compose from individual signals, e.g. `kaa` → `কাআ`, `kee` → `কেএ`, `kii` → `কিই`, `koo` → `কঅ`, and `kuu` → `কুউ`.
+> Lowercase `a` and uppercase `A` are both visible আ/া signals. They are not suppressed before a following conjunct cluster: `kaby` and `kAby` both render `কাব্য`. Use lowercase `o` when the intended sound is the inherent vowel before a cluster, e.g. `bhokt` → `ভক্ত`.
 > `aY`/`AY` are atomic অ্যা vowel signals. They let deliberate forms such as `aYp`/`AYp` → `অ্যাপ` and `kaY` → `ক্যা` compose without a word rule. Lowercase `ay` remains আ + য় (`ayp` → `আয়প`).
 > Lowercase `oi`/`ou` remain vowel sequences such as `boi` → `বই`; use uppercase `OI`/`OU` for ঐ/ঔ.
 

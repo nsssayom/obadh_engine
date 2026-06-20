@@ -631,13 +631,22 @@ fn test_special_sequences_after_bengali_text_are_byte_safe() {
 }
 
 #[test]
-fn test_visible_a_suppressed_before_conjunct_cluster() {
+fn test_lowercase_a_stays_visible_before_conjunct_cluster() {
     let engine = ObadhEngine::new();
 
-    assert_eq!(engine.transliterate("bhakt"), "ভক্ত");
-    assert_eq!(engine.transliterate("shakti"), "শক্তি");
+    assert_eq!(engine.transliterate("kaby kAby"), "কাব্য কাব্য");
+    assert_eq!(engine.transliterate("bhakt"), "ভাক্ত");
+    assert_eq!(engine.transliterate("shakti"), "শাক্তি");
+}
+
+#[test]
+fn test_lowercase_o_keeps_inherent_vowel_before_conjunct_cluster() {
+    let engine = ObadhEngine::new();
+
+    assert_eq!(engine.transliterate("bhokt"), "ভক্ত");
+    assert_eq!(engine.transliterate("shokti"), "শক্তি");
     assert_eq!(
-        engine.transliterate("strI bhakt prokash korchhi"),
+        engine.transliterate("strI bhokt prokash korchhi"),
         "স্ত্রী ভক্ত প্রকাশ করছি"
     );
 }

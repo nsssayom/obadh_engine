@@ -43,7 +43,9 @@ As an Avro successor, Obadh keeps the familiar Roman-to-Bangla typing lineage wh
 
 ## Development Status
 
-The repository is under active redevelopment. The current baseline has a green Rust test suite for sanitization, tokenization, valid conjunct filtering, explicit hasant notation, reph, phola forms, local orthographic rules, and the CLI/library path. Known gaps are tracked in `KNOWN_ISSUES.md`; the biggest remaining area is broader corpus validation of rule behavior against intentional Roman input patterns.
+The deterministic core is active and covered by the Rust test suite for sanitization, tokenization, valid conjunct filtering, explicit hasant notation, reph, phola forms, local orthographic rules, CLI/library output, and WASM integration. The runtime autocorrect workbench is separate from the core and now uses a compact FST lexicon artifact for candidate lookup in the CLI and playground.
+
+Known gaps are tracked in `KNOWN_ISSUES.md`. The main core-engine gap is broader corpus validation of deliberate Roman input patterns; the main product-layer gap is ranking calibration on top of the FST candidate generator.
 
 ## Philosophy
 
@@ -79,8 +81,8 @@ The full consonant signal table is maintained in `data/rules/consonants.md` and 
 
 | Roman Signal | Bengali Rule Intent |
 |--------------|---------------------|
-| `o` | inherent অ as an initial vowel or lowercase terminator; separates consonants without visible ও (`kok` → `কক`) and leaves terminated clusters unmarked (`kko` → `ক্ক`) |
-| `a` / `A` | আ / া |
+| `o` | inherent অ as an initial vowel or lowercase terminator; separates consonants without visible ও (`kok` → `কক`) and leaves terminated clusters unmarked (`kko` → `ক্ক`, `bhokt` → `ভক্ত`) |
+| `a` / `A` | visible আ / া; both stay visible before clusters (`kaby` / `kAby` → `কাব্য`) |
 | `aY` / `AY` | অ্যা / ্যা, e.g. `aYp` / `AYp` → `অ্যাপ`; lowercase `ayp` remains `আয়প` |
 | `I` | long ঈ / ী |
 | `iyw` after a consonant/conjunct | composable ঈয় signal, e.g. `jatiywta` → `জাতীয়তা` |
@@ -126,6 +128,7 @@ The engine implements several key capabilities:
 - Library and command-line interfaces
 - WebAssembly (WASM) support for web applications
 - Modern web interface with real-time transliteration
+- FST-backed autocorrect lab for corpus-backed candidate lookup above the deterministic core
 - Memory-efficient data structures and algorithm implementations
 - Dark mode support with system preference detection
 - Real-time performance metrics in WebAssembly
@@ -192,8 +195,20 @@ cargo bench --bench hot_path
 
 ### Autocorrect Workbench
 
-The deterministic transliterator remains dictionary-free. Autocorrect data is
-prepared separately and shipped as an FST lexicon artifact:
+The deterministic transliterator remains dictionary-free. Autocorrect lives
+above it as a runtime candidate generator and ranker. The production lookup
+artifact is a compact FST built from an auditable Bangla word-frequency TSV; raw
+corpora, CSV inputs, and TSV source files are not parsed on the keyboard hot
+path.
+
+Current checked-in artifacts:
+
+```text
+data/autocorrect/lexicons/bn.tsv
+data/autocorrect/models/bn.fst
+```
+
+Typical corpus-to-runtime flow:
 
 ```bash
 # Extract a Bangla word-frequency TSV from clean corpus text, HTML, or EPUB books
@@ -211,7 +226,7 @@ cargo run --bin obadh-autocorrect -- audit-lexicon \
 
 # Merge curated word-frequency TSVs into one clean source
 cargo run --bin obadh-autocorrect -- merge-lexicon \
-  --input path/to/dakshina_words.tsv \
+  --input path/to/epub_words.tsv \
   --input path/to/wiki_words.tsv \
   --output path/to/merged_bn_words.tsv \
   --drop-invalid
@@ -231,37 +246,60 @@ cargo run --bin obadh-autocorrect -- build-fst-lexicon \
   --input path/to/merged_bn_words.tsv \
   --output path/to/obadh.bn.fst
 
-# Inspect an artifact
+# Inspect the shipped runtime artifact
 cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
   --input path/to/obadh.bn.fst --pretty
 
 # Inspect live Roman-input suggestions through the runtime path
 cargo run --bin obadh-autocorrect -- suggest-fst \
   --lexicon path/to/obadh.bn.fst \
-  --input kmn --pretty
+  --input cad \
+  --max-distance 2 \
+  --max-candidates 512 \
+  --max-prefix-candidates 24 \
+  --response-candidates 12 \
+  --pretty
+```
 
+Dataset admission notes live in `data/autocorrect/README.md`. Corpus extraction
+and lexicon TSV ingestion normalize Bangla text to NFC before counting or
+building artifacts.
+
+The runtime FST path combines several bounded candidate channels:
+
+- **Exact baseline**: if Obadh's deterministic output is in the FST, it receives
+  a strong channel prior. This is evidence, not a claim that the baseline is
+  always the intended word.
+- **Obadh-aware Roman repair**: a tiny beam inserts missing lowercase `o`
+  separators only at tokenizer-detected conjunct boundaries, then runs those
+  repaired strings through Obadh and exact FST lookup.
+- **Bangla edit search**: bounded Unicode Levenshtein search is intersected with
+  the FST; candidates are then scored with Bangla-unit-aware weighted edit cost.
+- **Stem suffix completion**: exact stems can surface common Bengali determiner,
+  case/focus, and plural suffix forms if those full forms exist in the FST.
+- **Chandrabindu rescue**: if the exact baseline is a lexicon word, Obadh probes
+  only plausible vowel-bearing chandrabindu positions on that word with direct
+  exact FST lookups. This is not a corpus scan and not a global spelling
+  mutation pass.
+- **Prefix completion**: bounded FST prefix lookup supports autocomplete-style
+  suggestions.
+
+Native tools mmap the FST so the full lexicon is not expanded into
+heap-resident trie nodes. Browser/WASM loads the same compact FST bytes and uses
+cache-busted asset URLs in the playground.
+
+The older compact `.lex` commands remain for compatibility and offline candidate
+export. `eval` and `export-candidates` still operate on `.lex` artifacts until
+their evaluation flow is migrated to the FST runtime path:
+
+```bash
 # Evaluate Bangla typo pairs: observed<TAB>expected
 cargo run --bin obadh-autocorrect -- eval \
   --lexicon path/to/obadh.bn.lex \
   --input path/to/eval_pairs.tsv \
   --input-kind bangla --pretty
 
-# Evaluate Roman input through Obadh first: roman<TAB>expected_bangla
-cargo run --bin obadh-autocorrect -- eval \
-  --lexicon path/to/obadh.bn.lex \
-  --input path/to/roman_eval_pairs.tsv \
-  --input-kind roman --pretty
-
-# Evaluate a wider offline pool for reranker training/retrieval analysis
-cargo run --bin obadh-autocorrect -- eval \
-  --lexicon path/to/obadh.bn.lex \
-  --input path/to/roman_eval_pairs.tsv \
-  --input-kind roman \
-  --max-candidates 64 \
-  --max-skeleton-candidates 128 \
-  --pretty
-
-# Export labeled candidate rows for reranker training or calibration
+# Export labeled candidate rows for retrieval analysis or future reranker work
 cargo run --bin obadh-autocorrect -- export-candidates \
   --lexicon path/to/obadh.bn.lex \
   --input path/to/eval_pairs.tsv \
@@ -270,26 +308,6 @@ cargo run --bin obadh-autocorrect -- export-candidates \
   --max-candidates 64 \
   --max-skeleton-candidates 128
 ```
-
-Dataset admission notes live in `data/autocorrect/README.md`. Corpus extraction
-and lexicon TSV ingestion normalize Bangla text to NFC before counting or
-building artifacts.
-
-The lexicon-only runtime ranker does not auto-replace Roman-origin requests by
-default. It still emits candidates and training features; automatic replacement
-for Roman-origin text is reserved for a calibrated reranker that proves it can
-improve accuracy without damaging keyboard trust.
-
-Runtime candidate generation uses a corpus-backed finite state transducer:
-exact lookup, prefix completion, and bounded Unicode edit search intersected
-directly with the lexicon. Native tools mmap the FST so the full lexicon is not
-expanded into heap-resident trie nodes. Browser/WASM loads the same compact FST
-bytes without building the old skeleton indexes.
-
-The older compact `.lex` commands remain for compatibility and offline candidate
-export while the FST path takes over production lookup. `eval` and
-`export-candidates` still operate on `.lex` artifacts until their evaluation
-flow is migrated.
 
 `eval` and `export-candidates` accept `--max-candidates`, `--max-edit-cost`,
 `--max-skeleton-candidates`, `--max-skeleton-edit-cost`, and
@@ -324,12 +342,14 @@ The engine comes with a powerful web interface called "অবাধ খেলা
 The web interface features:
 
 - Real-time transliteration as you type
+- Mobile-friendly unified composer where the Bangla output and suggestions stay close to the active Roman buffer
+- Keyboard-style suggestion feed backed by the same FST autocorrect path used by the CLI
 - Multiple display modes (Simple, Debug, Verbose)
-- Real-time performance metrics and detailed token analysis
+- Organized inspector panel with engine status, FST stats, candidate ranking, and timing data
 - Responsive design that works across devices
 - Support for Bengali fonts through Google Fonts
 - Dark mode with system preference detection and toggle
-- Raw JSON output display toggle with syntax highlighting
+- Debug/verbose token analysis and raw JSON inspection
 - Tailwind CSS for modern styling and responsive design
 
 ### Web Integration
@@ -392,6 +412,9 @@ The Playground (`অবাধ খেলাঘর`) is a web application for test
   - Debug: Displays performance metrics and basic token information
   - Verbose: Provides complete token analysis
 - JSON output view for examining the engine's response structure
+- FST autocorrect lab loaded from `www/assets/autocorrect/bn.fst`
+- Clickable suggestion feed that can replace the current word in the playground
+- Cache-busted WASM and FST asset loading to avoid stale local or GitHub Pages builds
 - Light/dark theme based on system preference with manual override
 - Responsive layout adapting to different screen sizes
 
@@ -597,15 +620,19 @@ Alternatively, you can build everything at once including the CLI binary:
 - `src/definitions/`: Bengali character and rule definitions
   - Conjunct rules are compiled into static Rust tables; no CSV is parsed by the library, CLI, or WASM runtime
 - `src/wasm/`: WebAssembly bindings and web-specific functionality
+- `src/autocorrect/`: FST-backed candidate generation, Bangla weighted edit cost, Roman repair beam, bounded morphology completions, and conservative runtime ranking
 - `src/bin/`: Binary executables
   - `obadh.rs`: Main CLI application
+  - `obadh-autocorrect.rs`: Corpus extraction, lexicon auditing/merging, FST artifact build/inspection, and autocorrect probes
 - `benches/`: Criterion benchmarks for tokenizer/transliterator hot paths
-- `data/`: Non-shipped source/audit material excluded from Cargo packages, including documented rule tables and the deliberate input rule-probe corpus
+- `data/`: Non-shipped source/audit material excluded from Cargo packages, including documented rule tables, the deliberate input rule-probe corpus, and checked-in autocorrect TSV/FST artifacts
 - `www/`: Web interface files
   - `index.html`: Main web application
   - `css/`: Stylesheets
   - `js/`: JavaScript files and WASM
+  - `assets/autocorrect/`: FST artifact used by the local playground
   - `package.json` - npm configuration
+- `docs/`: GitHub Pages distribution output generated by `./build.sh dist`
 - `tests/`: Test cases for the engine
 
 The Cargo package intentionally excludes source/audit data, tests, benchmarks, build scripts, and playground/GitHub Pages assets. The published crate ships the Rust library and binaries; `data/`, `www/`, and `docs/` remain repository material for development, verification, and deployment.

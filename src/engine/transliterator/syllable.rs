@@ -1,7 +1,5 @@
+use super::Transliterator;
 use crate::definitions::{consonant_value, vowel_value};
-use crate::engine::tokenizer::PhoneticUnit;
-
-use super::{boundary::starts_with_cluster, Transliterator};
 
 impl Transliterator {
     pub(super) fn append_dependent_vowel(&self, output: &mut String, vowel_key: &str) -> bool {
@@ -70,13 +68,5 @@ impl Transliterator {
             output.push_str(terminator_key);
         }
         true
-    }
-
-    pub(super) fn should_suppress_visible_a(
-        &self,
-        vowel_key: &str,
-        following_units: &[PhoneticUnit],
-    ) -> bool {
-        vowel_key == "a" && starts_with_cluster(following_units)
     }
 }

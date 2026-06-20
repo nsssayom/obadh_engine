@@ -26,9 +26,11 @@ This document tracks current limitations and planned future work for the determi
 
 1. **Lexicon Coverage Ceiling**: The current runtime candidate generator is lexicon-backed. If the expected target is absent from the compact lexicon artifact, the candidate generator cannot surface it. Curated high-coverage Bangla word-frequency sources are still required before production accuracy can be judged fairly.
 
-2. **Ranker Calibration**: The lexicon-only ranker is conservative and does not auto-replace Roman-origin requests by default. Roman-origin retrieval skips Bangla-unit edit search by default and uses phonetic-skeleton candidates as low-trust recall candidates for suggestions and reranker training, not automatic replacements.
+2. **Ranker Calibration**: The FST runtime ranker is conservative and currently relies on deterministic channel priors, Bangla-unit edit cost, and unigram frequency. It can surface exact baselines, bounded Roman separator repairs, edit candidates, suffix completions, prefix completions, and low-cost nasal-mark candidates, but contextual ranking is still future work.
 
-3. **Training Candidate Depth**: Production defaults keep candidate lists tight. Offline reranker export should use wider `--max-candidates` and `--max-skeleton-candidates` settings so the trained model sees the correct target whenever retrieval can reasonably produce it.
+3. **Evaluation Migration**: `suggest-fst` is the production runtime path, but `eval` and `export-candidates` still use the older compact `.lex` artifact. Those flows should move onto the FST candidate generator before any serious reranker training depends on exported candidates.
+
+4. **Corpus Quality And Weighting**: The current unified lexicon is useful for local product work but not final. More curated Bangla book, corpus, and formal vocabulary sources are needed, along with source weighting so noisy or register-specific terms do not dominate keyboard suggestions.
 
 ## Future Work
 
@@ -45,6 +47,8 @@ This document tracks current limitations and planned future work for the determi
 6. Add a phonetic rule system that better matches Bengali orthography's special cases while preserving one canonical deliberate signal wherever possible.
 
 7. Consider implementing explicit normalization passes for documented Roman rule patterns before tokenization.
+
+8. Consider a custom weighted FST traversal or weighted automaton if the bounded post-retrieval channels are no longer enough for keyboard-time autocorrect. The current design intentionally avoids expanding the FST into heap-heavy data structures.
 
 ## Notes
 

@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn profiled_output_matches_normal_transliteration() {
         let transliterator = Transliterator::new();
-        let input = "strI bhakt prokash korchhi 12.34";
+        let input = "strI bhokt prokash korchhi 12.34";
         let profile = profile_transliteration(&transliterator, input);
 
         assert_eq!(profile.output, transliterator.transliterate(input));

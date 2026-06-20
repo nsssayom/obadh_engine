@@ -83,7 +83,7 @@ fn test_both_phola_in_one_word() {
 fn test_composable_phola_orthography() {
     let engine = ObadhEngine::new();
 
-    let examples = [("SwayattaSw", "শ্বায়ত্তশ্ব"), ("dwitiyw", "দ্বিতীয়")];
+    let examples = [("SwayottoSw", "শ্বায়ত্তশ্ব"), ("dwitiyw", "দ্বিতীয়")];
 
     for (input, expected) in examples {
         let result = engine.transliterate(input);

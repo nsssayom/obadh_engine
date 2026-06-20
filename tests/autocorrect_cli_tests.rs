@@ -234,7 +234,7 @@ fn autocorrect_cli_prefers_one_step_roman_repair_over_expensive_surface_edit() {
     assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
 
     let json = json_stdout(&suggest);
-    assert_eq!(json["obadh_output"], "অকল্পক্ক");
+    assert_eq!(json["obadh_output"], "অকাল্পক্ক");
     assert!(json["roman_repairs"]
         .as_array()
         .unwrap()
@@ -247,6 +247,114 @@ fn autocorrect_cli_prefers_one_step_roman_repair_over_expensive_surface_edit() {
     assert_eq!(first["roman_repair"], "okalopokk");
     assert_eq!(first["roman_repair_kind"], "inserted_separator_o");
     assert_eq!(first["roman_repair_cost"], 1);
+}
+
+#[test]
+fn autocorrect_cli_surfaces_stem_suffix_completions() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-suffix");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "নদী\t100\nনদীটি\t30\nনদীকথা\t200\n")
+        .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "nodI",
+        "--max-distance",
+        "0",
+        "--max-prefix-candidates",
+        "8",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "নদী");
+    let suffix = json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "নদীটি")
+        .expect("নদীটি should be present through stem suffix completion");
+    assert_eq!(suffix["source"], "fst_stem_suffix_completion");
+
+    let compound = json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "নদীকথা")
+        .expect("ordinary lexical prefix completion should remain present");
+    assert_eq!(compound["source"], "fst_prefix_completion");
+}
+
+#[test]
+fn autocorrect_cli_surfaces_missing_chandrabindu_as_diacritic_edit() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-diacritic");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "চাদ\t301\nচাদর\t443\nচাদের\t136\nচাঁদ\t2294\n")
+        .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "cad",
+        "--max-distance",
+        "2",
+        "--max-prefix-candidates",
+        "8",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "চাদ");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "চাদ");
+    assert_eq!(candidates[0]["source"], "fst_exact");
+
+    let chandrabindu = candidates
+        .iter()
+        .find(|candidate| candidate["text"] == "চাঁদ")
+        .expect("চাঁদ should be present through diacritic edit");
+    assert_eq!(chandrabindu["source"], "fst_diacritic_edit");
+
+    let suffix = candidates
+        .iter()
+        .find(|candidate| candidate["text"] == "চাদর")
+        .expect("suffix candidate should remain visible");
+    assert!(
+        chandrabindu["score"].as_i64().unwrap() > suffix["score"].as_i64().unwrap(),
+        "missing-mark candidate should beat suffix completion noise"
+    );
 }
 
 #[test]

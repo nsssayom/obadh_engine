@@ -16,6 +16,7 @@ Vowels are handled in different modes based on their position and context:
 
 - **Vowel Modifiers**: When vowels follow consonants
   - Signal: `ka` → `কা`, `kaY` → `ক্যা`, `ki` → `কি`, `kI` → `কী`, `ku` → `কু`, `kU` → `কূ`, `ke` → `কে`
+  - Signal: `kaby` → `কাব্য`, `kAby` → `কাব্য`
   - Repeated lowercase signal after consonants: `kaa` → `কাআ`, `kee` → `কেএ`, `kii` → `কিই`, `koo` → `কঅ`, `kuu` → `কুউ`
   - Signal: `tiyw` → `তীয়`, `jatiywta` → `জাতীয়তা`
 
@@ -131,6 +132,8 @@ Nasal input is deterministic and must preserve the user's intended spelling:
 The 'o' character serves special functions:
 - Acts as conjunct blocker
   - Signal: `kok` → `কক` (prevents 'k' from forming a conjunct with the following 'k')
+- Acts as the deliberate inherent-vowel signal before a following cluster
+  - Signal: `bhokt` → `ভক্ত`, `shokti` → `শক্তি`
 - Acts as vowel-modifier blocker
 
 ### য-ফলা and ব-ফলা Handling

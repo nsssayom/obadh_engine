@@ -1,73 +1,52 @@
 # Obadh Autocorrect Data Policy
 
-This directory stores the checked-in autocorrect lexicon artifacts plus the
-repeatable build notes for producing them.
+This directory stores auditable autocorrect lexicon sources and the compact
+runtime FST artifact. It does not store raw corpora or ML training scratch data.
 
-The intended structure is:
+The deterministic Obadh transliterator is still dictionary-free. Autocorrect is
+a product layer above it: Obadh produces a Bengali baseline, then the
+autocorrect layer retrieves valid lexicon candidates and ranks them without
+changing the core transliteration contract.
+
+## Directory Contract
 
 ```text
 data/autocorrect/
   README.md
-  lexicons/epub_bn.tsv
-  lexicons/wiki_bn.tsv
-  lexicons/bn.tsv
-  models/bn.fst
+  lexicons/
+    epub_bn.tsv
+    wiki_bn.tsv
+    bn.tsv
+  models/
+    bn.fst
 ```
 
-`lexicons/epub_bn.tsv` and `lexicons/wiki_bn.tsv` are source-specific
-word-frequency TSVs. `lexicons/bn.tsv` is the unified auditable Bangla
-word-frequency TSV. `models/bn.fst` is the production finite-state lexicon
-artifact built from the unified TSV. Raw EPUB/text/JSON corpora stay outside this directory; the local
-`epubs/` directory and Kaggle cache are corpus inputs, not repo artifacts.
-Temporary candidate exports or training scratch files should go under ignored
-scratch directories such as
-`data/autocorrect/tmp/`, `data/autocorrect/candidates/`, or
-`data/autocorrect/training/`.
+- `lexicons/epub_bn.tsv`: word-frequency TSV extracted from locally curated
+  EPUB books.
+- `lexicons/wiki_bn.tsv`: word-frequency TSV extracted from the accepted Bangla
+  Wikipedia source.
+- `lexicons/bn.tsv`: unified, auditable Bangla word-frequency TSV.
+- `models/bn.fst`: production finite-state lexicon built from `bn.tsv`.
+
+Raw corpus inputs stay outside this directory. The local `epubs/` directory,
+Kaggle caches, downloaded JSON, temporary candidate dumps, and training exports
+are not repo artifacts. Use ignored scratch directories such as:
+
+```text
+data/autocorrect/tmp/
+data/autocorrect/candidates/
+data/autocorrect/training/
+```
 
 ## Runtime Artifact Contract
 
-Runtime autocorrect should load the FST artifact, not CSV or raw dataset files.
-Build artifacts with:
+Runtime autocorrect loads `models/bn.fst`, not CSV, raw corpora, or large parsed
+TSV structures. The FST maps each NFC-normalized Bangla word to its unigram
+frequency.
 
-```bash
-cargo run --bin obadh-autocorrect -- extract-lexicon \
-  --input path/to/clean_corpus.txt \
-  --input path/to/book.epub \
-  --input path/to/wiki_json_directory \
-  --input path/to/book_directory \
-  --output path/to/clean_bn_words.tsv \
-  --min-frequency 1
-
-cargo run --bin obadh-autocorrect -- audit-lexicon \
-  --input path/to/clean_bn_words.tsv --pretty
-
-cargo run --bin obadh-autocorrect -- merge-lexicon \
-  --input path/to/dakshina_words.tsv \
-  --input path/to/wiki_words.tsv \
-  --output path/to/merged_bn_words.tsv \
-  --drop-invalid
-
-cargo run --bin obadh-autocorrect -- audit-pairs \
-  --input path/to/bangla_pairs.tsv \
-  --input-kind bangla --pretty
-
-cargo run --bin obadh-autocorrect -- merge-lexicon \
-  --input data/autocorrect/lexicons/epub_bn.tsv \
-  --input data/autocorrect/lexicons/wiki_bn.tsv \
-  --output data/autocorrect/lexicons/bn.tsv \
-  --drop-invalid
-
-cargo run --bin obadh-autocorrect -- build-fst-lexicon \
-  --input data/autocorrect/lexicons/bn.tsv \
-  --output data/autocorrect/models/bn.fst
-
-cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
-  --input data/autocorrect/models/bn.fst --pretty
-
-cargo run --bin obadh-autocorrect -- suggest-fst \
-  --lexicon data/autocorrect/models/bn.fst \
-  --input kmn --pretty
-```
+Native tools memory-map the FST so the lexicon is not expanded into a
+heap-resident trie. WASM loads the same compact byte blob and queries it in
+place. This is the production path for the playground and keyboard-time lookup.
 
 Input TSV format:
 
@@ -75,70 +54,110 @@ Input TSV format:
 বাংলা_শব্দ<TAB>frequency
 ```
 
-The frequency column is optional and defaults to `1`. Bangla-only validation is
-enabled by default.
+The frequency column is optional and defaults to `1`. TSV ingestion normalizes
+words to NFC and validates Bangla-only surfaces before audit, merge, and artifact
+builds.
 
-The FST artifact maps each NFC-normalized Bangla word to its unigram frequency.
-Native lookup uses memory mapping; WASM keeps the compact byte blob and queries
-it without expanding the corpus into trie/skeleton heap structures. The CLI
-still contains the older `OBACLEX3` compact artifact commands for compatibility
-and offline candidate export, but that artifact is no longer the shipped
-runtime path.
+## Build Path
 
-`extract-lexicon` accepts one or more `--input` UTF-8 text/HTML files, EPUB
-files, JSON files, or directories and emits a sorted word-frequency TSV.
-Directory inputs are expanded recursively and deterministically, but only
-`.epub`, `.html`, `.htm`, `.xhtml`, `.json`, `.txt`, `.text`, `.md`, and
-`.markdown` files are admitted from
-directories. EPUB inputs prefer the OPF spine reading order and skip navigation
-or non-linear items when the package metadata is available; malformed/simple
-EPUBs fall back to text-like publication members (`.xhtml`, `.html`, `.htm`,
-`.txt`). JSON inputs are parsed structurally and extract known prose fields such
-as `title`, `headline`, `content`, `text`, `body`, and `article`. HTML-ish inputs
-strip markup, attributes, and script/style blocks before tokenization.
-
-The tokenizer normalizes Bangla text to NFC, keeps Bangla letters and combining
-signs, permits ZWNJ and ZWJ only inside a word, and rejects digits, punctuation,
-Latin text, standalone marks, and Assamese-only letters such as `ৰ` and `ৱ`.
-Lexicon TSV ingestion also normalizes words before audit, merge, and artifact
-build so decomposed forms do not split frequency buckets.
-
-The extraction JSON report includes `text_inputs`, `html_inputs`, `epub_inputs`,
-`json_inputs`, `epub_inputs`, `epub_spine_items`, `epub_fallback_inputs`, and
-`epub_fallback_items`. `inputs` reports the requested roots and
-`expanded_inputs` reports the number of files discovered under those roots.
-Treat fallback EPUB extraction as lower-trust corpus input because navigation,
-appendix, or unreferenced publication files may be mixed into the token stream.
-
-Drop additional EPUB files under `epubs/`, refresh the source TSV, merge the
-sources, and rebuild `data/autocorrect/models/bn.fst` from
-`data/autocorrect/lexicons/bn.tsv`.
-
-Do not use previously generated artifacts as standing inputs for normal
-rebuilds; repeatedly merging them back into the corpus will compound old
-generated frequencies. The clean local runtime build path is the curated corpus
-itself:
+Extract a source TSV:
 
 ```bash
 cargo run --bin obadh-autocorrect -- extract-lexicon \
   --input epubs \
   --output data/autocorrect/lexicons/epub_bn.tsv \
   --min-frequency 1
+```
 
+Audit a source TSV:
+
+```bash
+cargo run --bin obadh-autocorrect -- audit-lexicon \
+  --input data/autocorrect/lexicons/epub_bn.tsv --pretty
+```
+
+Merge accepted TSV sources:
+
+```bash
 cargo run --bin obadh-autocorrect -- merge-lexicon \
   --input data/autocorrect/lexicons/epub_bn.tsv \
   --input data/autocorrect/lexicons/wiki_bn.tsv \
   --output data/autocorrect/lexicons/bn.tsv \
   --drop-invalid
+```
 
+Build and inspect the runtime FST:
+
+```bash
 cargo run --bin obadh-autocorrect -- build-fst-lexicon \
   --input data/autocorrect/lexicons/bn.tsv \
   --output data/autocorrect/models/bn.fst
+
+cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
+  --input data/autocorrect/models/bn.fst --pretty
 ```
 
+Probe the runtime path:
+
+```bash
+cargo run --bin obadh-autocorrect -- suggest-fst \
+  --lexicon data/autocorrect/models/bn.fst \
+  --input cad \
+  --max-distance 2 \
+  --max-candidates 512 \
+  --max-prefix-candidates 24 \
+  --response-candidates 12 \
+  --pretty
+```
+
+Expected behavior for `cad` is that Obadh's exact baseline `চাদ` remains visible
+and the FST-backed mark candidate `চাঁদ` is surfaced without scanning the
+lexicon or generating global spelling mutations.
+
+## Candidate Generation Contract
+
+The runtime FST path is deliberately bounded:
+
+- Exact baseline lookup if Obadh's output is already a lexicon word.
+- A tiny Obadh-aware Roman repair beam that inserts missing lowercase `o`
+  separators only at tokenizer-detected conjunct boundaries.
+- Bounded Unicode edit search intersected with the FST.
+- Bangla-unit weighted edit scoring after retrieval, where nasal marks are
+  cheaper than ordinary unrelated substitutions.
+- Bounded stem-suffix completion for common Bengali determiner, case/focus, and
+  plural suffixes, validated by exact FST lookup.
+- Exact-baseline-only chandrabindu rescue over plausible vowel-bearing positions,
+  validated by exact FST lookup.
+- Bounded prefix lookup for autocomplete-style suggestions.
+
+No word-specific correction table belongs in this layer. If a candidate is not
+in the FST, the runtime candidate generator should not invent it. Future neural
+models may rerank or contextualize candidates, but lexicon retrieval remains the
+valid-word gate.
+
+## Corpus Extraction
+
+`extract-lexicon` accepts one or more UTF-8 text/HTML files, EPUB files, JSON
+files, or directories. Directory inputs are expanded recursively and
+deterministically, admitting only:
+
+```text
+.epub .html .htm .xhtml .json .txt .text .md .markdown
+```
+
+EPUB inputs prefer OPF spine reading order and skip navigation or non-linear
+items when package metadata is available. Malformed or simple EPUBs fall back to
+text-like publication members. JSON inputs are parsed structurally and extract
+known prose fields such as `title`, `headline`, `content`, `text`, `body`, and
+`article`. HTML-ish inputs strip markup, attributes, and script/style blocks
+before tokenization.
+
+The tokenizer keeps Bangla letters and combining signs, permits ZWNJ/ZWJ only
+inside a word, and rejects digits, punctuation, Latin text, standalone marks,
+and Assamese-only letters such as `ৰ` and `ৱ`.
+
 The current Wikipedia source is the Kaggle `hurutta/bangla-wikipedia-dataset`
-dataset, specifically the `wiki_bn_articles` JSON directory. Download it locally
-with Kaggle tooling, then extract it with:
+dataset, specifically the `wiki_bn_articles` JSON directory:
 
 ```bash
 cargo run --bin obadh-autocorrect -- extract-lexicon \
@@ -154,63 +173,49 @@ cargo run --bin obadh-autocorrect -- merge-lexicon \
 mv data/autocorrect/lexicons/wiki_bn.tsv.clean data/autocorrect/lexicons/wiki_bn.tsv
 ```
 
-`merge-lexicon` accepts one or more word-frequency TSVs, sums duplicate word
-frequencies deterministically, and writes a merged TSV sorted by frequency then
-word. It is strict by default. Use `--drop-invalid` only when intentionally
-cleaning a source; the JSON report records dropped, malformed, non-Bangla, and
-invalid-frequency rows. `build-lexicon` remains strict and should consume clean
-TSVs only.
+Do not merge generated artifacts back into source TSVs. Rebuild from the curated
+corpus inputs so old generated frequencies do not compound.
 
-## Pair Dataset Contract
+## Pair Datasets And Evaluation
 
 Pair datasets are for audits, benchmarks, training, and calibration. They are
 not runtime artifacts and should not be committed if large.
 
-Word-level Bangla correction pairs use:
+Bangla correction pairs:
 
 ```text
 observed_bangla<TAB>expected_bangla
 ```
 
-Word-level Roman evaluation pairs use:
+Roman evaluation pairs:
 
 ```text
 roman_input<TAB>expected_bangla
 ```
 
-Run `audit-pairs` before using a pair file:
+Run structural audits before using a pair file:
 
 ```bash
 cargo run --bin obadh-autocorrect -- audit-pairs \
   --input path/to/pairs.tsv \
-  --input-kind bangla
+  --input-kind bangla --pretty
 
 cargo run --bin obadh-autocorrect -- audit-pairs \
   --input path/to/roman_pairs.tsv \
-  --input-kind roman
+  --input-kind roman --pretty
 ```
 
-The audit is intentionally structural. It rejects mixed-script source fields,
-non-Bangla targets, malformed rows, empty fields, and dirty Roman tokens, then
-reports duplicates, identity pairs, and the edit-distance gap from the current
-baseline. It is a gate before model/data work, not a replacement for human or
-model-assisted linguistic review.
-
-## Evaluation Metrics
-
-Evaluate candidate artifacts with:
+`eval` and `export-candidates` currently operate on the older compact `.lex`
+artifact for offline compatibility. The production runtime path is `bn.fst`;
+the evaluation/export path should be migrated before any serious model training
+depends on it.
 
 ```bash
 cargo run --bin obadh-autocorrect -- eval \
   --lexicon path/to/obadh.bn.lex \
   --input path/to/eval_pairs.tsv \
-  --input-kind bangla
-```
+  --input-kind bangla --pretty
 
-Export labeled candidate JSONL for retrieval analysis or future model training
-with:
-
-```bash
 cargo run --bin obadh-autocorrect -- export-candidates \
   --lexicon path/to/obadh.bn.lex \
   --input path/to/eval_pairs.tsv \
@@ -220,90 +225,18 @@ cargo run --bin obadh-autocorrect -- export-candidates \
   --max-skeleton-candidates 128
 ```
 
-Each JSONL record contains the original source, expected target, Obadh/Bangla
-baseline, optional replacement, target rank, and the candidate list. Each
-candidate includes a fixed-width integer feature vector with this order:
+Important evaluation fields:
 
-```text
-source_id, edit_cost, input_unit_len, candidate_unit_len, unit_len_delta,
-frequency_log2, input_known, candidate_known, obadh_baseline
-```
-
-Runtime candidate generation is corpus-backed through lexicon edit search,
-phonetic skeleton search, and prefix completion.
-
-`source_id` is stable for exported data:
-
-```text
-0 = no_change
-1 = lexicon_edit
-2 = phonetic_skeleton
-4 = prefix_completion
-```
-
-The deterministic candidate score is exported separately from the feature
-vector. There is no handwritten runtime rank-bonus feature.
-
-Evaluation input is:
-
-```text
-observed_input<TAB>expected_bangla
-```
-
-For `--input-kind roman`, `observed_input` is passed through Obadh first. For
-`--input-kind bangla`, `observed_input` is treated as the already-visible Bangla
-buffer.
-
-Important output fields:
-
-- `baseline_accuracy`: how often the input already matches the target.
-- `final_output_accuracy`: how often the final output after autocorrect matches
-  the target.
-- `replacement_accuracy`: among automatic replacements only, how often the
-  replacement was correct.
-- `incorrect_replacements`: automatic replacements that changed the input to the
-  wrong word. This must stay very low for keyboard trust.
-- `target_lexicon_coverage`: how often the expected target is even present in
-  the loaded lexicon artifact. This is the hard ceiling for lexicon-backed
-  candidate generation.
-- `candidate_recall_given_target_in_lexicon`: how often the correct target is
-  surfaced when the lexicon contains it. Use this to judge retrieval separately
-  from corpus coverage.
-- `suggestion_recall_rate`: how often the correct target was either already the
-  baseline or present in the candidate list.
+- `baseline_accuracy`: input already equals target.
+- `final_output_accuracy`: output after autocorrect equals target.
+- `replacement_accuracy`: automatic replacements that were correct.
+- `incorrect_replacements`: automatic replacements that changed input to a wrong
+  word.
+- `target_lexicon_coverage`: target exists in the loaded artifact.
+- `candidate_recall_given_target_in_lexicon`: retrieval quality when coverage
+  exists.
+- `suggestion_recall_rate`: target is baseline or present in the candidate list.
 - `mean_reciprocal_rank`: ranking quality for the expected target.
-
-`eval`, `suggest`, and `export-candidates` share retrieval controls:
-`--max-candidates`, `--max-edit-cost`, `--max-prefix-candidates`,
-`--max-skeleton-candidates`, `--max-skeleton-edit-cost`, and
-`--search-known-input`. Default values model a tight runtime suggestion list.
-Use a wider pool for offline retrieval analysis so candidate recall is not
-artificially limited by production UI constraints. Prefix completion is backed
-by a tiny per-trie-node top-frequency index, so it returns bounded autocomplete
-candidates without scanning the lexicon.
-
-For `--input-kind roman`, default runtime retrieval skips Bangla-unit edit
-search and relies on the folded phonetic skeleton. This avoids the expensive
-edit-trie path over Obadh's intermediate output, which can be structurally far
-from the expected word. Use `--max-edit-cost` only when deliberately measuring
-that slower Roman-origin edit-search path.
-
-By default, Roman-origin requests are not automatically replaced by the
-lexicon-only runtime ranker. They still produce candidates and exported training
-features. Automatic replacement for Roman-origin requests should be enabled only
-after a production-grade ranking model proves that it improves final accuracy
-without increasing incorrect replacements.
-
-Important pair-audit fields:
-
-- `accepted_rate`: the share of structurally usable rows.
-- `non_bangla_source_rows`, `non_roman_source_rows`, and
-  `non_bangla_expected_rows`: script pollution counters.
-- `identity_rows`: pairs that teach no correction behavior.
-- `baseline_exact_rate`: how often the current baseline already equals the
-  target.
-- `baseline_mean_edit_cost`: average Bangla-unit edit distance between baseline
-  and target for accepted rows.
 
 ## Source Admission
 
@@ -312,26 +245,23 @@ produce a formal Bangla word inventory.
 
 High-priority candidates:
 
-- Google Dakshina `bn`: use for romanized-to-native evaluation and attested
-  romanization behavior, not as the only word inventory.
-- Bangladesh National Corpus (BdNC): high priority if access and license permit
-  derived word-frequency artifacts.
-- LDC-IL Gold Standard Bengali Raw Text Corpus: useful cleaned corpus candidate,
-  with license/access conditions to verify before redistribution.
-- Wikimedia-derived sources: useful for reproducible formal vocabulary, with
-  license attribution requirements.
+- Locally curated Bangla books under `epubs/`.
+- Bangladesh National Corpus if access and license permit derived artifacts.
+- LDC-IL Gold Standard Bengali Raw Text Corpus if redistribution terms permit.
+- Wikimedia-derived sources with proper attribution and filtering.
+- Google Dakshina `bn` for romanized/native evaluation pairs, not as the only
+  word inventory.
 
 Secondary candidates:
 
-- VACASPATI: high-quality literary corpus, but should be register-weighted so
-  older literary forms do not dominate modern keyboard behavior.
-- bnWaC or similar web corpora: use only after strict Bangla-only filtering,
-  normalization, and source/license review.
+- VACASPATI or other literary corpora, with register weighting so archaic forms
+  do not dominate modern keyboard behavior.
+- Web corpora only after strict script, spelling, duplication, and licensing
+  audits.
 
 Reject by default:
 
 - Aksharantar.
 - Unproven Kaggle/Hugging Face aggregations with unclear provenance.
-- CommonCrawl/social/news dumps without script, spelling, duplication, and
-  licensing audits.
+- CommonCrawl/social/news dumps without strong audits.
 - Mixed Assamese/Bangla or non-Bangla-script data.

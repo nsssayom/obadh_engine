@@ -27,7 +27,6 @@ impl Transliterator {
         let unit_count = phonetic_units.len();
         for (unit_index, unit) in phonetic_units.iter().enumerate() {
             let is_last_unit = unit_index + 1 == unit_count;
-            let following_units = &phonetic_units[unit_index + 1..];
 
             match unit.unit_type {
                 PhoneticUnitType::Consonant => {
@@ -65,14 +64,6 @@ impl Transliterator {
                 }
                 PhoneticUnitType::ConsonantWithVowel => {
                     if let Some((consonant_part, vowel_part)) = split_consonant_vowel(&unit.text) {
-                        if self.should_suppress_visible_a(vowel_part, following_units) {
-                            if let Some(bengali_consonant) = consonant_value(consonant_part) {
-                                result.push_str(bengali_consonant);
-                                previous_unit_accepts_dependent_vowel = true;
-                                continue;
-                            }
-                        }
-
                         if !self.append_consonant_vowel(result, consonant_part, vowel_part) {
                             result.push_str(&unit.text);
                         }
@@ -127,11 +118,7 @@ impl Transliterator {
                             parts.replace_last(last_consonant);
 
                             if self.append_conjunct_parts(result, parts.as_slice()) {
-                                if !matches!(last_consonant, "y" | "Y" | "w")
-                                    && self.should_suppress_visible_a(vowel_part, following_units)
-                                {
-                                    previous_unit_accepts_dependent_vowel = true;
-                                } else if !self.append_dependent_vowel(result, vowel_part) {
+                                if !self.append_dependent_vowel(result, vowel_part) {
                                     result.push_str(vowel_part);
                                 }
                             } else {

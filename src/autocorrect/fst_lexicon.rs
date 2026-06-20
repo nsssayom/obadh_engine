@@ -6,14 +6,25 @@ use fst::automaton::{Automaton, Str};
 use fst::{IntoStreamer, Streamer};
 use serde::Serialize;
 
+use super::bangla::{differs_only_by_nasal_or_breath_mark, for_each_chandrabindu_variant};
 use super::edit::weighted_edit_distance;
+use super::morphology::{stem_suffix_completions, StemSuffixCompletion};
 
 pub const DEFAULT_FST_MAX_DISTANCE: u32 = 1;
 pub const DEFAULT_FST_PREFIX_CANDIDATES: usize = 24;
 pub const FST_MAX_LEVENSHTEIN_DISTANCE: u32 = 2;
 const SCORE_FREQUENCY_SCALE: f64 = 1024.0;
 const SURFACE_EDIT_COST_SCALE: i64 = 1536;
-const PREFIX_COMPLETION_PENALTY: i64 = 192;
+// Channel priors express evidence strength from the input path; they are not
+// claims that the deterministic baseline is always the intended word.
+const EXACT_BASELINE_CHANNEL_PRIOR: i64 = 16_384;
+const EDIT_DISTANCE_CHANNEL_PENALTY: i64 = 2048;
+const DIACRITIC_EDIT_CHANNEL_PRIOR: i64 = 1024;
+const DIACRITIC_EDIT_COST_SCALE: i64 = 256;
+const PREFIX_COMPLETION_CHANNEL_PENALTY: i64 = 192;
+const STEM_SUFFIX_COMPLETION_PRIOR: i64 = 768;
+const STEM_SUFFIX_COST_SCALE: i64 = 256;
+const STEM_SUFFIX_SURFACE_COST_SCALE: i64 = 64;
 const ROMAN_REPAIR_EXACT_BONUS: i64 = 768;
 const ROMAN_REPAIR_COST_SCALE: i64 = 1024;
 const ROMAN_REPAIR_SURFACE_COST_SCALE: i64 = 128;
@@ -78,6 +89,18 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
                 baseline,
                 options.max_edit_cost,
             );
+
+            for completion in stem_suffix_completions(baseline) {
+                if let Some(frequency) = self.exact_frequency(&completion.text) {
+                    insert_stem_suffix_candidate(&mut seeds, &completion, frequency, baseline);
+                }
+            }
+
+            for_each_chandrabindu_variant(baseline, |variant| {
+                if let Some(frequency) = self.exact_frequency(variant) {
+                    insert_diacritic_candidate(&mut seeds, variant, frequency, baseline);
+                }
+            });
         }
 
         let levenshtein = UnicodeLevenshtein::new(baseline, options.max_distance);
@@ -221,7 +244,9 @@ pub struct FstCandidate {
 pub enum FstCandidateSource {
     Exact,
     EditDistance,
+    DiacriticEdit,
     PrefixCompletion,
+    StemSuffixCompletion,
     RomanRepairExact,
 }
 
@@ -230,16 +255,20 @@ impl FstCandidateSource {
         match self {
             Self::Exact => "fst_exact",
             Self::EditDistance => "fst_edit_distance",
+            Self::DiacriticEdit => "fst_diacritic_edit",
             Self::PrefixCompletion => "fst_prefix_completion",
+            Self::StemSuffixCompletion => "fst_stem_suffix_completion",
             Self::RomanRepairExact => "fst_roman_repair_exact",
         }
     }
 
-    fn penalty(self) -> i64 {
+    fn prior(self) -> i64 {
         match self {
-            Self::Exact => 0,
-            Self::EditDistance => 0,
-            Self::PrefixCompletion => PREFIX_COMPLETION_PENALTY,
+            Self::Exact => EXACT_BASELINE_CHANNEL_PRIOR,
+            Self::EditDistance => -EDIT_DISTANCE_CHANNEL_PENALTY,
+            Self::DiacriticEdit => DIACRITIC_EDIT_CHANNEL_PRIOR,
+            Self::PrefixCompletion => -PREFIX_COMPLETION_CHANNEL_PENALTY,
+            Self::StemSuffixCompletion => STEM_SUFFIX_COMPLETION_PRIOR,
             Self::RomanRepairExact => 0,
         }
     }
@@ -277,6 +306,13 @@ fn insert_fst_candidate(
     if max_edit_cost.is_some_and(|limit| edit_cost > limit) {
         return;
     }
+    let source = if source == FstCandidateSource::EditDistance
+        && differs_only_by_nasal_or_breath_mark(baseline, text)
+    {
+        FstCandidateSource::DiacriticEdit
+    } else {
+        source
+    };
     let score = fst_candidate_score(source, edit_cost, frequency);
     let candidate = FstCandidate {
         text: text.to_string(),
@@ -312,6 +348,48 @@ fn insert_repaired_baseline_candidate(
     insert_best_candidate(seeds, candidate);
 }
 
+fn insert_stem_suffix_candidate(
+    seeds: &mut BTreeMap<String, FstCandidate>,
+    completion: &StemSuffixCompletion,
+    frequency: u64,
+    baseline: &str,
+) {
+    let edit_cost = weighted_edit_distance(baseline, &completion.text).0;
+    let score = stem_suffix_candidate_score(edit_cost, completion.cost, frequency);
+    let candidate = FstCandidate {
+        text: completion.text.clone(),
+        source: FstCandidateSource::StemSuffixCompletion,
+        edit_cost,
+        frequency,
+        score,
+        roman_repair: None,
+        roman_repair_kind: None,
+        roman_repair_cost: None,
+    };
+    insert_best_candidate(seeds, candidate);
+}
+
+fn insert_diacritic_candidate(
+    seeds: &mut BTreeMap<String, FstCandidate>,
+    text: &str,
+    frequency: u64,
+    baseline: &str,
+) {
+    let edit_cost = weighted_edit_distance(baseline, text).0;
+    let score = fst_candidate_score(FstCandidateSource::DiacriticEdit, edit_cost, frequency);
+    let candidate = FstCandidate {
+        text: text.to_string(),
+        source: FstCandidateSource::DiacriticEdit,
+        edit_cost,
+        frequency,
+        score,
+        roman_repair: None,
+        roman_repair_kind: None,
+        roman_repair_cost: None,
+    };
+    insert_best_candidate(seeds, candidate);
+}
+
 fn insert_best_candidate(seeds: &mut BTreeMap<String, FstCandidate>, candidate: FstCandidate) {
     match seeds.entry(candidate.text.clone()) {
         Entry::Occupied(mut entry) => {
@@ -326,13 +404,24 @@ fn insert_best_candidate(seeds: &mut BTreeMap<String, FstCandidate>, candidate: 
 }
 
 fn fst_candidate_score(source: FstCandidateSource, edit_cost: u16, frequency: u64) -> i64 {
-    frequency_score(frequency) - (edit_cost as i64 * SURFACE_EDIT_COST_SCALE) - source.penalty()
+    if source == FstCandidateSource::DiacriticEdit {
+        return frequency_score(frequency) + source.prior()
+            - (edit_cost as i64 * DIACRITIC_EDIT_COST_SCALE);
+    }
+
+    frequency_score(frequency) - (edit_cost as i64 * SURFACE_EDIT_COST_SCALE) + source.prior()
 }
 
 fn roman_repair_candidate_score(edit_cost: u16, repair_cost: u16, frequency: u64) -> i64 {
     frequency_score(frequency) + ROMAN_REPAIR_EXACT_BONUS
         - (repair_cost as i64 * ROMAN_REPAIR_COST_SCALE)
         - (edit_cost as i64 * ROMAN_REPAIR_SURFACE_COST_SCALE)
+}
+
+fn stem_suffix_candidate_score(edit_cost: u16, suffix_cost: u16, frequency: u64) -> i64 {
+    frequency_score(frequency) + FstCandidateSource::StemSuffixCompletion.prior()
+        - (suffix_cost as i64 * STEM_SUFFIX_COST_SCALE)
+        - (edit_cost as i64 * STEM_SUFFIX_SURFACE_COST_SCALE)
 }
 
 fn frequency_score(frequency: u64) -> i64 {
@@ -556,6 +645,156 @@ mod tests {
             .candidates
             .iter()
             .any(|candidate| candidate.text == "কেমন"));
+    }
+
+    #[test]
+    fn valid_baseline_channel_prior_prevents_frequency_only_overcorrection() {
+        let lexicon = test_lexicon([("মাদার", 1017), ("তাদের", 133846), ("দাদার", 487)]);
+
+        let result = lexicon
+            .suggest(
+                "মাদার",
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("valid baseline candidate should be returned");
+        assert_eq!(first.text, "মাদার");
+        assert_eq!(first.source, FstCandidateSource::Exact);
+
+        let tader = result
+            .candidates
+            .iter()
+            .find(|candidate| candidate.text == "তাদের")
+            .expect("high-frequency edit candidate should still be visible");
+        assert!(
+            first.score > tader.score,
+            "valid baseline score {} should beat frequency-only edit score {}",
+            first.score,
+            tader.score
+        );
+    }
+
+    #[test]
+    fn low_frequency_exact_baseline_stays_above_high_frequency_edits() {
+        let lexicon = test_lexicon([("কটা", 1), ("কতা", 1_000_000), ("কাঠা", 500_000)]);
+
+        let result = lexicon
+            .suggest(
+                "কটা",
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("valid baseline candidate should be returned");
+        assert_eq!(first.text, "কটা");
+        assert_eq!(first.source, FstCandidateSource::Exact);
+
+        assert!(result
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.source == FstCandidateSource::EditDistance)
+            .all(|candidate| first.score > candidate.score));
+    }
+
+    #[test]
+    fn chandrabindu_variants_are_seeded_without_generic_edit_search() {
+        let lexicon = test_lexicon([("চাদ", 301), ("চাঁদ", 2294), ("চাদর", 443)]);
+
+        let result = lexicon
+            .suggest(
+                "চাদ",
+                FstSuggestOptions {
+                    max_distance: 0,
+                    max_candidates: 8,
+                    max_prefix_candidates: 8,
+                    response_candidates: 8,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let marked = result
+            .candidates
+            .iter()
+            .find(|candidate| candidate.text == "চাঁদ")
+            .expect("nasal mark variant should be seeded before edit search");
+        assert_eq!(marked.source, FstCandidateSource::DiacriticEdit);
+    }
+
+    #[test]
+    fn exact_stem_can_surface_valid_suffix_completions() {
+        let lexicon = test_lexicon([("নদী", 100), ("নদীটি", 30), ("নদীকে", 20), ("নদীকথা", 200)]);
+
+        let result = lexicon
+            .suggest(
+                "নদী",
+                FstSuggestOptions {
+                    max_distance: 0,
+                    max_candidates: 32,
+                    max_prefix_candidates: 32,
+                    response_candidates: 32,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let stem = result
+            .candidates
+            .iter()
+            .find(|candidate| candidate.text == "নদী")
+            .expect("exact stem should be returned");
+        assert_eq!(stem.source, FstCandidateSource::Exact);
+
+        let suffixed = result
+            .candidates
+            .iter()
+            .find(|candidate| candidate.text == "নদীটি")
+            .expect("valid stem suffix form should be returned");
+        assert_eq!(suffixed.source, FstCandidateSource::StemSuffixCompletion);
+
+        let compound = result
+            .candidates
+            .iter()
+            .find(|candidate| candidate.text == "নদীকথা")
+            .expect("ordinary prefix completion should still be returned");
+        assert_eq!(compound.source, FstCandidateSource::PrefixCompletion);
+    }
+
+    #[test]
+    fn suffix_channel_requires_exact_stem_in_lexicon() {
+        let lexicon = test_lexicon([("নদীটি", 30)]);
+
+        let result = lexicon
+            .suggest(
+                "নদী",
+                FstSuggestOptions {
+                    max_distance: 0,
+                    max_candidates: 32,
+                    max_prefix_candidates: 0,
+                    response_candidates: 32,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        assert!(result.candidates.is_empty());
     }
 
     #[test]
