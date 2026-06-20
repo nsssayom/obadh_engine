@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use obadh_engine::{
-    AutocorrectConfig, AutocorrectEngine, CharCandidateReranker, CorrectionRequest, Lexicon,
-    LexiconEntry, ObadhEngine, Tokenizer,
+    AutocorrectConfig, AutocorrectEngine, CorrectionRequest, Lexicon, LexiconEntry, ObadhEngine,
+    Tokenizer,
 };
 use std::time::Duration;
 
@@ -13,8 +13,6 @@ const MIXED_RULE_TEXT: &str =
 const LENIENT_MIXED_TEXT: &str = "ami😀 12.34 Taka. rZyab🔥 rrkSh 1.a2 songskrriti🚫";
 const AUTOCORRECT_INPUT: &str = "কীরন";
 const SHIPPED_AUTOCORRECT_LEXICON: &[u8] = include_bytes!("../www/assets/autocorrect/bn.lex");
-const SHIPPED_CHAR_RERANKER: &[u8] =
-    include_bytes!("../www/assets/autocorrect/char_candidate_reranker.json");
 
 fn bench_tokenizer(c: &mut Criterion) {
     let tokenizer = Tokenizer::new();
@@ -57,6 +55,17 @@ fn bench_autocorrect(c: &mut Criterion) {
     let obadh = ObadhEngine::new();
     let autocorrect = AutocorrectEngine::from_entries(stress_lexicon_entries());
     let request = CorrectionRequest::new(AUTOCORRECT_INPUT);
+
+    let mut init_group = c.benchmark_group("autocorrect_init");
+    init_group.throughput(Throughput::Bytes(SHIPPED_AUTOCORRECT_LEXICON.len() as u64));
+    init_group.bench_function("shipped_compact_lexicon_decode_and_index", |b| {
+        b.iter(|| {
+            Lexicon::from_compact_bytes(black_box(SHIPPED_AUTOCORRECT_LEXICON))
+                .expect("shipped autocorrect lexicon should load")
+        });
+    });
+    init_group.finish();
+
     let shipped_lexicon = Lexicon::from_compact_bytes(SHIPPED_AUTOCORRECT_LEXICON)
         .expect("shipped autocorrect lexicon should load");
     let shipped_autocorrect = AutocorrectEngine::with_config(
@@ -68,9 +77,6 @@ fn bench_autocorrect(c: &mut Criterion) {
             ..AutocorrectConfig::default()
         },
     );
-    let shipped_reranker = CharCandidateReranker::from_json_bytes(SHIPPED_CHAR_RERANKER)
-        .expect("shipped char reranker should load");
-
     let mut group = c.benchmark_group("autocorrect");
     group.throughput(Throughput::Elements(1));
     group.bench_function("decide_stress_lexicon_input", |b| {
@@ -84,12 +90,10 @@ fn bench_autocorrect(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("shipped_roman_request_decide_and_rerank_512", |b| {
+    group.bench_function("shipped_sparse_roman_request_decide_512", |b| {
         b.iter(|| {
-            let request = obadh.autocorrect_request(black_box("okalpokko"));
-            let decision = shipped_autocorrect.decide(black_box(request));
-            shipped_reranker
-                .rank_candidates(black_box("okalpokko"), black_box(&decision.candidates))
+            let request = obadh.autocorrect_request(black_box("kmn"));
+            shipped_autocorrect.decide(black_box(request))
         });
     });
     group.finish();

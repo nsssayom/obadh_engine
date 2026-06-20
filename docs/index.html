@@ -53,7 +53,6 @@
         wasmLoaded: false,
         loadingError: null,
         autocorrectLoaded: false,
-        autocorrectRerankerLoaded: false,
         autocorrectError: null,
         autocorrectStats: null,
         autocorrectResult: null,
@@ -81,7 +80,6 @@
                 this.wasmLoaded = true;
                 this.loadingError = null;
                 this.autocorrectLoaded = Boolean(window.obadhAutocorrect);
-                this.autocorrectRerankerLoaded = Boolean(window.autocorrectRerankerLoaded);
                 this.autocorrectError = event.detail?.autocorrectError || null;
                 this.autocorrectStats = window.autocorrectStats || null;
                 this.version = window.obadhaWasm.get_version();
@@ -93,7 +91,6 @@
               } else {
                 this.loadingError = event.detail?.error || 'Unknown error loading Obadh Engine';
                 this.autocorrectLoaded = false;
-                this.autocorrectRerankerLoaded = false;
                 this.autocorrectError = null;
               }
             });
@@ -331,12 +328,10 @@
           try {
             this.autocorrectStats = window.loadAutocorrectFromTsv(this.labLexiconText);
             this.autocorrectLoaded = true;
-            this.autocorrectRerankerLoaded = false;
             this.autocorrectError = null;
             this.refreshAutocorrect();
           } catch (err) {
             this.autocorrectLoaded = false;
-            this.autocorrectRerankerLoaded = false;
             this.autocorrectResult = null;
             this.autocorrectError = err.message || String(err);
           }
@@ -661,7 +656,7 @@
                   <span
                     class="rounded-full px-2.5 py-1 text-xs font-semibold"
                     :class="autocorrectLoaded ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'"
-                    x-text="autocorrectLoaded ? (autocorrectRerankerLoaded ? 'model' : 'rules') : 'offline'"></span>
+                    x-text="autocorrectLoaded ? 'lexicon' : 'offline'"></span>
                 </div>
 
                 <div x-show="autocorrectError" class="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" x-text="autocorrectError"></div>
@@ -689,7 +684,7 @@
                   <div x-show="autocorrectResult?.replacement" class="rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950">
                     <div class="flex items-center justify-between gap-3 text-xs text-emerald-700 dark:text-emerald-300">
                       <span>Replacement</span>
-                      <span x-text="autocorrectResult?.replacement?.model_score?.toFixed(3)"></span>
+                      <span x-text="autocorrectResult?.replacement?.score"></span>
                     </div>
                     <div class="font-bengali output-surface mt-1 text-2xl leading-8 text-emerald-950 dark:text-emerald-100" x-text="autocorrectResult?.replacement?.text || ''"></div>
                   </div>
@@ -703,7 +698,7 @@
                             <div class="mt-1 font-mono text-xs text-slate-500 dark:text-gray-500" x-text="candidateSourceLabel(candidate.source)"></div>
                           </div>
                           <div class="text-right font-mono text-xs text-slate-500 dark:text-gray-500">
-                            <div><span x-text="candidate.model_score === null || candidate.model_score === undefined ? candidate.score : candidate.model_score.toFixed(3)"></span></div>
+                            <div><span x-text="candidate.score"></span></div>
                             <div>e<span x-text="candidate.edit_cost"></span></div>
                           </div>
                         </div>
@@ -844,7 +839,6 @@
           detail: {
             success: true,
             autocorrectLoaded: Boolean(window.obadhAutocorrect),
-            autocorrectRerankerLoaded: Boolean(window.autocorrectRerankerLoaded),
             autocorrectError
           }
         }));
@@ -872,28 +866,13 @@
       }
 
       const bytes = new Uint8Array(await response.arrayBuffer());
-      window.autocorrectRerankerLoaded = false;
-
-      try {
-        const rerankerResponse = await fetch('./assets/autocorrect/char_candidate_reranker.json', { cache: 'no-store' });
-        if (rerankerResponse.ok) {
-          const rerankerBytes = new Uint8Array(await rerankerResponse.arrayBuffer());
-          window.obadhAutocorrect = ObadhAutocorrectWasm.fromCompactLexiconAndCharReranker(bytes, rerankerBytes);
-          window.autocorrectRerankerLoaded = true;
-        } else {
-          window.obadhAutocorrect = ObadhAutocorrectWasm.fromCompactLexicon(bytes);
-        }
-      } catch (err) {
-        console.error('Autocorrect reranker initialization error:', err);
-        window.obadhAutocorrect = ObadhAutocorrectWasm.fromCompactLexicon(bytes);
-      }
+      window.obadhAutocorrect = ObadhAutocorrectWasm.fromCompactLexicon(bytes);
 
       window.autocorrectStats = window.obadhAutocorrect.stats();
     }
 
     window.loadAutocorrectFromTsv = (lexiconText) => {
       window.obadhAutocorrect = ObadhAutocorrectWasm.fromTsv(lexiconText);
-      window.autocorrectRerankerLoaded = false;
       window.autocorrectStats = window.obadhAutocorrect.stats();
       return window.autocorrectStats;
     };

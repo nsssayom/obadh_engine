@@ -4,7 +4,7 @@ use super::bangla::bangla_units;
 use super::edit::EditCost;
 use super::lexicon::{Lexicon, LexiconEntry};
 
-pub const AUTOCORRECT_FEATURE_DIM: usize = 10;
+pub const AUTOCORRECT_FEATURE_DIM: usize = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorrectionRequest {
@@ -12,15 +12,14 @@ pub struct CorrectionRequest {
     pub left_context: Vec<String>,
     pub roman_input: Option<String>,
     pub obadh_output: Option<String>,
-    pub generated_candidates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorrectionSource {
     NoChange,
     LexiconEdit,
+    PrefixCompletion,
     PhoneticSkeleton,
-    RomanEdit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +42,6 @@ pub struct CandidateFeatures {
     pub frequency_log2: u8,
     pub input_known: bool,
     pub candidate_known: bool,
-    pub generated_roman_candidate: bool,
     pub obadh_baseline: bool,
 }
 
@@ -66,16 +64,21 @@ pub struct AutocorrectConfig {
     pub autocorrect_margin: i32,
     pub auto_replace_roman_input: bool,
     pub search_known_input: bool,
+    pub max_prefix_candidates: usize,
     pub max_skeleton_candidates: usize,
     pub max_skeleton_edit_cost: u16,
-    pub max_generated_candidates: usize,
-    pub max_generated_edit_cost: u16,
 }
 
 #[derive(Debug, Clone)]
 pub struct AutocorrectEngine {
     lexicon: Lexicon,
     config: AutocorrectConfig,
+}
+
+#[derive(Debug, Clone)]
+struct RequestAnalysis {
+    frequency: u32,
+    unit_len: u16,
 }
 
 impl CorrectionRequest {
@@ -85,7 +88,6 @@ impl CorrectionRequest {
             left_context: Vec::new(),
             roman_input: None,
             obadh_output: None,
-            generated_candidates: Vec::new(),
         }
     }
 
@@ -106,14 +108,6 @@ impl CorrectionRequest {
         self.obadh_output = Some(obadh_output.into());
         self
     }
-
-    pub fn with_generated_candidates(
-        mut self,
-        candidates: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        self.generated_candidates = candidates.into_iter().map(Into::into).collect();
-        self
-    }
 }
 
 impl CandidateFeatures {
@@ -127,7 +121,6 @@ impl CandidateFeatures {
             self.frequency_log2 as i16,
             self.input_known as i16,
             self.candidate_known as i16,
-            self.generated_roman_candidate as i16,
             self.obadh_baseline as i16,
         ]
     }
@@ -146,10 +139,9 @@ impl Default for AutocorrectConfig {
             autocorrect_margin: 180,
             auto_replace_roman_input: false,
             search_known_input: false,
+            max_prefix_candidates: 8,
             max_skeleton_candidates: 12,
             max_skeleton_edit_cost: 1,
-            max_generated_candidates: 24,
-            max_generated_edit_cost: 10,
         }
     }
 }
@@ -188,11 +180,13 @@ impl AutocorrectEngine {
             };
         }
 
-        let input_frequency = self.lexicon.frequency(&request.current).unwrap_or(0);
-        let input_unit_len = unit_len(&request.current);
-        let keep = self.keep_candidate(&request, input_frequency, input_unit_len);
+        let analysis = RequestAnalysis {
+            frequency: self.lexicon.frequency(&request.current).unwrap_or(0),
+            unit_len: unit_len(&request.current),
+        };
+        let keep = self.keep_candidate(&request, &analysis);
 
-        if input_frequency > 0 && !self.config.search_known_input {
+        if analysis.frequency > 0 && !self.config.search_known_input {
             return AutocorrectDecision {
                 input: request.current,
                 candidates: vec![keep],
@@ -201,9 +195,9 @@ impl AutocorrectEngine {
         }
 
         let mut candidates = vec![keep.clone()];
-        candidates.extend(self.lexicon_candidates(&request, input_frequency, input_unit_len));
-        candidates.extend(self.skeleton_candidates(&request, input_frequency, input_unit_len));
-        candidates.extend(self.generated_candidates(&request, input_frequency, input_unit_len));
+        candidates.extend(self.lexicon_candidates(&request, &analysis));
+        candidates.extend(self.prefix_candidates(&request, &analysis));
+        candidates.extend(self.skeleton_candidates(&request, &analysis));
         candidates = deduplicated_candidates(candidates);
         candidates.truncate(self.config.max_candidates.max(1));
 
@@ -224,13 +218,12 @@ impl AutocorrectEngine {
     fn keep_candidate(
         &self,
         request: &CorrectionRequest,
-        frequency: u32,
-        input_unit_len: u16,
+        analysis: &RequestAnalysis,
     ) -> CorrectionCandidate {
-        let score = if frequency > 0 {
+        let score = if analysis.frequency > 0 {
             self.config.unknown_keep_score
                 + self.config.known_keep_bonus
-                + frequency_score(frequency)
+                + frequency_score(analysis.frequency)
         } else {
             self.config.unknown_keep_score
         };
@@ -238,16 +231,16 @@ impl AutocorrectEngine {
             text: request.current.clone(),
             source: CorrectionSource::NoChange,
             edit_cost: EditCost(0),
-            frequency,
+            frequency: analysis.frequency,
             score,
             features: candidate_features(
                 request,
                 &request.current,
                 CorrectionSource::NoChange,
                 EditCost(0),
-                frequency,
-                input_unit_len,
-                input_unit_len,
+                analysis.frequency,
+                analysis.unit_len,
+                analysis.unit_len,
             ),
         }
     }
@@ -255,8 +248,7 @@ impl AutocorrectEngine {
     fn lexicon_candidates(
         &self,
         request: &CorrectionRequest,
-        input_frequency: u32,
-        input_unit_len: u16,
+        analysis: &RequestAnalysis,
     ) -> Vec<CorrectionCandidate> {
         let mut candidates = Vec::new();
         let max_edit_cost = self.lexicon_edit_cost_limit(request);
@@ -272,7 +264,6 @@ impl AutocorrectEngine {
             if entry.word == request.current {
                 continue;
             }
-            let candidate_unit_len = unit_len(&entry.word);
             let score = 1000 - (matched.edit_cost.0 as i32 * self.config.edit_cost_penalty)
                 + frequency_score(entry.frequency);
             candidates.push(CorrectionCandidate {
@@ -287,10 +278,10 @@ impl AutocorrectEngine {
                     CorrectionSource::LexiconEdit,
                     matched.edit_cost,
                     entry.frequency,
-                    input_unit_len,
-                    candidate_unit_len,
+                    analysis.unit_len,
+                    matched.unit_len,
                 )
-                .with_input_known(input_frequency > 0)
+                .with_input_known(analysis.frequency > 0)
                 .with_candidate_known(true),
             });
         }
@@ -310,8 +301,7 @@ impl AutocorrectEngine {
     fn skeleton_candidates(
         &self,
         request: &CorrectionRequest,
-        input_frequency: u32,
-        input_unit_len: u16,
+        analysis: &RequestAnalysis,
     ) -> Vec<CorrectionCandidate> {
         let mut candidates = Vec::new();
         for matched in self.lexicon.find_by_fuzzy_phonetic_skeleton(
@@ -323,7 +313,6 @@ impl AutocorrectEngine {
             if entry.word == request.current {
                 continue;
             }
-            let candidate_unit_len = unit_len(&entry.word);
             let score = 840 - (matched.edit_cost.0 as i32 * self.config.skeleton_edit_cost_penalty)
                 + frequency_score(entry.frequency);
             candidates.push(CorrectionCandidate {
@@ -338,61 +327,52 @@ impl AutocorrectEngine {
                     CorrectionSource::PhoneticSkeleton,
                     matched.edit_cost,
                     entry.frequency,
-                    input_unit_len,
-                    candidate_unit_len,
+                    analysis.unit_len,
+                    matched.unit_len,
                 )
-                .with_input_known(input_frequency > 0)
+                .with_input_known(analysis.frequency > 0)
                 .with_candidate_known(true),
             });
         }
         candidates
     }
 
-    fn generated_candidates(
+    fn prefix_candidates(
         &self,
         request: &CorrectionRequest,
-        input_frequency: u32,
-        input_unit_len: u16,
+        analysis: &RequestAnalysis,
     ) -> Vec<CorrectionCandidate> {
-        if request.generated_candidates.is_empty() || self.config.max_generated_candidates == 0 {
+        if self.config.max_prefix_candidates == 0 {
             return Vec::new();
         }
 
         let mut candidates = Vec::new();
-        for candidate in request
-            .generated_candidates
-            .iter()
-            .take(self.config.max_generated_candidates)
+        for matched in self
+            .lexicon
+            .find_by_prefix(&request.current, self.config.max_prefix_candidates)
         {
-            if candidate == &request.current {
+            let entry = matched.entry;
+            if entry.word == request.current {
                 continue;
             }
-
-            let edit_cost = super::edit::weighted_edit_distance(&request.current, candidate);
-            if edit_cost.0 > self.config.max_generated_edit_cost {
-                continue;
-            }
-
-            let frequency = self.lexicon.frequency(candidate).unwrap_or(0);
-            let candidate_unit_len = unit_len(candidate);
-            let score = 900 - (edit_cost.0 as i32 * self.config.skeleton_edit_cost_penalty)
-                + frequency_score(frequency);
+            let completion_units = matched.unit_len.saturating_sub(analysis.unit_len);
+            let score = 760 + frequency_score(entry.frequency) - i32::from(completion_units) * 12;
             candidates.push(CorrectionCandidate {
-                text: candidate.clone(),
-                source: CorrectionSource::RomanEdit,
-                edit_cost,
-                frequency,
+                text: entry.word.clone(),
+                source: CorrectionSource::PrefixCompletion,
+                edit_cost: matched.edit_cost,
+                frequency: entry.frequency,
                 score,
                 features: candidate_features(
                     request,
-                    candidate,
-                    CorrectionSource::RomanEdit,
-                    edit_cost,
-                    frequency,
-                    input_unit_len,
-                    candidate_unit_len,
+                    &entry.word,
+                    CorrectionSource::PrefixCompletion,
+                    matched.edit_cost,
+                    entry.frequency,
+                    analysis.unit_len,
+                    matched.unit_len,
                 )
-                .with_input_known(input_frequency > 0)
+                .with_input_known(analysis.frequency > 0)
                 .with_candidate_known(true),
             });
         }
@@ -453,10 +433,10 @@ fn duplicate_candidate_is_better(
 
 fn duplicate_source_priority(source: CorrectionSource) -> u8 {
     match source {
-        CorrectionSource::NoChange => 4,
-        CorrectionSource::LexiconEdit => 3,
+        CorrectionSource::NoChange => 5,
+        CorrectionSource::LexiconEdit => 4,
+        CorrectionSource::PrefixCompletion => 3,
         CorrectionSource::PhoneticSkeleton => 2,
-        CorrectionSource::RomanEdit => 1,
     }
 }
 
@@ -488,10 +468,6 @@ fn candidate_features(
         frequency_log2: frequency_log2(frequency),
         input_known: frequency > 0 && source == CorrectionSource::NoChange,
         candidate_known: frequency > 0,
-        generated_roman_candidate: request
-            .generated_candidates
-            .iter()
-            .any(|generated| generated == candidate),
         obadh_baseline: request
             .obadh_output
             .as_deref()
@@ -516,7 +492,7 @@ fn source_id(source: CorrectionSource) -> u8 {
         CorrectionSource::NoChange => 0,
         CorrectionSource::LexiconEdit => 1,
         CorrectionSource::PhoneticSkeleton => 2,
-        CorrectionSource::RomanEdit => 3,
+        CorrectionSource::PrefixCompletion => 4,
     }
 }
 

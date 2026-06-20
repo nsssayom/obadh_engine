@@ -152,6 +152,47 @@ fn autocorrect_cli_builds_lexicon_from_multiple_sources() {
 }
 
 #[test]
+fn autocorrect_cli_exports_compact_lexicon_to_mergeable_tsv() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-export-lexicon");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.lex");
+    let exported = workspace.path("exported.tsv");
+
+    fs::write(&lexicon_tsv, "আমি\t100\nবিজ্ঞান\t70\n").expect("lexicon fixture should write");
+    let build = run_obadh_autocorrect([
+        "build-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let export = run_obadh_autocorrect([
+        "export-lexicon",
+        "--input",
+        path_str(&artifact),
+        "--output",
+        path_str(&exported),
+    ]);
+    assert!(export.status.success(), "stderr: {}", stderr(&export));
+    let export_json = json_stdout(&export);
+    assert_eq!(export_json["entries"], 2);
+    assert_eq!(export_json["total_frequency"], 170);
+    assert_eq!(export_json["max_frequency"], 100);
+
+    let exported_tsv = fs::read_to_string(&exported).expect("exported TSV should read");
+    assert!(exported_tsv.contains("আমি\t100"));
+    assert!(exported_tsv.contains("বিজ্ঞান\t70"));
+
+    let audit = run_obadh_autocorrect(["audit-lexicon", "--input", path_str(&exported)]);
+    assert!(audit.status.success(), "stderr: {}", stderr(&audit));
+    let audit_json = json_stdout(&audit);
+    assert_eq!(audit_json["accepted_rows"], 2);
+    assert_eq!(audit_json["non_bangla_rows"], 0);
+}
+
+#[test]
 fn autocorrect_cli_rejects_non_bangla_lexicon_words_by_default() {
     let workspace = TempWorkspace::new("obadh-autocorrect-cli-rejects-pollution");
     let lexicon_tsv = workspace.path("lexicon.tsv");
@@ -211,7 +252,7 @@ fn autocorrect_cli_extracts_and_audits_clean_bangla_word_frequencies() {
     let extracted = workspace.path("extracted.tsv");
     fs::write(
         &corpus,
-        "আমি আমি তুমি। hello ১২৩। র‌্যাব র‌্যাব ্ । কিরণ বড় বড\u{09BC}",
+        "আমি আমি তুমি। hello ১২৩। র‌্যাব র‌্যাব ্ ামি ক্ । কিরণ বড় বড\u{09BC}",
     )
     .expect("corpus fixture should write");
 
@@ -450,9 +491,11 @@ fn autocorrect_cli_extracts_corpus_directories_deterministically() {
     ]);
     assert!(extract.status.success(), "stderr: {}", stderr(&extract));
     let extract_json = json_stdout(&extract);
-    assert_eq!(extract_json["inputs"].as_array().unwrap().len(), 4);
+    assert_eq!(extract_json["inputs"].as_array().unwrap().len(), 1);
+    assert_eq!(extract_json["expanded_inputs"], 4);
     assert_eq!(extract_json["text_inputs"], 2);
     assert_eq!(extract_json["html_inputs"], 1);
+    assert_eq!(extract_json["json_inputs"], 0);
     assert_eq!(extract_json["epub_inputs"], 1);
     assert_eq!(extract_json["epub_fallback_inputs"], 1);
     assert_eq!(extract_json["token_count"], 9);
@@ -463,6 +506,100 @@ fn autocorrect_cli_extracts_corpus_directories_deterministically() {
     assert!(extracted_tsv.contains("আমি\t3"));
     assert!(extracted_tsv.contains("বই\t3"));
     assert!(!extracted_tsv.contains("দূষণ"));
+}
+
+#[test]
+fn autocorrect_cli_extracts_json_prose_and_rejects_assamese_only_letters() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-extract-json");
+    let corpus = workspace.path("article.json");
+    let extracted = workspace.path("extracted.tsv");
+    fs::write(
+        &corpus,
+        r#"{"title":"বাংলা ভাষা","url":"https://example.test/দূষণ","content":"আমি বাংলা লিখি। প্ৰথম ৱেবছাইট"}"#,
+    )
+    .expect("json corpus should write");
+
+    let extract = run_obadh_autocorrect([
+        "extract-lexicon",
+        "--input",
+        path_str(&corpus),
+        "--output",
+        path_str(&extracted),
+    ]);
+    assert!(extract.status.success(), "stderr: {}", stderr(&extract));
+    let extract_json = json_stdout(&extract);
+    assert_eq!(extract_json["expanded_inputs"], 1);
+    assert_eq!(extract_json["json_inputs"], 1);
+    assert_eq!(extract_json["token_count"], 5);
+    assert_eq!(extract_json["unique_words"], 4);
+
+    let extracted_tsv = fs::read_to_string(&extracted).expect("extracted TSV should read");
+    assert!(extracted_tsv.contains("বাংলা\t2"));
+    assert!(extracted_tsv.contains("ভাষা\t1"));
+    assert!(extracted_tsv.contains("লিখি\t1"));
+    assert!(!extracted_tsv.contains("দূষণ"));
+    assert!(!extracted_tsv.contains("প্ৰথম"));
+    assert!(!extracted_tsv.contains("ৱেবছাইট"));
+}
+
+#[test]
+fn autocorrect_cli_prepares_local_corpus_lexicon_in_one_pass() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-prepare-lexicon");
+    let corpus_dir = workspace.path("corpus");
+    fs::create_dir_all(&corpus_dir).expect("corpus directory should create");
+    fs::write(corpus_dir.join("a.txt"), "আমি বই").expect("text corpus should write");
+    write_minimal_epub(
+        &corpus_dir.join("b.epub"),
+        "<html><body>বই নদী নদী</body></html>",
+    );
+    let words = workspace.path("prepared/words.tsv");
+    let artifact = workspace.path("prepared/obadh.bn.lex");
+
+    let prepare = run_obadh_autocorrect([
+        "prepare-lexicon",
+        "--input",
+        path_str(&corpus_dir),
+        "--words-output",
+        path_str(&words),
+        "--lexicon-output",
+        path_str(&artifact),
+        "--min-frequency",
+        "2",
+        "--pretty",
+    ]);
+    assert!(prepare.status.success(), "stderr: {}", stderr(&prepare));
+    let prepare_json = json_stdout(&prepare);
+    assert_eq!(
+        prepare_json["extract"]["inputs"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(prepare_json["extract"]["expanded_inputs"], 2);
+    assert_eq!(prepare_json["extract"]["text_inputs"], 1);
+    assert_eq!(prepare_json["extract"]["json_inputs"], 0);
+    assert_eq!(prepare_json["extract"]["epub_inputs"], 1);
+    assert_eq!(prepare_json["extract"]["token_count"], 5);
+    assert_eq!(prepare_json["extract"]["unique_words"], 3);
+    assert_eq!(prepare_json["extract"]["emitted_entries"], 2);
+    assert_eq!(prepare_json["audit"]["accepted_rows"], 2);
+    assert_eq!(prepare_json["audit"]["non_bangla_rows"], 0);
+    assert_eq!(prepare_json["lexicon"]["entries"], 2);
+    assert!(words.exists());
+    assert!(artifact.exists());
+
+    let prepared_tsv = fs::read_to_string(&words).expect("prepared TSV should read");
+    assert!(prepared_tsv.contains("বই\t2"));
+    assert!(prepared_tsv.contains("নদী\t2"));
+    assert!(!prepared_tsv.contains("আমি\t1"));
+
+    let inspect = run_obadh_autocorrect([
+        "inspect-lexicon",
+        "--input",
+        path_str(&artifact),
+        "--pretty",
+    ]);
+    assert!(inspect.status.success(), "stderr: {}", stderr(&inspect));
+    let inspect_json = json_stdout(&inspect);
+    assert_eq!(inspect_json["entries"], 2);
 }
 
 #[test]
@@ -627,130 +764,42 @@ fn autocorrect_cli_suggests_runtime_candidates_for_roman_input() {
         suggest_json["returned_candidates"].as_u64().unwrap(),
         suggest_json["candidates"].as_array().unwrap().len() as u64
     );
+    let candidate = suggest_json["candidates"]
+        .as_array()
+        .unwrap()
+        .first()
+        .expect("suggestion response should include at least one candidate");
+    assert!(candidate["text"].as_str().is_some());
+    assert!(candidate["source"].as_str().is_some());
+    assert_eq!(candidate["features"].as_array().unwrap().len(), 9);
+
+    let suggest = run_obadh_autocorrect([
+        "suggest",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "kem",
+        "--max-candidates",
+        "64",
+        "--max-prefix-candidates",
+        "8",
+        "--max-skeleton-candidates",
+        "0",
+        "--response-candidates",
+        "64",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+    let suggest_json = json_stdout(&suggest);
+    assert_eq!(suggest_json["obadh_output"], "কেম");
     let kemon = suggest_json["candidates"]
         .as_array()
         .unwrap()
         .iter()
         .find(|candidate| candidate["text"] == "কেমন")
-        .expect("কেমন should be present as a runtime suggestion");
-    assert_eq!(kemon["source"], "phonetic_skeleton");
-    assert_eq!(kemon["features"].as_array().unwrap().len(), 10);
-    assert_eq!(kemon["features"][8], 1);
-
-    let suggest = run_obadh_autocorrect([
-        "suggest",
-        "--lexicon",
-        path_str(&artifact),
-        "--input",
-        "tmr",
-        "--max-candidates",
-        "64",
-        "--max-skeleton-candidates",
-        "64",
-        "--response-candidates",
-        "64",
-    ]);
-    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
-    let suggest_json = json_stdout(&suggest);
-    let tomar = suggest_json["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|candidate| candidate["text"] == "তোমার")
-        .expect("তোমার should be present as a runtime suggestion");
-    assert_eq!(tomar["features"][8], 1);
-
-    let suggest = run_obadh_autocorrect([
-        "suggest",
-        "--lexicon",
-        path_str(&artifact),
-        "--input",
-        "kthay",
-        "--max-candidates",
-        "64",
-        "--max-skeleton-candidates",
-        "64",
-        "--response-candidates",
-        "64",
-    ]);
-    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
-    let suggest_json = json_stdout(&suggest);
-    let kothay = suggest_json["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|candidate| candidate["text"] == "কোথায়")
-        .expect("কোথায় should be present as a runtime suggestion");
-    assert_eq!(kothay["features"][8], 1);
-
-    let suggest = run_obadh_autocorrect([
-        "suggest",
-        "--lexicon",
-        path_str(&artifact),
-        "--input",
-        "jmn",
-        "--max-candidates",
-        "64",
-        "--max-skeleton-candidates",
-        "64",
-        "--response-candidates",
-        "64",
-    ]);
-    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
-    let suggest_json = json_stdout(&suggest);
-    let jemon = suggest_json["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|candidate| candidate["text"] == "যেমন")
-        .expect("যেমন should be present as a runtime suggestion");
-    assert_eq!(jemon["features"][8], 1);
-
-    let suggest = run_obadh_autocorrect([
-        "suggest",
-        "--lexicon",
-        path_str(&artifact),
-        "--input",
-        "jbo",
-        "--max-candidates",
-        "64",
-        "--max-skeleton-candidates",
-        "64",
-        "--response-candidates",
-        "64",
-    ]);
-    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
-    let suggest_json = json_stdout(&suggest);
-    let jabo = suggest_json["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|candidate| candidate["text"] == "যাবো")
-        .expect("যাবো should be present as a runtime suggestion");
-    assert_eq!(jabo["features"][8], 1);
-
-    let suggest = run_obadh_autocorrect([
-        "suggest",
-        "--lexicon",
-        path_str(&artifact),
-        "--input",
-        "krbo",
-        "--max-candidates",
-        "64",
-        "--max-skeleton-candidates",
-        "64",
-        "--response-candidates",
-        "64",
-    ]);
-    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
-    let suggest_json = json_stdout(&suggest);
-    let korbo = suggest_json["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|candidate| candidate["text"] == "করবো")
-        .expect("করবো should be present as a runtime suggestion");
-    assert_eq!(korbo["features"][8], 1);
+        .expect("কেমন should be present as a prefix completion");
+    assert_eq!(kemon["source"], "prefix_completion");
+    assert_eq!(kemon["features"][0], 4);
+    assert_eq!(kemon["edit_cost"], 0);
 }
 
 #[test]
@@ -813,7 +862,7 @@ fn autocorrect_cli_exports_labeled_candidate_jsonl() {
         .expect("expected target candidate should be labeled");
     assert_eq!(labeled["text"], "আমি");
     assert_eq!(labeled["source"], "lexicon_edit");
-    assert_eq!(labeled["features"].as_array().unwrap().len(), 10);
+    assert_eq!(labeled["features"].as_array().unwrap().len(), 9);
 
     assert_eq!(records[1]["baseline"], "বিজ্ঞান");
     assert_eq!(records[1]["baseline_exact"], true);

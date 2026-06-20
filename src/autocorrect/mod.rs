@@ -7,23 +7,14 @@
 
 mod artifact;
 mod bangla;
-mod char_reranker;
 mod edit;
 mod lexicon;
-mod mlp;
 mod ranker;
-mod roman_edit;
 
 pub use artifact::LexiconArtifactError;
-pub use char_reranker::{
-    CharCandidateReranker, CharCandidateRerankerError, CharReplacementPolicy,
-    ScoredCorrectionCandidate,
-};
 pub use edit::{weighted_edit_distance, EditCost};
 pub use lexicon::{Lexicon, LexiconEntry, LexiconStats};
-pub use mlp::{MlpReranker, MlpRerankerError};
 pub use ranker::{
     AutocorrectConfig, AutocorrectDecision, AutocorrectEngine, CandidateFeatures,
     CorrectionCandidate, CorrectionRequest, CorrectionSource, AUTOCORRECT_FEATURE_DIM,
 };
-pub(crate) use roman_edit::roman_edit_candidates;

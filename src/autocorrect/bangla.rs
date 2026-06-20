@@ -106,7 +106,6 @@ fn skeleton_char(ch: char) -> Option<char> {
         | '\u{09CE}'
         | '\u{09DC}'..='\u{09DD}'
         | '\u{09DF}'..='\u{09E1}' => Some(fold_base_consonant(ch)),
-        '\u{09F0}'..='\u{09F1}' => Some(ch),
         _ if matches!(unit_class(ch), UnitClass::VowelSign | UnitClass::Hasant) => None,
         _ => None,
     }

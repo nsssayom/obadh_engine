@@ -102,129 +102,42 @@ fn autocorrect_features_mark_obadh_baseline_candidate() {
     assert!(!correction.features.obadh_baseline);
     assert!(!correction.features.input_known);
     assert!(correction.features.candidate_known);
-    assert!(!correction.features.generated_roman_candidate);
     assert_eq!(correction.features.as_i16_array()[0], 1);
 }
 
 #[test]
-fn autocorrect_request_generates_roman_missing_vowel_neighbors() {
-    let obadh = ObadhEngine::new();
-    let request = obadh.autocorrect_request("okalpokko");
-
-    assert_eq!(request.current, "অকল্পক্ক");
-    assert!(request
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "অকালপক্ক"));
-    assert!(!request
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "অকল্পকক"));
-}
-
-#[test]
-fn autocorrect_request_generates_two_gap_roman_missing_vowel_neighbors() {
-    let obadh = ObadhEngine::new();
-    let request = obadh.autocorrect_request("kmn");
-
-    assert_eq!(request.current, "ক্মন");
-    assert!(request
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "কেমন"));
-    assert!(
-        request.generated_candidates.len() <= 24,
-        "generated candidates should stay bounded: {:?}",
-        request.generated_candidates
-    );
-}
-
-#[test]
-fn autocorrect_request_generates_prioritized_sparse_roman_vowel_variants() {
-    let obadh = ObadhEngine::new();
-    let tomar = obadh.autocorrect_request("tmr");
-    let tomake = obadh.autocorrect_request("tmk");
-    let kothay = obadh.autocorrect_request("kthay");
-    let jemon = obadh.autocorrect_request("jmn");
-    let jabo = obadh.autocorrect_request("jbo");
-    let korbo = obadh.autocorrect_request("krbo");
-
-    assert!(tomar
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "তোমার"));
-    assert!(tomake
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "তোমাকে"));
-    assert!(kothay
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "কোথায়"));
-    assert!(jemon
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "যেমন"));
-    assert!(jabo
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "যাবো"));
-    assert!(korbo
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate == "করবো"));
-    assert!(tomar.generated_candidates.len() <= 24);
-    assert!(tomake.generated_candidates.len() <= 24);
-    assert!(kothay.generated_candidates.len() <= 24);
-    assert!(jemon.generated_candidates.len() <= 24);
-    assert!(jabo.generated_candidates.len() <= 24);
-    assert!(korbo.generated_candidates.len() <= 24);
-}
-
-#[test]
-fn autocorrect_can_suggest_generated_roman_neighbor_without_lexicon_entry() {
-    let obadh = ObadhEngine::new();
+fn autocorrect_suggests_prefix_completions_from_lexicon_frequency() {
     let autocorrect = AutocorrectEngine::with_config(
-        Lexicon::default(),
+        Lexicon::new([
+            LexiconEntry::new("কেমন", 225),
+            LexiconEntry::new("কেমনি", 11),
+            LexiconEntry::new("কেমনে", 10),
+            LexiconEntry::new("যেমন", 247),
+        ]),
         AutocorrectConfig {
-            max_candidates: 16,
+            max_candidates: 8,
+            max_prefix_candidates: 4,
+            max_skeleton_candidates: 0,
+            max_edit_cost: 0,
             ..AutocorrectConfig::default()
         },
     );
 
-    let decision = autocorrect.decide(obadh.autocorrect_request("okalpokko"));
-
-    let candidate = decision
+    let decision = autocorrect.decide(CorrectionRequest::new("কেম"));
+    let completions = decision
         .candidates
         .iter()
-        .find(|candidate| candidate.text == "অকালপক্ক")
-        .expect("deterministic Roman neighbor should be suggested");
-    assert_eq!(candidate.source, CorrectionSource::RomanEdit);
-    assert_eq!(candidate.features.source_id, 3);
-    assert!(candidate.features.candidate_known);
-    assert!(candidate.features.generated_roman_candidate);
-}
-
-#[test]
-fn autocorrect_deduplicates_generated_candidates_against_lexicon_evidence() {
-    let autocorrect = AutocorrectEngine::with_config(
-        Lexicon::new([LexiconEntry::new("অকালপক্ক", 1)]),
-        AutocorrectConfig {
-            max_candidates: 16,
-            max_skeleton_candidates: 16,
-            ..AutocorrectConfig::default()
-        },
-    );
-
-    let decision =
-        autocorrect.decide(CorrectionRequest::new("অকল্পক্ক").with_generated_candidates(["অকালপক্ক"]));
-    let candidates = decision
-        .candidates
-        .iter()
-        .filter(|candidate| candidate.text == "অকালপক্ক")
+        .filter(|candidate| candidate.source == CorrectionSource::PrefixCompletion)
+        .map(|candidate| candidate.text.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].source, CorrectionSource::PhoneticSkeleton);
-    assert!(candidates[0].features.generated_roman_candidate);
+    assert_eq!(completions, vec!["কেমন", "কেমনি", "কেমনে"]);
+    assert_eq!(decision.replacement, None);
+    let kemon = decision
+        .candidates
+        .iter()
+        .find(|candidate| candidate.text == "কেমন")
+        .expect("prefix completion should include কেমন");
+    assert_eq!(kemon.features.source_id, 4);
+    assert_eq!(kemon.edit_cost.0, 0);
 }

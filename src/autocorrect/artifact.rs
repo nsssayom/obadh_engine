@@ -1,6 +1,16 @@
 use std::fmt;
 
-pub(crate) const LEXICON_MAGIC: &[u8; 8] = b"OBACLEX1";
+pub(crate) const LEXICON_MAGIC_V1: &[u8; 8] = b"OBACLEX1";
+pub(crate) const LEXICON_MAGIC_V2: &[u8; 8] = b"OBACLEX2";
+pub(crate) const LEXICON_MAGIC_V3: &[u8; 8] = b"OBACLEX3";
+pub(crate) const LEXICON_MAGIC: &[u8; 8] = LEXICON_MAGIC_V3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LexiconArtifactVersion {
+    V1,
+    V2,
+    V3,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexiconArtifactError {
@@ -12,6 +22,9 @@ pub enum LexiconArtifactError {
     DuplicateWord { index: usize },
     UnsortedWord { index: usize },
     WordTooLong { bytes: usize },
+    SkeletonTooLong { bytes: usize },
+    TooManySkeletons { skeletons: usize },
+    InvalidSkeletonIndex { index: usize, skeleton_index: u32 },
     TooManyEntries { entries: usize },
 }
 
@@ -48,6 +61,27 @@ impl fmt::Display for LexiconArtifactError {
                     "autocorrect lexicon word is too long for artifact format: {bytes} bytes"
                 )
             }
+            Self::SkeletonTooLong { bytes } => {
+                write!(
+                    formatter,
+                    "autocorrect lexicon skeleton is too long for artifact format: {bytes} bytes"
+                )
+            }
+            Self::TooManySkeletons { skeletons } => {
+                write!(
+                    formatter,
+                    "autocorrect lexicon has too many skeletons for artifact format: {skeletons}"
+                )
+            }
+            Self::InvalidSkeletonIndex {
+                index,
+                skeleton_index,
+            } => {
+                write!(
+                    formatter,
+                    "invalid skeleton index {skeleton_index} at autocorrect lexicon entry {index}"
+                )
+            }
             Self::TooManyEntries { entries } => {
                 write!(
                     formatter,
@@ -70,12 +104,13 @@ impl<'a> ArtifactReader<'a> {
         Self { bytes, offset: 0 }
     }
 
-    pub(crate) fn read_magic(&mut self) -> Result<(), LexiconArtifactError> {
+    pub(crate) fn read_magic(&mut self) -> Result<LexiconArtifactVersion, LexiconArtifactError> {
         let magic = self.read_exact(LEXICON_MAGIC.len())?;
-        if magic == LEXICON_MAGIC {
-            Ok(())
-        } else {
-            Err(LexiconArtifactError::InvalidMagic)
+        match magic {
+            _ if magic == LEXICON_MAGIC_V1 => Ok(LexiconArtifactVersion::V1),
+            _ if magic == LEXICON_MAGIC_V2 => Ok(LexiconArtifactVersion::V2),
+            _ if magic == LEXICON_MAGIC_V3 => Ok(LexiconArtifactVersion::V3),
+            _ => Err(LexiconArtifactError::InvalidMagic),
         }
     }
 

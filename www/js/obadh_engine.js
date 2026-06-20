@@ -39,30 +39,6 @@ export class ObadhAutocorrectWasm {
         }
     }
     /**
-     * @param {Uint8Array} lexicon_bytes
-     * @param {Uint8Array} reranker_json
-     * @returns {ObadhAutocorrectWasm}
-     */
-    static fromCompactLexiconAndCharReranker(lexicon_bytes, reranker_json) {
-        try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passArray8ToWasm0(lexicon_bytes, wasm.__wbindgen_export);
-            const len0 = WASM_VECTOR_LEN;
-            const ptr1 = passArray8ToWasm0(reranker_json, wasm.__wbindgen_export);
-            const len1 = WASM_VECTOR_LEN;
-            wasm.obadhautocorrectwasm_fromCompactLexiconAndCharReranker(retptr, ptr0, len0, ptr1, len1);
-            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
-            if (r2) {
-                throw takeObject(r1);
-            }
-            return ObadhAutocorrectWasm.__wrap(r0);
-        } finally {
-            wasm.__wbindgen_add_to_stack_pointer(16);
-        }
-    }
-    /**
      * @param {string} lexicon_tsv
      * @returns {ObadhAutocorrectWasm}
      */

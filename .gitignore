@@ -24,18 +24,12 @@ www/node_modules/
 __pycache__/
 *.py[cod]
 
-# Large local autocorrect data/model workspace. Keep pipeline metadata in git;
-# keep raw corpora, generated candidates, and trained local model artifacts out.
-data/autocorrect/raw/**
-data/autocorrect/interim/**
-data/autocorrect/processed/**
-data/autocorrect/models/**
-!data/autocorrect/raw/.gitkeep
-!data/autocorrect/interim/.gitkeep
-!data/autocorrect/processed/.gitkeep
-!data/autocorrect/models/.gitkeep
-!data/autocorrect/manifests/
-!data/autocorrect/manifests/**
+# Local autocorrect scratch space. Curated lexicon TSVs and compact runtime
+# lexicon binaries under data/autocorrect/lexicons and data/autocorrect/models
+# are intentional repo artifacts.
+data/autocorrect/tmp/**
+data/autocorrect/candidates/**
+data/autocorrect/training/**
 
 # Local book/corpus drops for manual extraction smoke tests.
 epubs/

@@ -3,6 +3,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 
 #[derive(Debug)]
@@ -16,6 +17,7 @@ pub(crate) struct CorpusText {
 pub(crate) struct CorpusSourceStats {
     pub(crate) text_inputs: usize,
     pub(crate) html_inputs: usize,
+    pub(crate) json_inputs: usize,
     pub(crate) epub_inputs: usize,
     pub(crate) epub_spine_items: usize,
     pub(crate) epub_fallback_inputs: usize,
@@ -33,6 +35,13 @@ impl CorpusSourceStats {
     fn html_input() -> Self {
         Self {
             html_inputs: 1,
+            ..Self::default()
+        }
+    }
+
+    fn json_input() -> Self {
+        Self {
+            json_inputs: 1,
             ..Self::default()
         }
     }
@@ -57,6 +66,7 @@ impl CorpusSourceStats {
     pub(crate) fn add(&mut self, other: Self) {
         self.text_inputs += other.text_inputs;
         self.html_inputs += other.html_inputs;
+        self.json_inputs += other.json_inputs;
         self.epub_inputs += other.epub_inputs;
         self.epub_spine_items += other.epub_spine_items;
         self.epub_fallback_inputs += other.epub_fallback_inputs;
@@ -116,7 +126,7 @@ fn is_supported_directory_corpus_file(path: &Path) -> bool {
     };
     matches!(
         extension.to_ascii_lowercase().as_str(),
-        "epub" | "html" | "htm" | "xhtml" | "txt" | "text" | "md" | "markdown"
+        "epub" | "html" | "htm" | "xhtml" | "json" | "txt" | "text" | "md" | "markdown"
     )
 }
 
@@ -126,6 +136,13 @@ pub(crate) fn read_corpus_text(input: &Path) -> Result<CorpusText, Box<dyn std::
     }
 
     let text = fs::read_to_string(input)?;
+    if is_json_path(input) {
+        return Ok(CorpusText {
+            source_bytes: text.len() as u64,
+            text: normalize_bangla_text(&json_to_text(&text)?),
+            stats: CorpusSourceStats::json_input(),
+        });
+    }
     if is_htmlish_path(input) {
         return Ok(CorpusText {
             source_bytes: text.len() as u64,
@@ -356,6 +373,13 @@ fn is_htmlish_path(input: &Path) -> bool {
         })
 }
 
+fn is_json_path(input: &Path) -> bool {
+    input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+}
+
 fn is_epub_text_member(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     matches!(
@@ -371,6 +395,43 @@ fn is_plain_text_member(name: &str) -> bool {
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+}
+
+fn json_to_text(input: &str) -> Result<String, serde_json::Error> {
+    let value = serde_json::from_str::<Value>(input)?;
+    let mut output = String::new();
+    append_json_prose_text(&value, &mut output);
+    Ok(output)
+}
+
+fn append_json_prose_text(value: &Value, output: &mut String) {
+    match value {
+        Value::Object(object) => {
+            let mut emitted_known_field = false;
+            for key in ["title", "headline", "content", "text", "body", "article"] {
+                if let Some(value) = object.get(key) {
+                    append_json_prose_text(value, output);
+                    emitted_known_field = true;
+                }
+            }
+            if emitted_known_field {
+                return;
+            }
+            for value in object.values() {
+                append_json_prose_text(value, output);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                append_json_prose_text(value, output);
+            }
+        }
+        Value::String(text) => {
+            output.push_str(text);
+            output.push('\n');
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
 }
 
 fn xml_tags_named<'a>(xml: &'a str, expected_name: &str) -> Vec<&'a str> {
@@ -686,12 +747,13 @@ impl<'a> Iterator for BanglaTokenIter<'a> {
 }
 
 fn is_bangla_token_char(ch: char) -> bool {
-    is_bangla_word_char(ch) || is_joiner(ch)
+    is_bengali_block_word_char(ch) || is_joiner(ch)
 }
 
 pub(crate) fn is_bangla_lexicon_word(word: &str) -> bool {
     let mut has_base = false;
     let mut previous_joiner = false;
+    let mut previous_hasant = false;
 
     for (index, ch) in word.chars().enumerate() {
         if is_joiner(ch) {
@@ -701,15 +763,26 @@ pub(crate) fn is_bangla_lexicon_word(word: &str) -> bool {
             previous_joiner = true;
             continue;
         }
-        previous_joiner = false;
 
         if !is_bangla_word_char(ch) {
             return false;
         }
+        if !has_base && !is_bangla_base_char(ch) {
+            return false;
+        }
+        if previous_hasant && !is_bangla_base_char(ch) {
+            return false;
+        }
+        if previous_hasant && ch == '\u{09CD}' {
+            return false;
+        }
+
+        previous_joiner = false;
+        previous_hasant = ch == '\u{09CD}';
         has_base |= is_bangla_base_char(ch);
     }
 
-    has_base && !previous_joiner
+    has_base && !previous_joiner && !previous_hasant
 }
 
 pub(crate) fn is_clean_roman_word_input(word: &str) -> bool {
@@ -744,6 +817,10 @@ fn is_bangla_word_char(ch: char) -> bool {
         )
 }
 
+fn is_bengali_block_word_char(ch: char) -> bool {
+    is_bangla_word_char(ch) || matches!(ch, '\u{09F0}'..='\u{09F1}')
+}
+
 fn is_bangla_base_char(ch: char) -> bool {
     matches!(
         ch,
@@ -756,7 +833,6 @@ fn is_bangla_base_char(ch: char) -> bool {
             | '\u{09CE}'
             | '\u{09DC}'..='\u{09DD}'
             | '\u{09DF}'..='\u{09E1}'
-            | '\u{09F0}'..='\u{09F1}'
     )
 }
 

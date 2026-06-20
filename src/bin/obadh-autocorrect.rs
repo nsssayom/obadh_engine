@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use obadh_engine::{
-    weighted_edit_distance, AutocorrectConfig, AutocorrectEngine, CharCandidateReranker,
-    CharReplacementPolicy, CorrectionCandidate, CorrectionRequest, CorrectionSource, Lexicon,
-    LexiconEntry, MlpReranker, ObadhEngine, ScoredCorrectionCandidate, AUTOCORRECT_FEATURE_DIM,
+    weighted_edit_distance, AutocorrectConfig, AutocorrectEngine, CorrectionCandidate,
+    CorrectionRequest, CorrectionSource, Lexicon, LexiconEntry, ObadhEngine,
+    AUTOCORRECT_FEATURE_DIM,
 };
 use serde::Serialize;
 
@@ -43,6 +43,20 @@ enum Command {
         min_frequency: u32,
         #[arg(long)]
         max_entries: Option<usize>,
+    },
+    PrepareLexicon {
+        #[arg(long, required = true)]
+        input: Vec<PathBuf>,
+        #[arg(long)]
+        words_output: PathBuf,
+        #[arg(long)]
+        lexicon_output: PathBuf,
+        #[arg(long, default_value_t = 2)]
+        min_frequency: u32,
+        #[arg(long)]
+        max_entries: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        pretty: bool,
     },
     AuditLexicon {
         #[arg(long)]
@@ -82,6 +96,12 @@ enum Command {
         #[arg(long, default_value_t = false)]
         allow_non_bangla: bool,
     },
+    ExportLexicon {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
     InspectLexicon {
         #[arg(long)]
         input: PathBuf,
@@ -94,17 +114,11 @@ enum Command {
         #[arg(long)]
         input: String,
         #[arg(long)]
-        char_reranker: Option<PathBuf>,
-        #[arg(long, default_value_t = false)]
-        char_autoreplace: bool,
-        #[arg(long)]
-        char_autoreplace_min_score: Option<f32>,
-        #[arg(long)]
-        char_autoreplace_min_margin: Option<f32>,
-        #[arg(long)]
         max_candidates: Option<usize>,
         #[arg(long)]
         max_edit_cost: Option<u16>,
+        #[arg(long)]
+        max_prefix_candidates: Option<usize>,
         #[arg(long)]
         max_skeleton_candidates: Option<usize>,
         #[arg(long)]
@@ -121,22 +135,14 @@ enum Command {
         lexicon: PathBuf,
         #[arg(long)]
         input: PathBuf,
-        #[arg(long)]
-        reranker: Option<PathBuf>,
-        #[arg(long)]
-        char_reranker: Option<PathBuf>,
-        #[arg(long, default_value_t = false)]
-        char_autoreplace: bool,
-        #[arg(long)]
-        char_autoreplace_min_score: Option<f32>,
-        #[arg(long)]
-        char_autoreplace_min_margin: Option<f32>,
         #[arg(long, value_enum, default_value_t = EvalInputKind::Bangla)]
         input_kind: EvalInputKind,
         #[arg(long)]
         max_candidates: Option<usize>,
         #[arg(long)]
         max_edit_cost: Option<u16>,
+        #[arg(long)]
+        max_prefix_candidates: Option<usize>,
         #[arg(long)]
         max_skeleton_candidates: Option<usize>,
         #[arg(long)]
@@ -153,14 +159,14 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         output: PathBuf,
-        #[arg(long)]
-        char_reranker: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = EvalInputKind::Bangla)]
         input_kind: EvalInputKind,
         #[arg(long)]
         max_candidates: Option<usize>,
         #[arg(long)]
         max_edit_cost: Option<u16>,
+        #[arg(long)]
+        max_prefix_candidates: Option<usize>,
         #[arg(long)]
         max_skeleton_candidates: Option<usize>,
         #[arg(long)]
@@ -197,16 +203,29 @@ struct BuildReport {
     trie_nodes: usize,
     trie_edges: usize,
     skeleton_keys: usize,
+    unique_skeletons: usize,
     skeleton_delete_keys: usize,
     artifact_bytes: usize,
 }
 
 #[derive(Debug, Serialize)]
+struct LexiconExportReport {
+    input: String,
+    output: String,
+    entries: usize,
+    total_frequency: u64,
+    max_frequency: u32,
+    artifact_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
 struct ExtractReport {
     inputs: Vec<String>,
+    expanded_inputs: usize,
     output: String,
     text_inputs: usize,
     html_inputs: usize,
+    json_inputs: usize,
     epub_inputs: usize,
     epub_spine_items: usize,
     epub_fallback_inputs: usize,
@@ -217,6 +236,13 @@ struct ExtractReport {
     emitted_entries: usize,
     min_frequency: u32,
     max_entries: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct PrepareLexiconReport {
+    extract: ExtractReport,
+    audit: AuditReport,
+    lexicon: BuildReport,
 }
 
 #[derive(Debug, Serialize)]
@@ -316,6 +342,7 @@ struct InspectReport {
     trie_nodes: usize,
     trie_edges: usize,
     skeleton_keys: usize,
+    unique_skeletons: usize,
     skeleton_delete_keys: usize,
     artifact_bytes: u64,
 }
@@ -383,7 +410,6 @@ struct CandidateExportCandidate {
     edit_cost: u16,
     frequency: u32,
     score: i32,
-    model_score: Option<f32>,
     features: [i16; AUTOCORRECT_FEATURE_DIM],
     label: bool,
 }
@@ -395,7 +421,6 @@ struct SuggestCandidate {
     edit_cost: u16,
     frequency: u32,
     score: i32,
-    model_score: Option<f32>,
     features: [i16; AUTOCORRECT_FEATURE_DIM],
 }
 
@@ -464,6 +489,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let report = extract_lexicon(&input, &output, min_frequency, max_entries)?;
             print_json(&report, true)?;
         }
+        Command::PrepareLexicon {
+            input,
+            words_output,
+            lexicon_output,
+            min_frequency,
+            max_entries,
+            pretty,
+        } => {
+            let report = prepare_lexicon(
+                &input,
+                &words_output,
+                &lexicon_output,
+                min_frequency,
+                max_entries,
+            )?;
+            print_json(&report, pretty)?;
+        }
         Command::AuditLexicon {
             input,
             allow_non_bangla,
@@ -511,32 +553,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output,
             allow_non_bangla,
         } => {
-            let lexicon_input = read_lexicon_tsvs(&input, allow_non_bangla)?;
-            let entries = lexicon_input.entries;
-            let lexicon = Lexicon::new(entries);
-            let bytes = lexicon.to_compact_bytes()?;
-            let stats = lexicon.stats();
-            fs::write(&output, &bytes)?;
-            print_json(
-                &BuildReport {
-                    inputs: input
-                        .iter()
-                        .map(|input| input.display().to_string())
-                        .collect(),
-                    output: output.display().to_string(),
-                    input_rows: lexicon_input.rows,
-                    duplicate_rows: lexicon_input.duplicate_rows,
-                    total_frequency: lexicon_input.total_frequency,
-                    max_frequency: lexicon_input.max_frequency,
-                    entries: stats.entries,
-                    trie_nodes: stats.trie_nodes,
-                    trie_edges: stats.trie_edges,
-                    skeleton_keys: stats.skeleton_keys,
-                    skeleton_delete_keys: stats.skeleton_delete_keys,
-                    artifact_bytes: bytes.len(),
-                },
-                true,
-            )?;
+            let report = build_lexicon_artifact(&input, &output, allow_non_bangla)?;
+            print_json(&report, true)?;
+        }
+        Command::ExportLexicon { input, output } => {
+            let report = export_lexicon_tsv(&input, &output)?;
+            print_json(&report, true)?;
         }
         Command::InspectLexicon { input, pretty } => {
             let lexicon = read_compact_lexicon(&input)?;
@@ -548,6 +570,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     trie_nodes: stats.trie_nodes,
                     trie_edges: stats.trie_edges,
                     skeleton_keys: stats.skeleton_keys,
+                    unique_skeletons: stats.unique_skeletons,
                     skeleton_delete_keys: stats.skeleton_delete_keys,
                     artifact_bytes: fs::metadata(&input)?.len(),
                 },
@@ -557,12 +580,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Suggest {
             lexicon,
             input,
-            char_reranker,
-            char_autoreplace,
-            char_autoreplace_min_score,
-            char_autoreplace_min_margin,
             max_candidates,
             max_edit_cost,
+            max_prefix_candidates,
             max_skeleton_candidates,
             max_skeleton_edit_cost,
             search_known_input,
@@ -570,72 +590,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             pretty,
         } => {
             let lexicon_model = read_compact_lexicon(&lexicon)?;
-            let char_reranker_model = read_char_reranker(char_reranker.as_ref())?;
-            let char_replacement_policy = resolve_char_replacement_policy(
-                char_reranker_model.as_ref(),
-                char_autoreplace,
-                char_autoreplace_min_score,
-                char_autoreplace_min_margin,
-            )?;
             let config = autocorrect_runtime_config(
                 max_candidates,
                 max_edit_cost,
+                max_prefix_candidates,
                 max_skeleton_candidates,
                 max_skeleton_edit_cost,
                 search_known_input,
             );
-            let report = suggest(
-                &input,
-                lexicon_model,
-                config,
-                char_reranker_model.as_ref(),
-                char_replacement_policy,
-                response_candidates,
-            );
+            let report = suggest(&input, lexicon_model, config, response_candidates);
             print_json(&report, pretty)?;
         }
         Command::Eval {
             lexicon,
             input,
-            reranker,
-            char_reranker,
-            char_autoreplace,
-            char_autoreplace_min_score,
-            char_autoreplace_min_margin,
             input_kind,
             max_candidates,
             max_edit_cost,
+            max_prefix_candidates,
             max_skeleton_candidates,
             max_skeleton_edit_cost,
             search_known_input,
             pretty,
         } => {
             let lexicon_model = read_compact_lexicon(&lexicon)?;
-            let reranker_model = read_reranker(reranker.as_ref())?;
-            let char_reranker_model = read_char_reranker(char_reranker.as_ref())?;
-            let char_replacement_policy = resolve_char_replacement_policy(
-                char_reranker_model.as_ref(),
-                char_autoreplace,
-                char_autoreplace_min_score,
-                char_autoreplace_min_margin,
-            )?;
             let config = autocorrect_config(
                 max_candidates,
                 max_edit_cost,
+                max_prefix_candidates,
                 max_skeleton_candidates,
                 max_skeleton_edit_cost,
                 search_known_input,
             );
-            let report = evaluate(
-                &input,
-                &lexicon,
-                input_kind,
-                lexicon_model,
-                config,
-                reranker_model.as_ref(),
-                char_reranker_model.as_ref(),
-                char_replacement_policy,
-            )?;
+            let report = evaluate(&input, &lexicon, input_kind, lexicon_model, config)?;
             print_json(
                 &EvalReportJson {
                     report: &report,
@@ -656,32 +643,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             lexicon,
             input,
             output,
-            char_reranker,
             input_kind,
             max_candidates,
             max_edit_cost,
+            max_prefix_candidates,
             max_skeleton_candidates,
             max_skeleton_edit_cost,
             search_known_input,
         } => {
             let lexicon_model = read_compact_lexicon(&lexicon)?;
-            let char_reranker_model = read_char_reranker(char_reranker.as_ref())?;
             let config = autocorrect_config(
                 max_candidates,
                 max_edit_cost,
+                max_prefix_candidates,
                 max_skeleton_candidates,
                 max_skeleton_edit_cost,
                 search_known_input,
             );
-            let report = export_candidates(
-                &input,
-                &output,
-                &lexicon,
-                input_kind,
-                lexicon_model,
-                config,
-                char_reranker_model.as_ref(),
-            )?;
+            let report =
+                export_candidates(&input, &output, &lexicon, input_kind, lexicon_model, config)?;
             print_json(&report, true)?;
         }
     }
@@ -692,6 +672,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn autocorrect_config(
     max_candidates: Option<usize>,
     max_edit_cost: Option<u16>,
+    max_prefix_candidates: Option<usize>,
     max_skeleton_candidates: Option<usize>,
     max_skeleton_edit_cost: Option<u16>,
     search_known_input: bool,
@@ -703,6 +684,9 @@ fn autocorrect_config(
     if let Some(max_edit_cost) = max_edit_cost {
         config.max_edit_cost = max_edit_cost;
         config.roman_input_max_edit_cost = max_edit_cost;
+    }
+    if let Some(max_prefix_candidates) = max_prefix_candidates {
+        config.max_prefix_candidates = max_prefix_candidates;
     }
     if let Some(max_skeleton_candidates) = max_skeleton_candidates {
         config.max_skeleton_candidates = max_skeleton_candidates;
@@ -717,6 +701,7 @@ fn autocorrect_config(
 fn autocorrect_runtime_config(
     max_candidates: Option<usize>,
     max_edit_cost: Option<u16>,
+    max_prefix_candidates: Option<usize>,
     max_skeleton_candidates: Option<usize>,
     max_skeleton_edit_cost: Option<u16>,
     search_known_input: bool,
@@ -724,6 +709,7 @@ fn autocorrect_runtime_config(
     autocorrect_config(
         Some(max_candidates.unwrap_or(RUNTIME_RERANK_POOL_SIZE)),
         max_edit_cost,
+        Some(max_prefix_candidates.unwrap_or(DEFAULT_SUGGEST_RESPONSE_CANDIDATES)),
         Some(max_skeleton_candidates.unwrap_or(RUNTIME_RERANK_POOL_SIZE)),
         max_skeleton_edit_cost,
         search_known_input,
@@ -736,13 +722,13 @@ fn extract_lexicon(
     min_frequency: u32,
     max_entries: Option<usize>,
 ) -> Result<ExtractReport, Box<dyn std::error::Error>> {
-    let inputs = expand_corpus_inputs(inputs)?;
+    let expanded_inputs = expand_corpus_inputs(inputs)?;
     let mut frequencies = BTreeMap::<String, u32>::new();
     let mut corpus_bytes = 0_u64;
     let mut token_count = 0_usize;
     let mut source_stats = CorpusSourceStats::default();
 
-    for input in &inputs {
+    for input in &expanded_inputs {
         let corpus = read_corpus_text(input)?;
         corpus_bytes = corpus_bytes.saturating_add(corpus.source_bytes);
         source_stats.add(corpus.stats);
@@ -780,9 +766,11 @@ fn extract_lexicon(
             .iter()
             .map(|input| input.display().to_string())
             .collect(),
+        expanded_inputs: expanded_inputs.len(),
         output: output.display().to_string(),
         text_inputs: source_stats.text_inputs,
         html_inputs: source_stats.html_inputs,
+        json_inputs: source_stats.json_inputs,
         epub_inputs: source_stats.epub_inputs,
         epub_spine_items: source_stats.epub_spine_items,
         epub_fallback_inputs: source_stats.epub_fallback_inputs,
@@ -794,6 +782,101 @@ fn extract_lexicon(
         min_frequency,
         max_entries,
     })
+}
+
+fn prepare_lexicon(
+    inputs: &[PathBuf],
+    words_output: &PathBuf,
+    lexicon_output: &PathBuf,
+    min_frequency: u32,
+    max_entries: Option<usize>,
+) -> Result<PrepareLexiconReport, Box<dyn std::error::Error>> {
+    ensure_parent_dir(words_output)?;
+    ensure_parent_dir(lexicon_output)?;
+
+    let extract = extract_lexicon(inputs, words_output, min_frequency, max_entries)?;
+    let audit = audit_lexicon_tsv(words_output, false)?;
+    let lexicon = build_lexicon_artifact(&[words_output.clone()], lexicon_output, false)?;
+
+    Ok(PrepareLexiconReport {
+        extract,
+        audit,
+        lexicon,
+    })
+}
+
+fn build_lexicon_artifact(
+    inputs: &[PathBuf],
+    output: &PathBuf,
+    allow_non_bangla: bool,
+) -> Result<BuildReport, Box<dyn std::error::Error>> {
+    ensure_parent_dir(output)?;
+
+    let lexicon_input = read_lexicon_tsvs(inputs, allow_non_bangla)?;
+    let lexicon = Lexicon::new(lexicon_input.entries);
+    let bytes = lexicon.to_compact_bytes()?;
+    let stats = lexicon.stats();
+    fs::write(output, &bytes)?;
+
+    Ok(BuildReport {
+        inputs: inputs
+            .iter()
+            .map(|input| input.display().to_string())
+            .collect(),
+        output: output.display().to_string(),
+        input_rows: lexicon_input.rows,
+        duplicate_rows: lexicon_input.duplicate_rows,
+        total_frequency: lexicon_input.total_frequency,
+        max_frequency: lexicon_input.max_frequency,
+        entries: stats.entries,
+        trie_nodes: stats.trie_nodes,
+        trie_edges: stats.trie_edges,
+        skeleton_keys: stats.skeleton_keys,
+        unique_skeletons: stats.unique_skeletons,
+        skeleton_delete_keys: stats.skeleton_delete_keys,
+        artifact_bytes: bytes.len(),
+    })
+}
+
+fn export_lexicon_tsv(
+    input: &PathBuf,
+    output: &PathBuf,
+) -> Result<LexiconExportReport, Box<dyn std::error::Error>> {
+    ensure_parent_dir(output)?;
+
+    let lexicon = read_compact_lexicon(input)?;
+    let mut tsv = String::new();
+    let mut total_frequency = 0_u64;
+    let mut max_frequency = 0_u32;
+    for entry in lexicon.entries() {
+        total_frequency = total_frequency.saturating_add(entry.frequency as u64);
+        max_frequency = max_frequency.max(entry.frequency);
+        tsv.push_str(&entry.word);
+        tsv.push('\t');
+        tsv.push_str(&entry.frequency.to_string());
+        tsv.push('\n');
+    }
+    fs::write(output, tsv)?;
+
+    Ok(LexiconExportReport {
+        input: input.display().to_string(),
+        output: output.display().to_string(),
+        entries: lexicon.len(),
+        total_frequency,
+        max_frequency,
+        artifact_bytes: fs::metadata(input)?.len(),
+    })
+}
+
+fn ensure_parent_dir(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    Ok(())
 }
 
 fn merge_lexicon_tsvs(
@@ -1106,91 +1189,24 @@ fn read_compact_lexicon(input: &PathBuf) -> Result<Lexicon, Box<dyn std::error::
     Ok(Lexicon::from_compact_bytes(&bytes)?)
 }
 
-fn read_reranker(
-    input: Option<&PathBuf>,
-) -> Result<Option<MlpReranker>, Box<dyn std::error::Error>> {
-    input
-        .map(|input| {
-            let bytes = fs::read(input)?;
-            Ok(MlpReranker::from_json_bytes(&bytes)?)
-        })
-        .transpose()
-}
-
-fn read_char_reranker(
-    input: Option<&PathBuf>,
-) -> Result<Option<CharCandidateReranker>, Box<dyn std::error::Error>> {
-    input
-        .map(|input| {
-            let bytes = fs::read(input)?;
-            Ok(CharCandidateReranker::from_json_bytes(&bytes)?)
-        })
-        .transpose()
-}
-
-fn resolve_char_replacement_policy(
-    char_reranker: Option<&CharCandidateReranker>,
-    enabled: bool,
-    min_score: Option<f32>,
-    min_margin: Option<f32>,
-) -> Result<Option<CharReplacementPolicy>, Box<dyn std::error::Error>> {
-    if !enabled {
-        return Ok(None);
-    }
-
-    let base = char_reranker
-        .and_then(CharCandidateReranker::replacement_policy)
-        .unwrap_or_else(CharReplacementPolicy::high_precision);
-    let policy = CharReplacementPolicy {
-        min_score: min_score.unwrap_or(base.min_score),
-        min_margin: min_margin.unwrap_or(base.min_margin),
-    };
-    if !policy.is_valid() {
-        return Err("invalid char autoreplace policy".into());
-    }
-
-    Ok(Some(policy))
-}
-
 fn suggest(
     input: &str,
     lexicon_model: Lexicon,
     config: AutocorrectConfig,
-    char_reranker: Option<&CharCandidateReranker>,
-    char_replacement_policy: Option<CharReplacementPolicy>,
     response_candidates: usize,
 ) -> SuggestReport {
     let engine = AutocorrectEngine::with_config(lexicon_model, config);
     let obadh = ObadhEngine::new();
     let request = obadh.autocorrect_request(input);
     let obadh_output = request.current.clone();
-    let mut decision = engine.decide(request);
-    let ranked_candidates = char_reranker.map(|reranker| {
-        let ranked = reranker.rank_candidates(input, &decision.candidates);
-        if let Some(policy) = char_replacement_policy {
-            decision.replacement = reranker.replacement_from_ranked_candidates(&ranked, policy);
-        }
-        decision.candidates = ranked
-            .iter()
-            .map(|scored| scored.candidate.clone())
-            .collect();
-        ranked
-    });
+    let decision = engine.decide(request);
     let candidate_count = decision.candidates.len();
-    let candidates = if let Some(ranked_candidates) = &ranked_candidates {
-        ranked_candidates
-            .iter()
-            .take(response_candidates)
-            .map(suggest_scored_candidate)
-            .collect::<Vec<_>>()
-    } else {
-        decision
-            .candidates
-            .iter()
-            .take(response_candidates)
-            .map(suggest_candidate)
-            .collect::<Vec<_>>()
-    };
+    let candidates = decision
+        .candidates
+        .iter()
+        .take(response_candidates)
+        .map(suggest_candidate)
+        .collect::<Vec<_>>();
 
     SuggestReport {
         input: input.to_string(),
@@ -1208,9 +1224,6 @@ fn evaluate(
     input_kind: EvalInputKind,
     lexicon_model: Lexicon,
     config: AutocorrectConfig,
-    reranker: Option<&MlpReranker>,
-    char_reranker: Option<&CharCandidateReranker>,
-    char_replacement_policy: Option<CharReplacementPolicy>,
 ) -> Result<EvalReport, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(input)?;
     let engine = AutocorrectEngine::with_config(lexicon_model, config);
@@ -1248,21 +1261,7 @@ fn evaluate(
             EvalInputKind::Roman => obadh.autocorrect_request(&source),
         };
         let baseline = request.current.clone();
-        let mut decision = engine.decide(request);
-        if let Some(reranker) = reranker {
-            reranker.sort_candidates(&mut decision.candidates);
-        }
-        if let Some(char_reranker) = char_reranker {
-            let ranked = char_reranker.rank_candidates(&source, &decision.candidates);
-            if let Some(policy) = char_replacement_policy {
-                decision.replacement =
-                    char_reranker.replacement_from_ranked_candidates(&ranked, policy);
-            }
-            decision.candidates = ranked
-                .into_iter()
-                .map(|scored| scored.candidate)
-                .collect::<Vec<_>>();
-        }
+        let decision = engine.decide(request);
         let final_output = decision
             .replacement
             .as_ref()
@@ -1314,7 +1313,6 @@ fn export_candidates(
     input_kind: EvalInputKind,
     lexicon_model: Lexicon,
     config: AutocorrectConfig,
-    char_reranker: Option<&CharCandidateReranker>,
 ) -> Result<ExportCandidatesReport, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(input)?;
     let file = File::create(output)?;
@@ -1351,15 +1349,7 @@ fn export_candidates(
         };
         let baseline = request.current.clone();
         let obadh_output = request.obadh_output.clone();
-        let mut decision = engine.decide(request);
-        let ranked_candidates =
-            char_reranker.map(|reranker| reranker.rank_candidates(&source, &decision.candidates));
-        if let Some(ranked_candidates) = &ranked_candidates {
-            decision.candidates = ranked_candidates
-                .iter()
-                .map(|scored| scored.candidate.clone())
-                .collect();
-        }
+        let decision = engine.decide(request);
         let target_in_lexicon = engine.lexicon().contains(&expected);
         let target_rank = decision
             .candidates
@@ -1375,14 +1365,6 @@ fn export_candidates(
             .iter()
             .map(|candidate| export_candidate(candidate, &expected))
             .collect::<Vec<_>>();
-        let candidates = if let Some(ranked_candidates) = &ranked_candidates {
-            ranked_candidates
-                .iter()
-                .map(|candidate| export_scored_candidate(candidate, &expected))
-                .collect::<Vec<_>>()
-        } else {
-            candidates
-        };
         let baseline_exact = baseline == expected;
 
         report.rows += 1;
@@ -1421,19 +1403,9 @@ fn export_candidate(candidate: &CorrectionCandidate, expected: &str) -> Candidat
         edit_cost: candidate.edit_cost.0,
         frequency: candidate.frequency,
         score: candidate.score,
-        model_score: None,
         features: candidate.features.as_i16_array(),
         label: candidate.text == expected,
     }
-}
-
-fn export_scored_candidate(
-    scored: &ScoredCorrectionCandidate,
-    expected: &str,
-) -> CandidateExportCandidate {
-    let mut candidate = export_candidate(&scored.candidate, expected);
-    candidate.model_score = Some(scored.model_score);
-    candidate
 }
 
 fn suggest_candidate(candidate: &CorrectionCandidate) -> SuggestCandidate {
@@ -1443,23 +1415,16 @@ fn suggest_candidate(candidate: &CorrectionCandidate) -> SuggestCandidate {
         edit_cost: candidate.edit_cost.0,
         frequency: candidate.frequency,
         score: candidate.score,
-        model_score: None,
         features: candidate.features.as_i16_array(),
     }
-}
-
-fn suggest_scored_candidate(scored: &ScoredCorrectionCandidate) -> SuggestCandidate {
-    let mut candidate = suggest_candidate(&scored.candidate);
-    candidate.model_score = Some(scored.model_score);
-    candidate
 }
 
 fn correction_source_name(source: CorrectionSource) -> &'static str {
     match source {
         CorrectionSource::NoChange => "no_change",
         CorrectionSource::LexiconEdit => "lexicon_edit",
+        CorrectionSource::PrefixCompletion => "prefix_completion",
         CorrectionSource::PhoneticSkeleton => "phonetic_skeleton",
-        CorrectionSource::RomanEdit => "roman_edit",
     }
 }
 

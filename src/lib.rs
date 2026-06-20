@@ -11,10 +11,8 @@ pub mod wasm;
 // Re-export commonly used types for convenience
 pub use autocorrect::{
     weighted_edit_distance, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
-    CandidateFeatures, CharCandidateReranker, CharCandidateRerankerError, CharReplacementPolicy,
-    CorrectionCandidate, CorrectionRequest, CorrectionSource, EditCost, Lexicon,
-    LexiconArtifactError, LexiconEntry, LexiconStats, MlpReranker, MlpRerankerError,
-    ScoredCorrectionCandidate, AUTOCORRECT_FEATURE_DIM,
+    CandidateFeatures, CorrectionCandidate, CorrectionRequest, CorrectionSource, EditCost, Lexicon,
+    LexiconArtifactError, LexiconEntry, LexiconStats, AUTOCORRECT_FEATURE_DIM,
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};
@@ -86,14 +84,9 @@ impl ObadhEngine {
     /// typing buffer and Obadh's deterministic Bangla output.
     pub fn autocorrect_request(&self, roman_input: &str) -> CorrectionRequest {
         let output = self.transliterate(roman_input);
-        let generated_candidates =
-            autocorrect::roman_edit_candidates(roman_input, &output, |variant| {
-                self.transliterate(variant)
-            });
         CorrectionRequest::new(output.clone())
             .with_roman_input(roman_input)
             .with_obadh_output(output)
-            .with_generated_candidates(generated_candidates)
     }
 }
 
