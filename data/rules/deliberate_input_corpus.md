@@ -13,6 +13,7 @@ This source-controlled corpus exercises rule signals, not memorized words. It is
 | Base vs phola separation | `kz kb zoy zy bw` | `কয কব যয় য্য ব্ব` | `z`/`b` remain base letters; `y`/`w` become phola markers only through declared clusters. |
 | Nasal signals | `ngg sMgo songskrriti shongkha` | `ঙ্গ সংগ সংস্কৃতি শংখা` | `ngg` is velar conjunct shorthand; `M` preserves literal anusvara. |
 | Nasal escape | `songgo sMgo nggho sMgho` | `সঙ্গ সংগ ঙ্ঘ সংঘ` | `M` forces literal anusvara before `g`/`gh`; `ngg`/`nggh` remain deliberate velar conjunct shorthand. |
+| Palatal nasal-ja | `NGj nj nJ jinjira noj nz` | `ঞ্জ ঞ্জ ঞ্জ জিঞ্জিরা নজ নয` | `NGj` is the source ঞ+জ signal; `nj`/`nJ` are narrow deterministic aliases, while `o` separates literal নজ and `nz` remains নয. |
 | Jna pronunciation | `jNG jn gg ggan biggan gog` | `জ্ঞ জ্ঞ জ্ঞ জ্ঞান বিজ্ঞান গগ` | `gg` is a pronounced shorthand for orthographic জ্ঞ; use `gog` for literal গগ. |
 | Long iya | `tiyw kiywo kiywO` | `তীয় কীয় কীয়ো` | `iyw` is the composable long-ঈয় signal. |
 | Vocalic r | `rri krri rria rrhi` | `ঋ কৃ ঋআ র্হি` | `rri` is the vocalic ঋ signal; `rr` remains reph before consonants. |

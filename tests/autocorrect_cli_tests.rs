@@ -358,6 +358,403 @@ fn autocorrect_cli_surfaces_missing_chandrabindu_as_diacritic_edit() {
 }
 
 #[test]
+fn autocorrect_cli_promotes_second_pass_roman_separator_repair() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-second-pass-roman-repair");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "মান\t10116\nমন\t3852\nমনন\t142\n")
+        .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "mnn",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "ম্নন");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "মনন");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "monon");
+    assert_eq!(candidates[0]["roman_repair_kind"], "inserted_separator_o");
+    assert_eq!(candidates[0]["roman_repair_cost"], 2);
+}
+
+#[test]
+fn autocorrect_cli_promotes_repeated_cluster_separator_repair() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-repeated-separator-roman-repair");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(
+        &lexicon_tsv,
+        "খণ্ড\t3640\nখনি\t1660\nখনন\t2286\nজন্য\t338242\n",
+    )
+    .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "khnn",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "খন্ন");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "খনন");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "khnon");
+    assert_eq!(candidates[0]["roman_repair_kind"], "inserted_separator_o");
+    assert_eq!(candidates[0]["roman_repair_cost"], 1);
+}
+
+#[test]
+fn autocorrect_cli_promotes_palatal_nasal_ja_roman_repair() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-palatal-nasal-roman-repair");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "জিরা\t288\nজিঞ্জিরা\t61\nজিঙ্গিরা\t1\n")
+        .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "jingira",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "জিংইরা");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "জিঞ্জিরা");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "jinjira");
+    assert_eq!(
+        candidates[0]["roman_repair_kind"],
+        "palatal_nasal_ja_from_ng"
+    );
+    assert_eq!(candidates[0]["roman_repair_cost"], 2);
+}
+
+#[test]
+fn autocorrect_cli_promotes_nz_to_deterministic_palatal_nasal_ja() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-nz-palatal-nasal");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "জিঞ্জিরা\t61\nজিনজিরা\t29\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "jinzira",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "জিনযিরা");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "জিঞ্জিরা");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "jinjira");
+    assert_eq!(
+        candidates[0]["roman_repair_kind"],
+        "palatal_nasal_ja_from_nz"
+    );
+    assert_eq!(candidates[0]["roman_repair_cost"], 2);
+}
+
+#[test]
+fn autocorrect_cli_promotes_nz_to_corpus_strong_nj_word() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-nz-panjabi");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "পাঞ্জাবি\t1890\nপানজাবি\t1\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "panzabi",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "পানযাবি");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "পাঞ্জাবি");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "panjabi");
+    assert_eq!(
+        candidates[0]["roman_repair_kind"],
+        "palatal_nasal_ja_from_nz"
+    );
+}
+
+#[test]
+fn autocorrect_cli_promotes_strong_velar_ng_over_low_frequency_exact_artifact() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-ng-velar-exact-noise");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "জংই\t1\nজঙ্গি\t938\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "jongi",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "জংই");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "জঙ্গি");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "jonggi");
+    assert_eq!(candidates[0]["roman_repair_kind"], "velar_nasal_from_ng");
+}
+
+#[test]
+fn autocorrect_cli_prefers_corpus_strong_ng_candidate_over_rare_velar_variant() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-ng-rongin");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(
+        &lexicon_tsv,
+        "রঙিন\t1763\nরঙ্গিন\t177\nরঙীন\t49\nরঙ্গীন\t51\n",
+    )
+    .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "rongin",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "রংইন");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "রঙিন");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "roNgin");
+    assert_eq!(candidates[0]["roman_repair_kind"], "velar_nasal_from_ng");
+}
+
+#[test]
+fn autocorrect_cli_promotes_high_frequency_velar_ng_with_long_i_variant() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-ng-songit");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(
+        &lexicon_tsv,
+        "সঙ্গীত\t16122\nসংগীত\t6166\nসঙ্গিত\t49\nসংগিত\t26\nসঞ্জিত\t24\n",
+    )
+    .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "songit",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "সংইত");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "সঙ্গীত");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "songgIt");
+    assert_eq!(candidates[0]["roman_repair_kind"], "velar_nasal_from_ng");
+
+    let songit_rank = candidate_rank(candidates, "সঙ্গীত").expect("সঙ্গীত should be returned");
+    let sonjit_rank = candidate_rank(candidates, "সঞ্জিত").expect("সঞ্জিত should be returned");
+    assert!(
+        songit_rank < sonjit_rank,
+        "velar ng repair should outrank the competing nj repair when the corpus strongly supports it"
+    );
+}
+
+#[test]
+fn autocorrect_cli_keeps_palatal_nasal_repair_lower_trust_than_stronger_edit() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-palatal-nasal-lower-trust");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "সংগীত\t6166\nসঞ্জিত\t24\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "songit",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "সংইত");
+
+    let candidates = json["candidates"].as_array().unwrap();
+    let songit_rank = candidate_rank(candidates, "সংগীত").expect("সংগীত should be returned");
+    let sonjit_rank = candidate_rank(candidates, "সঞ্জিত").expect("সঞ্জিত should be returned");
+
+    assert!(
+        songit_rank < sonjit_rank,
+        "lower-trust ng->nj repair should not outrank the stronger সংগীত candidate"
+    );
+}
+
+#[test]
 fn autocorrect_cli_builds_lexicon_from_multiple_sources() {
     let workspace = TempWorkspace::new("obadh-autocorrect-cli-merge-lexicons");
     let primary = workspace.path("primary.tsv");
@@ -1194,6 +1591,12 @@ fn json_stdout(output: &std::process::Output) -> Value {
 
 fn path_str(path: &Path) -> &str {
     path.to_str().expect("test path should be valid UTF-8")
+}
+
+fn candidate_rank(candidates: &[Value], text: &str) -> Option<usize> {
+    candidates
+        .iter()
+        .position(|candidate| candidate["text"] == text)
 }
 
 fn stdout(output: &std::process::Output) -> String {

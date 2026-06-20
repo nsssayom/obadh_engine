@@ -101,6 +101,7 @@ The full consonant signal table is maintained in `data/rules/consonants.md` and 
 | `Ng` | velar nasal ঙ |
 | `ngg` / `nggh` | shorthand for ঙ্গ / ঙ্ঘ |
 | `jNG` / `jn` / `gg` | জ্ঞ conjunct; `gg` is the pronounced shorthand, while literal গগ is `gog` |
+| `NGj` / `nj` / `nJ` | ঞ্জ conjunct; `NGj` is the source component signal, while `nj` / `nJ` are narrow ergonomic aliases (`jinjira` → `জিঞ্জিরা`; literal নজ is `noj`; `nz` stays নয) |
 | `rr` + valid cluster | reph over the full cluster, e.g. `rrkSh` → `র্ক্ষ` |
 | `rZy` / `rZY` | non-conjunct ZWNJ-separated `র‌্য` form, e.g. `rZyab` → `র‌্যাব`; use `rrYa` for conjunct `র্যা` |
 | `y` | য-ফলা marker in valid conjunct clusters |
@@ -271,8 +272,13 @@ The runtime FST path combines several bounded candidate channels:
   a strong channel prior. This is evidence, not a claim that the baseline is
   always the intended word.
 - **Obadh-aware Roman repair**: a tiny beam inserts missing lowercase `o`
-  separators only at tokenizer-detected conjunct boundaries, then runs those
-  repaired strings through Obadh and exact FST lookup.
+  separators at tokenizer-detected conjunct boundaries, including repeated
+  clusters such as `khnn` → `khnon`, allows one bounded second separator pass
+  for omitted inherent vowels, repairs `nz` and lower-trust `ng` before front
+  vowels into the deterministic `nj` palatal nasal-ja route, and probes
+  corpus-gated velar/anusvara-ga routes such as `rongin` → `roNgin`,
+  `jongi` → `jonggi`, and `songit` → `songgIt` / `soMgIt`. Repaired strings
+  must pass through Obadh and exact FST lookup before they become candidates.
 - **Bangla edit search**: bounded Unicode Levenshtein search is intersected with
   the FST; candidates are then scored with Bangla-unit-aware weighted edit cost.
 - **Stem suffix completion**: exact stems can surface common Bengali determiner,

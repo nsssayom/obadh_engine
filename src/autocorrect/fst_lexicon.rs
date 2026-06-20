@@ -25,7 +25,11 @@ const PREFIX_COMPLETION_CHANNEL_PENALTY: i64 = 192;
 const STEM_SUFFIX_COMPLETION_PRIOR: i64 = 768;
 const STEM_SUFFIX_COST_SCALE: i64 = 256;
 const STEM_SUFFIX_SURFACE_COST_SCALE: i64 = 64;
-const ROMAN_REPAIR_EXACT_BONUS: i64 = 768;
+const ROMAN_SEPARATOR_REPAIR_EXACT_BONUS: i64 = 4_096;
+const ROMAN_PALATAL_NASAL_REPAIR_EXACT_BONUS: i64 = 768;
+const ROMAN_VELAR_NASAL_REPAIR_EXACT_BONUS: i64 = 2_048;
+const ROMAN_STRONG_VELAR_NASAL_REPAIR_EXACT_BONUS: i64 = 12_288;
+const ROMAN_STRONG_REPAIR_FREQUENCY_FLOOR: u64 = 128;
 const ROMAN_REPAIR_COST_SCALE: i64 = 1024;
 const ROMAN_REPAIR_SURFACE_COST_SCALE: i64 = 128;
 
@@ -334,7 +338,8 @@ fn insert_repaired_baseline_candidate(
     baseline: &str,
 ) {
     let edit_cost = weighted_edit_distance(baseline, repair.bangla_output).0;
-    let score = roman_repair_candidate_score(edit_cost, repair.repair_cost, frequency);
+    let score =
+        roman_repair_candidate_score(edit_cost, repair.repair_cost, repair.repair_kind, frequency);
     let candidate = FstCandidate {
         text: repair.bangla_output.to_string(),
         source: FstCandidateSource::RomanRepairExact,
@@ -412,10 +417,28 @@ fn fst_candidate_score(source: FstCandidateSource, edit_cost: u16, frequency: u6
     frequency_score(frequency) - (edit_cost as i64 * SURFACE_EDIT_COST_SCALE) + source.prior()
 }
 
-fn roman_repair_candidate_score(edit_cost: u16, repair_cost: u16, frequency: u64) -> i64 {
-    frequency_score(frequency) + ROMAN_REPAIR_EXACT_BONUS
+fn roman_repair_candidate_score(
+    edit_cost: u16,
+    repair_cost: u16,
+    repair_kind: &'static str,
+    frequency: u64,
+) -> i64 {
+    frequency_score(frequency) + roman_repair_exact_bonus(repair_kind, frequency)
         - (repair_cost as i64 * ROMAN_REPAIR_COST_SCALE)
         - (edit_cost as i64 * ROMAN_REPAIR_SURFACE_COST_SCALE)
+}
+
+fn roman_repair_exact_bonus(repair_kind: &str, frequency: u64) -> i64 {
+    match repair_kind {
+        "palatal_nasal_ja_from_ng" | "palatal_nasal_ja_from_nz" => {
+            ROMAN_PALATAL_NASAL_REPAIR_EXACT_BONUS
+        }
+        "velar_nasal_from_ng" if frequency >= ROMAN_STRONG_REPAIR_FREQUENCY_FLOOR => {
+            ROMAN_STRONG_VELAR_NASAL_REPAIR_EXACT_BONUS
+        }
+        "velar_nasal_from_ng" => ROMAN_VELAR_NASAL_REPAIR_EXACT_BONUS,
+        _ => ROMAN_SEPARATOR_REPAIR_EXACT_BONUS,
+    }
 }
 
 fn stem_suffix_candidate_score(edit_cost: u16, suffix_cost: u16, frequency: u64) -> i64 {
@@ -829,6 +852,77 @@ mod tests {
         assert_eq!(first.roman_repair.as_deref(), Some("okalopokk"));
         assert_eq!(first.roman_repair_kind, Some("inserted_separator_o"));
         assert_eq!(first.roman_repair_cost, Some(1));
+    }
+
+    #[test]
+    fn strong_velar_roman_repair_can_beat_low_frequency_exact_artifact() {
+        let lexicon = test_lexicon([("জংই", 1), ("জঙ্গি", 938)]);
+        let repairs = [FstRepairedBaseline {
+            roman_input: "jonggi",
+            bangla_output: "জঙ্গি",
+            repair_kind: "velar_nasal_from_ng",
+            repair_cost: 1,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines(
+                "জংই",
+                &repairs,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("repair candidate should be returned");
+        assert_eq!(first.text, "জঙ্গি");
+        assert_eq!(first.source, FstCandidateSource::RomanRepairExact);
+        assert_eq!(first.roman_repair_kind, Some("velar_nasal_from_ng"));
+    }
+
+    #[test]
+    fn rare_velar_roman_repair_stays_below_palatal_target() {
+        let lexicon = test_lexicon([("জিঞ্জিরা", 61), ("জিঙ্গিরা", 1)]);
+        let repairs = [
+            FstRepairedBaseline {
+                roman_input: "jinjira",
+                bangla_output: "জিঞ্জিরা",
+                repair_kind: "palatal_nasal_ja_from_ng",
+                repair_cost: 2,
+            },
+            FstRepairedBaseline {
+                roman_input: "jinggira",
+                bangla_output: "জিঙ্গিরা",
+                repair_kind: "velar_nasal_from_ng",
+                repair_cost: 1,
+            },
+        ];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines(
+                "জিংইরা",
+                &repairs,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("repair candidate should be returned");
+        assert_eq!(first.text, "জিঞ্জিরা");
+        assert_eq!(first.source, FstCandidateSource::RomanRepairExact);
     }
 
     fn test_lexicon<const N: usize>(entries: [(&str, u64); N]) -> FstLexicon<Vec<u8>> {

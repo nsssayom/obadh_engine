@@ -126,6 +126,12 @@ Nasal input is deterministic and must preserve the user's intended spelling:
 - `ngg` and `nggh` are shorthand for deliberate velar nasal conjuncts:
   - Signal: `bonggo` → `বঙ্গ`
   - Signal: `ngghAt` → `ঙ্ঘাত`
+- `NGj` is the source signal for the palatal nasal-ja conjunct, and `nj`/`nJ`
+  are narrow ergonomic aliases for the same ঞ + জ cluster:
+  - Signal: `jinjira` → `জিঞ্জিরা`
+  - Signal: `noj` → `নজ` when the intended spelling is ন + জ with an inherent vowel
+  - Signal: `nz` remains `নয`; correction-layer `nz` repairs do not change the
+    deterministic core rule
 
 ### 'o' as a Blocker
 

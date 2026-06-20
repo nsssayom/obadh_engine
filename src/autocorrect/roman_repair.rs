@@ -34,6 +34,9 @@ pub struct RomanRepairedOutput {
 pub enum RomanRepairKind {
     Original,
     InsertedSeparatorO,
+    PalatalNasalJaFromNg,
+    PalatalNasalJaFromNz,
+    VelarNasalFromNg,
 }
 
 impl RomanRepairKind {
@@ -41,6 +44,9 @@ impl RomanRepairKind {
         match self {
             Self::Original => "original",
             Self::InsertedSeparatorO => "inserted_separator_o",
+            Self::PalatalNasalJaFromNg => "palatal_nasal_ja_from_ng",
+            Self::PalatalNasalJaFromNz => "palatal_nasal_ja_from_nz",
+            Self::VelarNasalFromNg => "velar_nasal_from_ng",
         }
     }
 }
@@ -50,8 +56,6 @@ pub fn roman_repair_beam(input: &str, options: RomanRepairOptions) -> Vec<RomanR
         return Vec::new();
     }
 
-    let tokenizer = Tokenizer::new();
-    let units = tokenizer.tokenize_word(input);
     let mut repairs = Vec::with_capacity(options.max_repairs.min(input.len() + 1));
 
     repairs.push(RomanRepair {
@@ -60,21 +64,42 @@ pub fn roman_repair_beam(input: &str, options: RomanRepairOptions) -> Vec<RomanR
         kind: RomanRepairKind::Original,
     });
 
-    for byte_index in missing_separator_positions(input, &units) {
-        if repairs.len() >= options.max_repairs {
-            break;
+    let tokenizer = Tokenizer::new();
+    let separator_repairs = separator_o_repairs(input, &tokenizer);
+    for repaired in &separator_repairs {
+        push_repair(
+            &mut repairs,
+            options.max_repairs,
+            repaired.text.clone(),
+            repaired.cost,
+            RomanRepairKind::InsertedSeparatorO,
+        );
+    }
+
+    for repaired in nasal_neighbor_repairs(input) {
+        push_repair(
+            &mut repairs,
+            options.max_repairs,
+            repaired.text,
+            repaired.cost,
+            repaired.kind,
+        );
+    }
+
+    for repaired in separator_repairs {
+        for second_pass in separator_o_repairs(&repaired.text, &tokenizer) {
+            let cost = repaired.cost.saturating_add(second_pass.cost);
+            if push_repair(
+                &mut repairs,
+                options.max_repairs,
+                second_pass.text,
+                cost,
+                RomanRepairKind::InsertedSeparatorO,
+            ) {
+                continue;
+            }
+            return repairs;
         }
-
-        let mut repaired = String::with_capacity(input.len() + 1);
-        repaired.push_str(&input[..byte_index]);
-        repaired.push('o');
-        repaired.push_str(&input[byte_index..]);
-
-        repairs.push(RomanRepair {
-            text: repaired,
-            cost: 1,
-            kind: RomanRepairKind::InsertedSeparatorO,
-        });
     }
 
     repairs
@@ -102,6 +127,192 @@ where
             })
         })
         .collect()
+}
+
+fn push_repair(
+    repairs: &mut Vec<RomanRepair>,
+    max_repairs: usize,
+    text: String,
+    cost: u16,
+    kind: RomanRepairKind,
+) -> bool {
+    if repairs.iter().any(|repair| repair.text == text) {
+        return true;
+    }
+    if repairs.len() >= max_repairs {
+        return false;
+    }
+
+    repairs.push(RomanRepair { text, cost, kind });
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SeparatorRepair {
+    text: String,
+    cost: u16,
+}
+
+fn separator_o_repairs(input: &str, tokenizer: &Tokenizer) -> Vec<SeparatorRepair> {
+    let units = tokenizer.tokenize_word(input);
+    missing_separator_positions(input, &units)
+        .into_iter()
+        .map(|byte_index| SeparatorRepair {
+            text: insert_separator_o(input, byte_index),
+            cost: 1,
+        })
+        .collect()
+}
+
+fn insert_separator_o(input: &str, byte_index: usize) -> String {
+    let mut repaired = String::with_capacity(input.len() + 1);
+    repaired.push_str(&input[..byte_index]);
+    repaired.push('o');
+    repaired.push_str(&input[byte_index..]);
+    repaired
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NasalNeighborRepair {
+    text: String,
+    cost: u16,
+    kind: RomanRepairKind,
+}
+
+fn nasal_neighbor_repairs(input: &str) -> Vec<NasalNeighborRepair> {
+    let mut repairs = Vec::new();
+    push_ng_neighbor_repairs(input, &mut repairs);
+    push_nz_neighbor_repairs(input, &mut repairs);
+    repairs
+}
+
+fn push_ng_neighbor_repairs(input: &str, repairs: &mut Vec<NasalNeighborRepair>) {
+    let mut search_start = 0;
+
+    while let Some(relative_start) = input[search_start..].find("ng") {
+        let start = search_start + relative_start;
+        let end = start + "ng".len();
+        if let Some(next_vowel) = front_vowel_at(input, end) {
+            push_replaced_range(
+                repairs,
+                input,
+                start,
+                end,
+                "nj",
+                2,
+                RomanRepairKind::PalatalNasalJaFromNg,
+            );
+            push_replaced_range(
+                repairs,
+                input,
+                start,
+                end,
+                "Ng",
+                1,
+                RomanRepairKind::VelarNasalFromNg,
+            );
+            push_replaced_range(
+                repairs,
+                input,
+                start,
+                end,
+                "ngg",
+                1,
+                RomanRepairKind::VelarNasalFromNg,
+            );
+            push_replaced_range(
+                repairs,
+                input,
+                start,
+                end,
+                "Mg",
+                2,
+                RomanRepairKind::VelarNasalFromNg,
+            );
+
+            if next_vowel == b'i' {
+                let vowel_end = end + 1;
+                push_replaced_range(
+                    repairs,
+                    input,
+                    start,
+                    vowel_end,
+                    "NgI",
+                    2,
+                    RomanRepairKind::VelarNasalFromNg,
+                );
+                push_replaced_range(
+                    repairs,
+                    input,
+                    start,
+                    vowel_end,
+                    "nggI",
+                    2,
+                    RomanRepairKind::VelarNasalFromNg,
+                );
+                push_replaced_range(
+                    repairs,
+                    input,
+                    start,
+                    vowel_end,
+                    "MgI",
+                    3,
+                    RomanRepairKind::VelarNasalFromNg,
+                );
+            }
+        }
+        search_start = end;
+    }
+}
+
+fn push_nz_neighbor_repairs(input: &str, repairs: &mut Vec<NasalNeighborRepair>) {
+    let mut search_start = 0;
+
+    while let Some(relative_start) = input[search_start..].find("nz") {
+        let start = search_start + relative_start;
+        let end = start + "nz".len();
+        push_replaced_range(
+            repairs,
+            input,
+            start,
+            end,
+            "nj",
+            2,
+            RomanRepairKind::PalatalNasalJaFromNz,
+        );
+        search_start = end;
+    }
+}
+
+fn push_replaced_range(
+    repairs: &mut Vec<NasalNeighborRepair>,
+    input: &str,
+    start: usize,
+    end: usize,
+    replacement: &str,
+    cost: u16,
+    kind: RomanRepairKind,
+) {
+    let mut repaired = String::with_capacity(input.len() + replacement.len());
+    repaired.push_str(&input[..start]);
+    repaired.push_str(replacement);
+    repaired.push_str(&input[end..]);
+
+    if repairs.iter().all(|repair| repair.text != repaired) {
+        repairs.push(NasalNeighborRepair {
+            text: repaired,
+            cost,
+            kind,
+        });
+    }
+}
+
+fn front_vowel_at(input: &str, byte_index: usize) -> Option<u8> {
+    input
+        .as_bytes()
+        .get(byte_index)
+        .copied()
+        .filter(|byte| matches!(byte, b'i' | b'I' | b'e' | b'E'))
 }
 
 fn missing_separator_positions(input: &str, units: &[PhoneticUnit]) -> Vec<usize> {
@@ -134,11 +345,9 @@ fn append_conjunct_separator_positions(
     for right in parts {
         offset += left.len();
 
-        if !same_roman_component(left, right) {
-            let byte_index = unit.position + offset;
-            if is_insertable_boundary(input, byte_index) {
-                positions.push(byte_index);
-            }
+        let byte_index = unit.position + offset;
+        if is_insertable_boundary(input, byte_index) {
+            positions.push(byte_index);
         }
 
         left = right;
@@ -155,25 +364,6 @@ fn is_conjunct_like(unit_type: PhoneticUnitType) -> bool {
             | PhoneticUnitType::RephOverConsonantWithVowel
             | PhoneticUnitType::RephOverConsonantWithTerminator
     )
-}
-
-fn same_roman_component(left: &str, right: &str) -> bool {
-    roman_component_base(left).eq_ignore_ascii_case(roman_component_base(right))
-}
-
-fn roman_component_base(component: &str) -> &str {
-    component
-        .strip_suffix('a')
-        .or_else(|| component.strip_suffix('A'))
-        .or_else(|| component.strip_suffix('i'))
-        .or_else(|| component.strip_suffix('I'))
-        .or_else(|| component.strip_suffix('u'))
-        .or_else(|| component.strip_suffix('U'))
-        .or_else(|| component.strip_suffix('e'))
-        .or_else(|| component.strip_suffix('E'))
-        .or_else(|| component.strip_suffix('o'))
-        .or_else(|| component.strip_suffix('O'))
-        .unwrap_or(component)
 }
 
 fn is_insertable_boundary(input: &str, byte_index: usize) -> bool {
@@ -205,10 +395,63 @@ mod tests {
     }
 
     #[test]
-    fn does_not_split_repeated_consonants() {
-        let repairs = roman_repair_beam("biggan", RomanRepairOptions::default());
+    fn inserts_separator_o_inside_repeated_consonant_clusters() {
+        let repairs = roman_repair_beam("khnn", RomanRepairOptions::default());
 
-        assert!(!repairs.iter().any(|repair| repair.text == "bigogan"));
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "khnon"
+                && repair.cost == 1
+                && repair.kind == RomanRepairKind::InsertedSeparatorO
+        }));
+    }
+
+    #[test]
+    fn bounded_second_pass_can_restore_omitted_inherent_vowels() {
+        let repairs = roman_repair_beam("mnn", RomanRepairOptions::default());
+
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "monon"
+                && repair.cost == 2
+                && repair.kind == RomanRepairKind::InsertedSeparatorO
+        }));
+    }
+
+    #[test]
+    fn repairs_lowercase_ng_before_front_vowel_to_palatal_nasal_ja() {
+        let repairs = roman_repair_beam("jingira", RomanRepairOptions::default());
+
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "jinjira"
+                && repair.cost == 2
+                && repair.kind == RomanRepairKind::PalatalNasalJaFromNg
+        }));
+    }
+
+    #[test]
+    fn repairs_lowercase_nz_to_deterministic_palatal_nasal_ja() {
+        let repairs = roman_repair_beam("jinzira", RomanRepairOptions::default());
+
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "jinjira"
+                && repair.cost == 2
+                && repair.kind == RomanRepairKind::PalatalNasalJaFromNz
+        }));
+    }
+
+    #[test]
+    fn repairs_bare_ng_to_velar_and_anusvara_ga_routes() {
+        let repairs = roman_repair_beam("songit", RomanRepairOptions::default());
+
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "songgIt"
+                && repair.cost == 2
+                && repair.kind == RomanRepairKind::VelarNasalFromNg
+        }));
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "soMgIt"
+                && repair.cost == 3
+                && repair.kind == RomanRepairKind::VelarNasalFromNg
+        }));
     }
 
     #[test]

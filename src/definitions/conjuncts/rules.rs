@@ -126,6 +126,8 @@ pub(super) const CONJUNCT_RULES: &[ConjunctRule] = &[
     ConjunctRule("NGch", "ঞ্ছ"),
     ConjunctRule("NGj", "ঞ্জ"),
     ConjunctRule("NGJ", "ঞ্জ"),
+    ConjunctRule("nj", "ঞ্জ"),
+    ConjunctRule("nJ", "ঞ্জ"),
     ConjunctRule("NGjh", "ঞ্ঝ"),
     ConjunctRule("TT", "ট্ট"),
     ConjunctRule("Tw", "ট্ব"),

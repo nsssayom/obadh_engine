@@ -120,7 +120,13 @@ The runtime FST path is deliberately bounded:
 
 - Exact baseline lookup if Obadh's output is already a lexicon word.
 - A tiny Obadh-aware Roman repair beam that inserts missing lowercase `o`
-  separators only at tokenizer-detected conjunct boundaries.
+  separators at tokenizer-detected conjunct boundaries, including repeated
+  clusters such as `khnn` -> `khnon`, permits one bounded second separator pass
+  for omitted inherent vowels, repairs `nz` and lower-trust lowercase `ng`
+  before front vowels into the deterministic `nj` palatal nasal-ja route, and
+  probes corpus-gated velar/anusvara-ga routes such as `rongin` -> `roNgin`,
+  `jongi` -> `jonggi`, and `songit` -> `songgIt` / `soMgIt`. Repaired forms
+  must survive Obadh transliteration and exact FST lookup.
 - Bounded Unicode edit search intersected with the FST.
 - Bangla-unit weighted edit scoring after retrieval, where nasal marks are
   cheaper than ordinary unrelated substitutions.

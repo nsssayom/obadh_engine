@@ -16,6 +16,7 @@ fn test_two_component_conjuncts() {
         ("kk", 1),  // Valid 2-component conjunct
         ("st", 1),  // Valid 2-component conjunct
         ("NGj", 1), // Correct form for ঞ্জ (palatalized nya + ja)
+        ("nj", 1),  // Ergonomic alias for the same ঞ + জ conjunct
         ("ky", 1),  // Valid 2-component conjunct
         ("kw", 1),  // Valid ba-phola conjunct
         ("bw", 1),  // Valid ba-phola conjunct over regular ba
@@ -550,6 +551,7 @@ fn declared_alias_keys_for_source_row(row: &SourceConjunctRow<'_>) -> BTreeSet<S
     let mut keys = expand_component_alias_keys(&row.roman_components);
     keys.extend(ksha_alias_keys(&row.roman_components));
     keys.extend(jna_alias_keys(&row.roman_components));
+    keys.extend(palatal_nasal_ja_alias_keys(&row.roman_components));
     keys.extend(nasal_ba_alias_keys(&row.roman_components));
     keys.extend(base_ba_phola_alias_keys(&row.roman_components));
     keys.extend(base_ya_phola_alias_keys(&row.roman_components));
@@ -623,6 +625,19 @@ fn jna_alias_keys(components: &[&str]) -> BTreeSet<String> {
             keys.extend(replace_component_pair(components, index, "jn"));
             keys.extend(replace_component_pair(components, index, "Jn"));
             keys.extend(replace_component_pair(components, index, "gg"));
+        }
+    }
+
+    keys
+}
+
+fn palatal_nasal_ja_alias_keys(components: &[&str]) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+
+    for index in 0..components.len().saturating_sub(1) {
+        if components[index] == "NG" && matches!(components[index + 1], "j" | "J") {
+            keys.extend(replace_component_pair(components, index, "nj"));
+            keys.extend(replace_component_pair(components, index, "nJ"));
         }
     }
 

@@ -198,6 +198,32 @@ fn test_aliases_for_orthographic_jna_conjunct() {
 }
 
 #[test]
+fn test_aliases_for_palatal_nasal_ja_conjunct() {
+    let tokenizer = Tokenizer::new();
+
+    for input in ["nj", "nJ", "nji", "nJi", "jinjira", "panjabi"] {
+        let units = tokenizer.tokenize_word(input);
+        assert!(
+            units.iter().any(|unit| {
+                matches!(
+                    unit.unit_type,
+                    PhoneticUnitType::Conjunct
+                        | PhoneticUnitType::ConjunctWithVowel
+                        | PhoneticUnitType::ConjunctWithTerminator
+                )
+            }),
+            "{input} should tokenize through the ঞ্জ conjunct alias"
+        );
+    }
+
+    let engine = ObadhEngine::new();
+    assert_eq!(
+        engine.transliterate("NGj NGJ nj nJ jinjira panjabi ganja noj nz panzabi"),
+        "ঞ্জ ঞ্জ ঞ্জ ঞ্জ জিঞ্জিরা পাঞ্জাবি গাঞ্জা নজ নয পানযাবি"
+    );
+}
+
+#[test]
 fn test_collision_safe_case_fallback_for_unclaimed_uppercase_consonants() {
     let engine = ObadhEngine::new();
 
