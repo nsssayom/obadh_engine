@@ -57,6 +57,10 @@ serde-wasm-bindgen = "0.5"
 web-sys = { version = "0.3.64", features = ["Window", "Performance"] }
 console_error_panic_hook = { version = "0.1.7", optional = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+unicode-normalization = "=0.1.25"
+zip = { version = "=5.1.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support", "rayon"] } # For benchmarking
 wasm-bindgen-test = "0.3.37" # For testing WASM

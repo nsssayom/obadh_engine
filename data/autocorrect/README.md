@@ -12,6 +12,8 @@ dataset files. Build artifacts with:
 ```bash
 cargo run --bin obadh-autocorrect -- extract-lexicon \
   --input path/to/clean_corpus.txt \
+  --input path/to/book.epub \
+  --input path/to/book_directory \
   --output path/to/clean_bn_words.tsv \
   --min-frequency 2
 
@@ -42,10 +44,24 @@ Input TSV format:
 The frequency column is optional and defaults to `1`. Bangla-only validation is
 enabled by default.
 
-`extract-lexicon` accepts one or more `--input` text files and emits a sorted
-word-frequency TSV. It keeps Bangla letters and combining signs, permits ZWNJ
-and ZWJ only inside a word, and rejects digits, punctuation, Latin text, and
-standalone marks.
+`extract-lexicon` accepts one or more `--input` UTF-8 text/HTML files, EPUB
+files, or directories and emits a sorted word-frequency TSV. Directory inputs are
+expanded recursively and deterministically, but only `.epub`, `.html`, `.htm`,
+`.xhtml`, `.txt`, `.text`, `.md`, and `.markdown` files are admitted from
+directories. EPUB inputs prefer the OPF spine reading order and skip navigation
+or non-linear items when the package metadata is available; malformed/simple
+EPUBs fall back to text-like publication members (`.xhtml`, `.html`, `.htm`,
+`.txt`). HTML-ish inputs strip markup, attributes, and script/style blocks before
+tokenization. The tokenizer normalizes Bangla text to NFC, keeps Bangla letters
+and combining signs, permits ZWNJ and ZWJ only inside a word, and rejects digits,
+punctuation, Latin text, and standalone marks. Lexicon TSV ingestion also
+normalizes words before audit, merge, and artifact build so decomposed forms do
+not split frequency buckets.
+
+The extraction JSON report includes `text_inputs`, `html_inputs`, `epub_inputs`,
+`epub_spine_items`, `epub_fallback_inputs`, and `epub_fallback_items`. Treat
+fallback EPUB extraction as lower-trust corpus input because navigation,
+appendix, or unreferenced publication files may be mixed into the token stream.
 
 `merge-lexicon` accepts one or more word-frequency TSVs, sums duplicate word
 frequencies deterministically, and writes a merged TSV sorted by frequency then

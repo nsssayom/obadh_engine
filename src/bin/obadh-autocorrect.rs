@@ -11,6 +11,14 @@ use obadh_engine::{
 };
 use serde::Serialize;
 
+#[path = "obadh_autocorrect/corpus.rs"]
+mod corpus;
+
+use corpus::{
+    expand_corpus_inputs, is_bangla_lexicon_word, is_clean_roman_word_input, normalize_bangla_text,
+    read_corpus_text, BanglaTokenIter, CorpusSourceStats,
+};
+
 #[derive(Debug, Parser)]
 #[command(
     name = "obadh-autocorrect",
@@ -166,6 +174,12 @@ struct BuildReport {
 struct ExtractReport {
     inputs: Vec<String>,
     output: String,
+    text_inputs: usize,
+    html_inputs: usize,
+    epub_inputs: usize,
+    epub_spine_items: usize,
+    epub_fallback_inputs: usize,
+    epub_fallback_items: usize,
     corpus_bytes: u64,
     token_count: usize,
     unique_words: usize,
@@ -614,17 +628,21 @@ fn extract_lexicon(
     min_frequency: u32,
     max_entries: Option<usize>,
 ) -> Result<ExtractReport, Box<dyn std::error::Error>> {
+    let inputs = expand_corpus_inputs(inputs)?;
     let mut frequencies = BTreeMap::<String, u32>::new();
     let mut corpus_bytes = 0_u64;
     let mut token_count = 0_usize;
+    let mut source_stats = CorpusSourceStats::default();
 
-    for input in inputs {
-        let content = fs::read_to_string(input)?;
-        corpus_bytes += content.len() as u64;
-        for token in BanglaTokenIter::new(&content) {
+    for input in &inputs {
+        let corpus = read_corpus_text(input)?;
+        corpus_bytes = corpus_bytes.saturating_add(corpus.source_bytes);
+        source_stats.add(corpus.stats);
+        for token in BanglaTokenIter::new(&corpus.text) {
             token_count += 1;
+            let token = normalize_bangla_text(token);
             frequencies
-                .entry(token.to_string())
+                .entry(token)
                 .and_modify(|frequency| *frequency = frequency.saturating_add(1))
                 .or_insert(1);
         }
@@ -655,6 +673,12 @@ fn extract_lexicon(
             .map(|input| input.display().to_string())
             .collect(),
         output: output.display().to_string(),
+        text_inputs: source_stats.text_inputs,
+        html_inputs: source_stats.html_inputs,
+        epub_inputs: source_stats.epub_inputs,
+        epub_spine_items: source_stats.epub_spine_items,
+        epub_fallback_inputs: source_stats.epub_fallback_inputs,
+        epub_fallback_items: source_stats.epub_fallback_items,
         corpus_bytes,
         token_count,
         unique_words,
@@ -704,7 +728,7 @@ fn merge_lexicon_tsvs(
             report.rows += 1;
 
             let mut columns = line.split('\t');
-            let word = columns.next().unwrap_or_default().trim();
+            let word = normalize_bangla_text(columns.next().unwrap_or_default().trim());
             let frequency_text = columns
                 .next()
                 .map(str::trim)
@@ -744,7 +768,7 @@ fn merge_lexicon_tsvs(
                 None => 1,
             };
 
-            if !allow_non_bangla && !is_bangla_lexicon_word(word) {
+            if !allow_non_bangla && !is_bangla_lexicon_word(&word) {
                 report.non_bangla_rows += 1;
                 handle_merge_drop(
                     &mut report,
@@ -757,11 +781,11 @@ fn merge_lexicon_tsvs(
             }
 
             report.accepted_rows += 1;
-            if let Some(existing) = words.get_mut(word) {
+            if let Some(existing) = words.get_mut(word.as_str()) {
                 report.duplicate_rows += 1;
                 *existing = existing.saturating_add(frequency);
             } else {
-                words.insert(word.to_string(), frequency);
+                words.insert(word, frequency);
             }
         }
     }
@@ -836,7 +860,7 @@ fn audit_lexicon_tsv(
         report.rows += 1;
 
         let mut columns = line.split('\t');
-        let word = columns.next().unwrap_or_default().trim();
+        let word = normalize_bangla_text(columns.next().unwrap_or_default().trim());
         let frequency_text = columns
             .next()
             .map(str::trim)
@@ -861,11 +885,11 @@ fn audit_lexicon_tsv(
             None => 1,
         };
 
-        if !allow_non_bangla && !is_bangla_lexicon_word(word) {
+        if !allow_non_bangla && !is_bangla_lexicon_word(&word) {
             report.non_bangla_rows += 1;
             continue;
         }
-        if seen.insert(word.to_string(), ()).is_some() {
+        if seen.insert(word, ()).is_some() {
             report.duplicate_rows += 1;
         }
 
@@ -930,7 +954,7 @@ fn read_lexicon_tsv(
         }
 
         let mut columns = line.split('\t');
-        let word = columns.next().unwrap_or_default().trim();
+        let word = normalize_bangla_text(columns.next().unwrap_or_default().trim());
         let frequency = match columns
             .next()
             .map(str::trim)
@@ -954,7 +978,7 @@ fn read_lexicon_tsv(
         if word.is_empty() {
             return Err(format!("empty word at {}:{}", input.display(), line_index + 1).into());
         }
-        if !allow_non_bangla && !is_bangla_lexicon_word(word) {
+        if !allow_non_bangla && !is_bangla_lexicon_word(&word) {
             return Err(format!(
                 "non-Bangla lexicon word at {}:{}: {word}",
                 input.display(),
@@ -1056,9 +1080,14 @@ fn evaluate(
             continue;
         }
         let (source, expected) = parse_pair(input, line_index, line)?;
+        let source = match input_kind {
+            EvalInputKind::Bangla => normalize_bangla_text(source),
+            EvalInputKind::Roman => source.to_string(),
+        };
+        let expected = normalize_bangla_text(expected);
         let request = match input_kind {
-            EvalInputKind::Bangla => CorrectionRequest::new(source),
-            EvalInputKind::Roman => obadh.autocorrect_request(source),
+            EvalInputKind::Bangla => CorrectionRequest::new(&source),
+            EvalInputKind::Roman => obadh.autocorrect_request(&source),
         };
         let baseline = request.current.clone();
         let mut decision = engine.decide(request);
@@ -1066,7 +1095,7 @@ fn evaluate(
             reranker.sort_candidates(&mut decision.candidates);
         }
         if let Some(char_reranker) = char_reranker {
-            let ranked = char_reranker.rank_candidates(source, &decision.candidates);
+            let ranked = char_reranker.rank_candidates(&source, &decision.candidates);
             if let Some(policy) = char_replacement_policy {
                 decision.replacement =
                     char_reranker.replacement_from_ranked_candidates(&ranked, policy);
@@ -1081,7 +1110,7 @@ fn evaluate(
             .as_ref()
             .map(|candidate| candidate.text.as_str())
             .unwrap_or(decision.input.as_str());
-        let target_in_lexicon = engine.lexicon().contains(expected);
+        let target_in_lexicon = engine.lexicon().contains(&expected);
 
         report.total += 1;
         report.target_in_lexicon += usize::from(target_in_lexicon);
@@ -1153,22 +1182,27 @@ fn export_candidates(
             continue;
         }
         let (source, expected) = parse_pair(input, line_index, line)?;
+        let source = match input_kind {
+            EvalInputKind::Bangla => normalize_bangla_text(source),
+            EvalInputKind::Roman => source.to_string(),
+        };
+        let expected = normalize_bangla_text(expected);
         let request = match input_kind {
-            EvalInputKind::Bangla => CorrectionRequest::new(source),
-            EvalInputKind::Roman => obadh.autocorrect_request(source),
+            EvalInputKind::Bangla => CorrectionRequest::new(&source),
+            EvalInputKind::Roman => obadh.autocorrect_request(&source),
         };
         let baseline = request.current.clone();
         let obadh_output = request.obadh_output.clone();
         let mut decision = engine.decide(request);
         let ranked_candidates =
-            char_reranker.map(|reranker| reranker.rank_candidates(source, &decision.candidates));
+            char_reranker.map(|reranker| reranker.rank_candidates(&source, &decision.candidates));
         if let Some(ranked_candidates) = &ranked_candidates {
             decision.candidates = ranked_candidates
                 .iter()
                 .map(|scored| scored.candidate.clone())
                 .collect();
         }
-        let target_in_lexicon = engine.lexicon().contains(expected);
+        let target_in_lexicon = engine.lexicon().contains(&expected);
         let target_rank = decision
             .candidates
             .iter()
@@ -1181,12 +1215,12 @@ fn export_candidates(
         let candidates = decision
             .candidates
             .iter()
-            .map(|candidate| export_candidate(candidate, expected))
+            .map(|candidate| export_candidate(candidate, &expected))
             .collect::<Vec<_>>();
         let candidates = if let Some(ranked_candidates) = &ranked_candidates {
             ranked_candidates
                 .iter()
-                .map(|candidate| export_scored_candidate(candidate, expected))
+                .map(|candidate| export_scored_candidate(candidate, &expected))
                 .collect::<Vec<_>>()
         } else {
             candidates
@@ -1203,8 +1237,8 @@ fn export_candidates(
         serde_json::to_writer(
             &mut writer,
             &CandidateExportRecord {
-                source: source.to_string(),
-                expected: expected.to_string(),
+                source,
+                expected,
                 input_kind: input_kind.as_str(),
                 baseline,
                 obadh_output,
@@ -1303,40 +1337,40 @@ fn audit_pairs(
             continue;
         }
 
-        if !is_bangla_lexicon_word(expected) {
+        let expected = normalize_bangla_text(expected);
+        if !is_bangla_lexicon_word(&expected) {
             report.non_bangla_expected_rows += 1;
             continue;
         }
 
-        let baseline = match input_kind {
+        let (source, baseline) = match input_kind {
             EvalInputKind::Bangla => {
-                if !is_bangla_lexicon_word(source) {
+                let source = normalize_bangla_text(source);
+                if !is_bangla_lexicon_word(&source) {
                     report.non_bangla_source_rows += 1;
                     continue;
                 }
-                source.to_string()
+                let baseline = source.clone();
+                (source, baseline)
             }
             EvalInputKind::Roman => {
                 if !is_clean_roman_word_input(source) {
                     report.non_roman_source_rows += 1;
                     continue;
                 }
-                obadh.transliterate(source)
+                (source.to_string(), obadh.transliterate(source))
             }
         };
 
         report.identity_rows += usize::from(source == expected);
         report.baseline_exact_rows += usize::from(baseline == expected);
-        let edit_cost = weighted_edit_distance(&baseline, expected).0;
+        let edit_cost = weighted_edit_distance(&baseline, &expected).0;
         report.baseline_total_edit_cost = report
             .baseline_total_edit_cost
             .saturating_add(edit_cost as u64);
         report.baseline_max_edit_cost = report.baseline_max_edit_cost.max(edit_cost);
 
-        if seen
-            .insert((source.to_string(), expected.to_string()), ())
-            .is_some()
-        {
+        if seen.insert((source, expected), ()).is_some() {
             report.duplicate_rows += 1;
         }
         report.accepted_rows += 1;
@@ -1363,137 +1397,6 @@ fn parse_pair<'a>(
         .into());
     }
     Ok((source, expected))
-}
-
-struct BanglaTokenIter<'a> {
-    text: &'a str,
-    chars: std::str::CharIndices<'a>,
-    start: Option<usize>,
-    end: usize,
-}
-
-impl<'a> BanglaTokenIter<'a> {
-    fn new(text: &'a str) -> Self {
-        Self {
-            text,
-            chars: text.char_indices(),
-            start: None,
-            end: 0,
-        }
-    }
-}
-
-impl<'a> Iterator for BanglaTokenIter<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            match self.chars.next() {
-                Some((index, ch)) if is_bangla_token_char(ch) => {
-                    if self.start.is_none() {
-                        self.start = Some(index);
-                    }
-                    self.end = index + ch.len_utf8();
-                }
-                Some(_) => {
-                    if let Some(start) = self.start.take() {
-                        let token = &self.text[start..self.end];
-                        if is_bangla_lexicon_word(token) {
-                            return Some(token);
-                        }
-                    }
-                }
-                None => {
-                    if let Some(start) = self.start.take() {
-                        let token = &self.text[start..self.end];
-                        if is_bangla_lexicon_word(token) {
-                            return Some(token);
-                        }
-                    }
-                    return None;
-                }
-            }
-        }
-    }
-}
-
-fn is_bangla_token_char(ch: char) -> bool {
-    is_bangla_word_char(ch) || is_joiner(ch)
-}
-
-fn is_bangla_lexicon_word(word: &str) -> bool {
-    let mut has_base = false;
-    let mut previous_joiner = false;
-
-    for (index, ch) in word.chars().enumerate() {
-        if is_joiner(ch) {
-            if index == 0 || previous_joiner {
-                return false;
-            }
-            previous_joiner = true;
-            continue;
-        }
-        previous_joiner = false;
-
-        if !is_bangla_word_char(ch) {
-            return false;
-        }
-        has_base |= is_bangla_base_char(ch);
-    }
-
-    has_base && !previous_joiner
-}
-
-fn is_clean_roman_word_input(word: &str) -> bool {
-    let mut has_ascii_letter = false;
-
-    for ch in word.chars() {
-        if ch.is_ascii_alphabetic() {
-            has_ascii_letter = true;
-            continue;
-        }
-        if matches!(ch, ',' | '`' | '/') {
-            continue;
-        }
-        return false;
-    }
-
-    has_ascii_letter
-}
-
-fn is_bangla_word_char(ch: char) -> bool {
-    is_bangla_base_char(ch)
-        || matches!(
-            ch,
-            '\u{0981}'..='\u{0983}'
-                | '\u{09BC}'
-                | '\u{09BE}'..='\u{09C4}'
-                | '\u{09C7}'..='\u{09C8}'
-                | '\u{09CB}'..='\u{09CD}'
-                | '\u{09D7}'
-                | '\u{09E2}'..='\u{09E3}'
-                | '\u{09FE}'
-        )
-}
-
-fn is_bangla_base_char(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{0985}'..='\u{098C}'
-            | '\u{098F}'..='\u{0990}'
-            | '\u{0993}'..='\u{09A8}'
-            | '\u{09AA}'..='\u{09B0}'
-            | '\u{09B2}'
-            | '\u{09B6}'..='\u{09B9}'
-            | '\u{09CE}'
-            | '\u{09DC}'..='\u{09DD}'
-            | '\u{09DF}'..='\u{09E1}'
-            | '\u{09F0}'..='\u{09F1}'
-    )
-}
-
-fn is_joiner(ch: char) -> bool {
-    matches!(ch, '\u{200C}' | '\u{200D}')
 }
 
 fn print_json<T: Serialize>(value: &T, pretty: bool) -> Result<(), Box<dyn std::error::Error>> {

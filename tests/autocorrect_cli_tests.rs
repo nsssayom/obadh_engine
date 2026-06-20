@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -174,12 +175,45 @@ fn autocorrect_cli_rejects_non_bangla_lexicon_words_by_default() {
 }
 
 #[test]
+fn autocorrect_cli_normalizes_bangla_lexicon_tsv_words() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-normalizes-lexicon");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.lex");
+    fs::write(&lexicon_tsv, "বড়\t3\nবড\u{09BC}\t4\n").expect("lexicon fixture should write");
+
+    let audit = run_obadh_autocorrect(["audit-lexicon", "--input", path_str(&lexicon_tsv)]);
+    assert!(audit.status.success(), "stderr: {}", stderr(&audit));
+    let audit_json = json_stdout(&audit);
+    assert_eq!(audit_json["rows"], 2);
+    assert_eq!(audit_json["accepted_rows"], 2);
+    assert_eq!(audit_json["unique_words"], 1);
+    assert_eq!(audit_json["duplicate_rows"], 1);
+
+    let build = run_obadh_autocorrect([
+        "build-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+    let build_json = json_stdout(&build);
+    assert_eq!(build_json["input_rows"], 2);
+    assert_eq!(build_json["duplicate_rows"], 1);
+    assert_eq!(build_json["entries"], 1);
+    assert_eq!(build_json["total_frequency"], 7);
+}
+
+#[test]
 fn autocorrect_cli_extracts_and_audits_clean_bangla_word_frequencies() {
     let workspace = TempWorkspace::new("obadh-autocorrect-cli-extract-audit");
     let corpus = workspace.path("corpus.txt");
     let extracted = workspace.path("extracted.tsv");
-    fs::write(&corpus, "আমি আমি তুমি। hello ১২৩। র‌্যাব র‌্যাব ্ । কিরণ")
-        .expect("corpus fixture should write");
+    fs::write(
+        &corpus,
+        "আমি আমি তুমি। hello ১২৩। র‌্যাব র‌্যাব ্ । কিরণ বড় বড\u{09BC}",
+    )
+    .expect("corpus fixture should write");
 
     let extract = run_obadh_autocorrect([
         "extract-lexicon",
@@ -192,23 +226,243 @@ fn autocorrect_cli_extracts_and_audits_clean_bangla_word_frequencies() {
     ]);
     assert!(extract.status.success(), "stderr: {}", stderr(&extract));
     let extract_json = json_stdout(&extract);
-    assert_eq!(extract_json["token_count"], 6);
-    assert_eq!(extract_json["unique_words"], 4);
-    assert_eq!(extract_json["emitted_entries"], 2);
+    assert_eq!(extract_json["text_inputs"], 1);
+    assert_eq!(extract_json["html_inputs"], 0);
+    assert_eq!(extract_json["epub_inputs"], 0);
+    assert_eq!(extract_json["epub_spine_items"], 0);
+    assert_eq!(extract_json["epub_fallback_inputs"], 0);
+    assert_eq!(extract_json["epub_fallback_items"], 0);
+    assert_eq!(extract_json["token_count"], 8);
+    assert_eq!(extract_json["unique_words"], 5);
+    assert_eq!(extract_json["emitted_entries"], 3);
 
     let extracted_tsv = fs::read_to_string(&extracted).expect("extracted TSV should read");
     assert!(extracted_tsv.contains("আমি\t2"));
     assert!(extracted_tsv.contains("র‌্যাব\t2"));
+    assert!(extracted_tsv.contains("বড়\t2"));
+    assert_eq!(
+        extracted_tsv
+            .lines()
+            .filter(|line| line.starts_with("বড়\t"))
+            .count(),
+        1
+    );
     assert!(!extracted_tsv.contains("১২৩"));
     assert!(!extracted_tsv.contains("hello"));
 
     let audit = run_obadh_autocorrect(["audit-lexicon", "--input", path_str(&extracted)]);
     assert!(audit.status.success(), "stderr: {}", stderr(&audit));
     let audit_json = json_stdout(&audit);
-    assert_eq!(audit_json["rows"], 2);
-    assert_eq!(audit_json["accepted_rows"], 2);
-    assert_eq!(audit_json["unique_words"], 2);
+    assert_eq!(audit_json["rows"], 3);
+    assert_eq!(audit_json["accepted_rows"], 3);
+    assert_eq!(audit_json["unique_words"], 3);
     assert_eq!(audit_json["non_bangla_rows"], 0);
+}
+
+#[test]
+fn autocorrect_cli_extracts_bangla_words_from_epub_body_text() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-extract-epub");
+    let epub = workspace.path("book.epub");
+    let extracted = workspace.path("extracted.tsv");
+    write_minimal_epub(
+        &epub,
+        r#"<?xml version="1.0" encoding="utf-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml">
+          <body>
+            <p>আমি তুমি তুমি hello &amp; &#x995;&#x9BF;&#x9B0;&#x9A3;</p>
+            <span title="রাখবে না">আমি</span>
+          </body>
+        </html>"#,
+    );
+
+    let extract = run_obadh_autocorrect([
+        "extract-lexicon",
+        "--input",
+        path_str(&epub),
+        "--output",
+        path_str(&extracted),
+    ]);
+    assert!(extract.status.success(), "stderr: {}", stderr(&extract));
+    let extract_json = json_stdout(&extract);
+    assert_eq!(extract_json["text_inputs"], 0);
+    assert_eq!(extract_json["html_inputs"], 0);
+    assert_eq!(extract_json["epub_inputs"], 1);
+    assert_eq!(extract_json["epub_spine_items"], 0);
+    assert_eq!(extract_json["epub_fallback_inputs"], 1);
+    assert_eq!(extract_json["epub_fallback_items"], 1);
+    assert_eq!(extract_json["token_count"], 5);
+    assert_eq!(extract_json["unique_words"], 3);
+    assert_eq!(extract_json["emitted_entries"], 3);
+    assert!(extract_json["corpus_bytes"].as_u64().unwrap() > 0);
+
+    let extracted_tsv = fs::read_to_string(&extracted).expect("extracted TSV should read");
+    assert!(extracted_tsv.contains("আমি\t2"));
+    assert!(extracted_tsv.contains("তুমি\t2"));
+    assert!(extracted_tsv.contains("কিরণ\t1"));
+    assert!(!extracted_tsv.contains("রাখবে"));
+    assert!(!extracted_tsv.contains("hello"));
+}
+
+#[test]
+fn autocorrect_cli_extracts_standalone_html_without_markup_noise() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-extract-html");
+    let html = workspace.path("chapter.xhtml");
+    let extracted = workspace.path("extracted.tsv");
+    fs::write(
+        &html,
+        r#"<html>
+          <head>
+            <style>.hidden::after { content: "দূষণ"; }</style>
+            <script>const ignored = "দূষণ";</script>
+          </head>
+          <body>
+            <p>আমি বই</p>
+            <span title="রাখবে না">নদী</span>
+            <p>&#x995;&#x9BF;&#x9B0;&#x9A3;</p>
+          </body>
+        </html>"#,
+    )
+    .expect("HTML corpus should write");
+
+    let extract = run_obadh_autocorrect([
+        "extract-lexicon",
+        "--input",
+        path_str(&html),
+        "--output",
+        path_str(&extracted),
+    ]);
+    assert!(extract.status.success(), "stderr: {}", stderr(&extract));
+    let extract_json = json_stdout(&extract);
+    assert_eq!(extract_json["text_inputs"], 0);
+    assert_eq!(extract_json["html_inputs"], 1);
+    assert_eq!(extract_json["epub_inputs"], 0);
+    assert_eq!(extract_json["token_count"], 4);
+    assert_eq!(extract_json["unique_words"], 4);
+    assert_eq!(extract_json["emitted_entries"], 4);
+
+    let extracted_tsv = fs::read_to_string(&extracted).expect("extracted TSV should read");
+    assert!(extracted_tsv.contains("আমি\t1"));
+    assert!(extracted_tsv.contains("বই\t1"));
+    assert!(extracted_tsv.contains("নদী\t1"));
+    assert!(extracted_tsv.contains("কিরণ\t1"));
+    assert!(!extracted_tsv.contains("রাখবে"));
+    assert!(!extracted_tsv.contains("দূষণ"));
+}
+
+#[test]
+fn autocorrect_cli_prefers_epub_spine_over_nav_and_unreferenced_xhtml() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-extract-epub-spine");
+    let epub = workspace.path("book.epub");
+    let extracted = workspace.path("extracted.tsv");
+    write_epub(
+        &epub,
+        &[
+            (
+                "META-INF/container.xml",
+                r#"<?xml version="1.0"?>
+                <container>
+                  <rootfiles>
+                    <rootfile full-path="OEBPS/content.opf"/>
+                  </rootfiles>
+                </container>"#,
+            ),
+            (
+                "OEBPS/content.opf",
+                r#"<package>
+                  <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="appendix" href="appendix.xhtml" media-type="application/xhtml+xml"/>
+                  </manifest>
+                  <spine>
+                    <itemref idref="nav"/>
+                    <itemref idref="chapter"/>
+                    <itemref idref="appendix" linear="no"/>
+                  </spine>
+                </package>"#,
+            ),
+            ("OEBPS/nav.xhtml", "<html><body>সূচি দূষণ</body></html>"),
+            ("OEBPS/chapter.xhtml", "<html><body>মূল মূল বই</body></html>"),
+            (
+                "OEBPS/appendix.xhtml",
+                "<html><body>পরিশিষ্ট দূষণ</body></html>",
+            ),
+            (
+                "OEBPS/unreferenced.xhtml",
+                "<html><body>অতল দূষণ</body></html>",
+            ),
+        ],
+    );
+
+    let extract = run_obadh_autocorrect([
+        "extract-lexicon",
+        "--input",
+        path_str(&epub),
+        "--output",
+        path_str(&extracted),
+    ]);
+    assert!(extract.status.success(), "stderr: {}", stderr(&extract));
+    let extract_json = json_stdout(&extract);
+    assert_eq!(extract_json["text_inputs"], 0);
+    assert_eq!(extract_json["html_inputs"], 0);
+    assert_eq!(extract_json["epub_inputs"], 1);
+    assert_eq!(extract_json["epub_spine_items"], 1);
+    assert_eq!(extract_json["epub_fallback_inputs"], 0);
+    assert_eq!(extract_json["epub_fallback_items"], 0);
+    assert_eq!(extract_json["token_count"], 3);
+    assert_eq!(extract_json["unique_words"], 2);
+
+    let extracted_tsv = fs::read_to_string(&extracted).expect("extracted TSV should read");
+    assert!(extracted_tsv.contains("মূল\t2"));
+    assert!(extracted_tsv.contains("বই\t1"));
+    assert!(!extracted_tsv.contains("সূচি"));
+    assert!(!extracted_tsv.contains("পরিশিষ্ট"));
+    assert!(!extracted_tsv.contains("অতল"));
+    assert!(!extracted_tsv.contains("দূষণ"));
+}
+
+#[test]
+fn autocorrect_cli_extracts_corpus_directories_deterministically() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-extract-dir");
+    let corpus_dir = workspace.path("corpus");
+    let nested_dir = corpus_dir.join("nested");
+    fs::create_dir_all(&nested_dir).expect("corpus directories should create");
+    let extracted = workspace.path("extracted.tsv");
+    fs::write(corpus_dir.join("b.txt"), "আমি বই").expect("text corpus should write");
+    fs::write(nested_dir.join("a.md"), "আমি নদী").expect("markdown corpus should write");
+    fs::write(
+        nested_dir.join("d.xhtml"),
+        r#"<html><body><p>আমি</p><span title="দূষণ">বই</span></body></html>"#,
+    )
+    .expect("HTML corpus should write");
+    fs::write(corpus_dir.join("ignore.css"), "দূষণ দূষণ").expect("ignored corpus should write");
+    write_minimal_epub(
+        &nested_dir.join("c.epub"),
+        "<html><body>বই নদী নদী</body></html>",
+    );
+
+    let extract = run_obadh_autocorrect([
+        "extract-lexicon",
+        "--input",
+        path_str(&corpus_dir),
+        "--output",
+        path_str(&extracted),
+    ]);
+    assert!(extract.status.success(), "stderr: {}", stderr(&extract));
+    let extract_json = json_stdout(&extract);
+    assert_eq!(extract_json["inputs"].as_array().unwrap().len(), 4);
+    assert_eq!(extract_json["text_inputs"], 2);
+    assert_eq!(extract_json["html_inputs"], 1);
+    assert_eq!(extract_json["epub_inputs"], 1);
+    assert_eq!(extract_json["epub_fallback_inputs"], 1);
+    assert_eq!(extract_json["token_count"], 9);
+    assert_eq!(extract_json["unique_words"], 3);
+
+    let extracted_tsv = fs::read_to_string(&extracted).expect("extracted TSV should read");
+    assert!(extracted_tsv.contains("নদী\t3"));
+    assert!(extracted_tsv.contains("আমি\t3"));
+    assert!(extracted_tsv.contains("বই\t3"));
+    assert!(!extracted_tsv.contains("দূষণ"));
 }
 
 #[test]
@@ -426,6 +680,31 @@ fn run_obadh_autocorrect<const N: usize>(args: [&str; N]) -> std::process::Outpu
         .args(args)
         .output()
         .expect("obadh-autocorrect should run")
+}
+
+fn write_minimal_epub(path: &Path, chapter: &str) {
+    write_epub(path, &[("OEBPS/chapter.xhtml", chapter)]);
+}
+
+fn write_epub(path: &Path, members: &[(&str, &str)]) {
+    let file = fs::File::create(path).expect("epub fixture should create");
+    let mut zip = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    zip.start_file("mimetype", options)
+        .expect("epub mimetype member should start");
+    zip.write_all(b"application/epub+zip")
+        .expect("epub mimetype member should write");
+
+    for (name, content) in members {
+        zip.start_file(*name, options)
+            .expect("epub member should start");
+        zip.write_all(content.as_bytes())
+            .expect("epub member should write");
+    }
+
+    zip.finish().expect("epub fixture should finish");
 }
 
 fn json_stdout(output: &std::process::Output) -> Value {

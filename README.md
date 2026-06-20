@@ -196,9 +196,12 @@ The deterministic transliterator remains dictionary-free. Autocorrect data is
 prepared and evaluated separately through compact lexicon artifacts:
 
 ```bash
-# Extract a Bangla word-frequency TSV from clean corpus text
+# Extract a Bangla word-frequency TSV from clean corpus text, HTML, or EPUB books
 cargo run --bin obadh-autocorrect -- extract-lexicon \
   --input path/to/clean_corpus.txt \
+  --input path/to/chapter.xhtml \
+  --input path/to/book.epub \
+  --input path/to/book_directory \
   --output path/to/clean_bn_words.tsv \
   --min-frequency 2
 
@@ -264,7 +267,9 @@ cargo run --bin obadh-autocorrect -- export-candidates \
 ```
 
 Dataset admission notes live in `data/autocorrect/README.md`. Large datasets and
-generated artifacts should stay out of the repository.
+generated artifacts should stay out of the repository. Corpus extraction and
+lexicon TSV ingestion normalize Bangla text to NFC before counting or building
+artifacts.
 
 The lexicon-only runtime ranker does not auto-replace Roman-origin requests by
 default. It still emits candidates and training features; automatic replacement
