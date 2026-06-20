@@ -24,6 +24,19 @@ www/node_modules/
 __pycache__/
 *.py[cod]
 
+# Large local autocorrect data/model workspace. Keep pipeline metadata in git;
+# keep raw corpora, generated candidates, and trained local model artifacts out.
+data/autocorrect/raw/**
+data/autocorrect/interim/**
+data/autocorrect/processed/**
+data/autocorrect/models/**
+!data/autocorrect/raw/.gitkeep
+!data/autocorrect/interim/.gitkeep
+!data/autocorrect/processed/.gitkeep
+!data/autocorrect/models/.gitkeep
+!data/autocorrect/manifests/
+!data/autocorrect/manifests/**
+
 # Package locks
 # Comment the following line if you want to keep package-lock.json in version control
 #www/package-lock.json

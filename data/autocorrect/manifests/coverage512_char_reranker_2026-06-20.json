@@ -1,0 +1,63 @@
+{
+  "kind": "obadh_autocorrect_training_run",
+  "name": "coverage512_char_candidate_reranker",
+  "date": "2026-06-20",
+  "candidate_generator": {
+    "lexicon": "coverage_words.lex",
+    "max_candidates": 512,
+    "max_skeleton_candidates": 512,
+    "max_skeleton_edit_cost": 1,
+    "search_known_input": true,
+    "roman_edit_candidates": "insert missing o between non-identical adjacent roman consonants"
+  },
+  "artifacts": {
+    "model_json": "data/autocorrect/models/char_candidate_reranker.coverage512.json",
+    "model_pt": "data/autocorrect/models/char_candidate_reranker.coverage512.pt",
+    "web_model_json": "www/assets/autocorrect/char_candidate_reranker.json",
+    "pages_model_json": "docs/assets/autocorrect/char_candidate_reranker.json"
+  },
+  "training": {
+    "device": "mps",
+    "epochs": 8,
+    "batch_size": 128,
+    "embed_size": 32,
+    "hidden_size": 64,
+    "train_rows": 94546,
+    "trainable_rows": 80284,
+    "dev_target_present_rows": 7967,
+    "test_target_present_rows": 7943
+  },
+  "metrics": {
+    "reranked_dev_top1_given_present": 0.7903853395255429,
+    "reranked_dev_mrr_given_present": 0.8678771072649338,
+    "reranked_test_top1_given_present": 0.7839607201309329,
+    "reranked_test_mrr_given_present": 0.8638086762037777,
+    "rust_eval_dev_top_candidate_accuracy_all_rows": 0.678629162625283,
+    "rust_eval_dev_candidate_recall": 0.8586054531738334,
+    "rust_eval_dev_mrr_all_rows": 0.7474002493350284,
+    "rust_eval_test_top_candidate_accuracy_all_rows": 0.6750108365843086,
+    "rust_eval_test_candidate_recall": 0.8607498916341569,
+    "rust_eval_test_mrr_all_rows": 0.7466441607159304
+  },
+  "replacement_policy": {
+    "status": "enabled_for_high_confidence_only",
+    "min_score": -1.0,
+    "min_margin": 7.0,
+    "dev_auto_replacements": 295,
+    "dev_replacement_correct": 293,
+    "dev_incorrect_replacements": 2,
+    "dev_replacement_accuracy": 0.9932203389830508,
+    "test_auto_replacements": 324,
+    "test_replacement_correct": 324,
+    "test_incorrect_replacements": 0,
+    "test_replacement_accuracy": 1.0
+  },
+  "runtime": {
+    "wasm_rerank_pool_candidates": 512,
+    "wasm_response_candidates": 24,
+    "local_bench_shipped_roman_request_decide_and_rerank_512": "approximately 360 microseconds"
+  },
+  "spot_checks": {
+    "okalpokko": "অকালপক্ক is rank 1 in the shipped playground suggestions"
+  }
+}

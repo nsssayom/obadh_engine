@@ -34,6 +34,11 @@ name = "tokenizer"
 path = "src/bin/tokenizer.rs"
 bench = false
 
+[[bin]]
+name = "obadh-autocorrect"
+path = "src/bin/obadh-autocorrect.rs"
+bench = false
+
 [[bench]]
 name = "hot_path"
 harness = false

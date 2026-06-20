@@ -22,6 +22,14 @@ This document tracks current limitations and planned future work for the determi
 
 3. **Documentation Completeness**: The main deliberate-input contract is documented, but every accepted alias should continue to be tied back to a canonical rule signal in user-facing docs.
 
+## Autocorrect Workbench Issues
+
+1. **Lexicon Coverage Ceiling**: The current runtime candidate generator is lexicon-backed. If the expected target is absent from the compact lexicon artifact, the candidate generator cannot surface it. Curated high-coverage Bangla word-frequency sources are still required before production accuracy can be judged fairly.
+
+2. **Ranker Calibration**: The lexicon-only ranker is conservative and does not auto-replace Roman-origin requests by default. Roman-origin retrieval skips Bangla-unit edit search by default and uses phonetic-skeleton candidates as low-trust recall candidates for suggestions and reranker training, not automatic replacements.
+
+3. **Training Candidate Depth**: Production defaults keep candidate lists tight. Offline reranker export should use wider `--max-candidates` and `--max-skeleton-candidates` settings so the trained model sees the correct target whenever retrieval can reasonably produce it.
+
 ## Future Work
 
 1. Implement a more linguistically accurate algorithm for forming conjuncts based on Bengali orthography rules.

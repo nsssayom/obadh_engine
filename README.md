@@ -190,6 +190,109 @@ cargo run --bin obadh -- --benchmark 10 --debug 'kA khA gA t`` 12.34'
 cargo bench --bench hot_path
 ```
 
+### Autocorrect Workbench
+
+The deterministic transliterator remains dictionary-free. Autocorrect data is
+prepared and evaluated separately through compact lexicon artifacts:
+
+```bash
+# Extract a Bangla word-frequency TSV from clean corpus text
+cargo run --bin obadh-autocorrect -- extract-lexicon \
+  --input path/to/clean_corpus.txt \
+  --output path/to/clean_bn_words.tsv \
+  --min-frequency 2
+
+# Audit a candidate TSV before building an artifact
+cargo run --bin obadh-autocorrect -- audit-lexicon \
+  --input path/to/clean_bn_words.tsv --pretty
+
+# Merge curated word-frequency TSVs into one clean source
+cargo run --bin obadh-autocorrect -- merge-lexicon \
+  --input path/to/dakshina_words.tsv \
+  --input path/to/wiki_words.tsv \
+  --output path/to/merged_bn_words.tsv \
+  --drop-invalid
+
+# Audit word-level Bangla typo pairs: observed<TAB>expected
+cargo run --bin obadh-autocorrect -- audit-pairs \
+  --input path/to/bangla_pairs.tsv \
+  --input-kind bangla --pretty
+
+# Audit word-level Roman pairs: roman<TAB>expected_bangla
+cargo run --bin obadh-autocorrect -- audit-pairs \
+  --input path/to/roman_pairs.tsv \
+  --input-kind roman --pretty
+
+# Build a compact Bangla lexicon artifact from one or more curated TSVs
+cargo run --bin obadh-autocorrect -- build-lexicon \
+  --input path/to/merged_bn_words.tsv \
+  --output path/to/obadh.bn.lex
+
+# Inspect an artifact
+cargo run --bin obadh-autocorrect -- inspect-lexicon \
+  --input path/to/obadh.bn.lex --pretty
+
+# Evaluate Bangla typo pairs: observed<TAB>expected
+cargo run --bin obadh-autocorrect -- eval \
+  --lexicon path/to/obadh.bn.lex \
+  --input path/to/eval_pairs.tsv \
+  --input-kind bangla --pretty
+
+# Evaluate Roman input through Obadh first: roman<TAB>expected_bangla
+cargo run --bin obadh-autocorrect -- eval \
+  --lexicon path/to/obadh.bn.lex \
+  --input path/to/roman_eval_pairs.tsv \
+  --input-kind roman --pretty
+
+# Evaluate a wider offline pool for reranker training/retrieval analysis
+cargo run --bin obadh-autocorrect -- eval \
+  --lexicon path/to/obadh.bn.lex \
+  --input path/to/roman_eval_pairs.tsv \
+  --input-kind roman \
+  --max-candidates 64 \
+  --max-skeleton-candidates 128 \
+  --pretty
+
+# Export labeled candidate rows for reranker training or calibration
+cargo run --bin obadh-autocorrect -- export-candidates \
+  --lexicon path/to/obadh.bn.lex \
+  --input path/to/eval_pairs.tsv \
+  --output path/to/candidates.jsonl \
+  --input-kind bangla \
+  --max-candidates 64 \
+  --max-skeleton-candidates 128
+```
+
+Dataset admission notes live in `data/autocorrect/README.md`. Large datasets and
+generated artifacts should stay out of the repository.
+
+The lexicon-only runtime ranker does not auto-replace Roman-origin requests by
+default. It still emits candidates and training features; automatic replacement
+for Roman-origin text is reserved for a calibrated reranker that proves it can
+improve accuracy without damaging keyboard trust.
+
+Runtime candidate generation uses deterministic indexes from the same compact
+lexicon: Bangla-unit edit search for high-trust typo candidates, plus a folded
+phonetic-skeleton index with bounded deletion lookup for lower-trust recall
+candidates. The skeleton key drops vowel marks/independent vowels and folds
+aspirated consonant pairs for retrieval only; matches are verified after lookup
+and skeleton candidates are never automatic replacement sources.
+
+For Roman-origin requests, the runtime default skips Bangla-unit edit search and
+uses skeleton retrieval only. This is both faster and safer for Obadh output:
+edit-distance over a structurally wrong intermediate Bangla form tends to add
+expensive, low-quality candidates that crowd out better phonetic matches. Passing
+`--max-edit-cost` to `eval` or `export-candidates` explicitly opts Roman-origin
+experiments back into edit search.
+
+`eval` and `export-candidates` accept `--max-candidates`, `--max-edit-cost`,
+`--max-skeleton-candidates`, `--max-skeleton-edit-cost`, and
+`--search-known-input`. Keep production defaults tight, but use a wider pool for
+offline candidate export and reranker training.
+
+`inspect-lexicon` reports trie and skeleton-index sizes so runtime memory impact
+is visible before a lexicon is shipped.
+
 ## Web Interface
 
 The engine comes with a powerful web interface called "অবাধ খেলাঘর" (Obadh Playground) that lets you test the transliteration in real-time directly in your browser.
