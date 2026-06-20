@@ -11,8 +11,11 @@ pub mod wasm;
 // Re-export commonly used types for convenience
 pub use autocorrect::{
     weighted_edit_distance, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
-    CandidateFeatures, CorrectionCandidate, CorrectionRequest, CorrectionSource, EditCost, Lexicon,
-    LexiconArtifactError, LexiconEntry, LexiconStats, AUTOCORRECT_FEATURE_DIM,
+    CandidateFeatures, CorrectionCandidate, CorrectionRequest, CorrectionSource, EditCost,
+    FstCandidate, FstCandidateSource, FstLexicon, FstSuggestError, FstSuggestOptions,
+    FstSuggestResult, Lexicon, LexiconArtifactError, LexiconEntry, LexiconStats,
+    AUTOCORRECT_FEATURE_DIM, DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES,
+    FST_MAX_LEVENSHTEIN_DISTANCE,
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};

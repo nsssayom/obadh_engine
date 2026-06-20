@@ -193,7 +193,7 @@ cargo bench --bench hot_path
 ### Autocorrect Workbench
 
 The deterministic transliterator remains dictionary-free. Autocorrect data is
-prepared and evaluated separately through compact lexicon artifacts:
+prepared separately and shipped as an FST lexicon artifact:
 
 ```bash
 # Extract a Bangla word-frequency TSV from clean corpus text, HTML, or EPUB books
@@ -226,19 +226,18 @@ cargo run --bin obadh-autocorrect -- audit-pairs \
   --input path/to/roman_pairs.tsv \
   --input-kind roman --pretty
 
-# Build a compact Bangla lexicon artifact from one or more curated TSVs
-cargo run --bin obadh-autocorrect -- build-lexicon \
+# Build the production FST artifact from one or more curated TSVs
+cargo run --bin obadh-autocorrect -- build-fst-lexicon \
   --input path/to/merged_bn_words.tsv \
-  --output path/to/obadh.bn.lex
+  --output path/to/obadh.bn.fst
 
 # Inspect an artifact
-cargo run --bin obadh-autocorrect -- inspect-lexicon \
-  --input path/to/obadh.bn.lex --pretty
+cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
+  --input path/to/obadh.bn.fst --pretty
 
 # Inspect live Roman-input suggestions through the runtime path
-cargo run --bin obadh-autocorrect -- suggest \
-  --lexicon path/to/obadh.bn.lex \
-  --char-reranker path/to/char_candidate_reranker.json \
+cargo run --bin obadh-autocorrect -- suggest-fst \
+  --lexicon path/to/obadh.bn.fst \
   --input kmn --pretty
 
 # Evaluate Bangla typo pairs: observed<TAB>expected
@@ -272,37 +271,33 @@ cargo run --bin obadh-autocorrect -- export-candidates \
   --max-skeleton-candidates 128
 ```
 
-Dataset admission notes live in `data/autocorrect/README.md`. Large datasets and
-generated artifacts should stay out of the repository. Corpus extraction and
-lexicon TSV ingestion normalize Bangla text to NFC before counting or building
-artifacts.
+Dataset admission notes live in `data/autocorrect/README.md`. Corpus extraction
+and lexicon TSV ingestion normalize Bangla text to NFC before counting or
+building artifacts.
 
 The lexicon-only runtime ranker does not auto-replace Roman-origin requests by
 default. It still emits candidates and training features; automatic replacement
 for Roman-origin text is reserved for a calibrated reranker that proves it can
 improve accuracy without damaging keyboard trust.
 
-Runtime candidate generation uses deterministic indexes from the same compact
-lexicon: Bangla-unit edit search for high-trust typo candidates, plus a folded
-phonetic-skeleton index with bounded deletion lookup for lower-trust recall
-candidates. The skeleton key drops vowel marks/independent vowels and folds
-aspirated consonant pairs for retrieval only; matches are verified after lookup
-and skeleton candidates are never automatic replacement sources.
+Runtime candidate generation uses a corpus-backed finite state transducer:
+exact lookup, prefix completion, and bounded Unicode edit search intersected
+directly with the lexicon. Native tools mmap the FST so the full lexicon is not
+expanded into heap-resident trie nodes. Browser/WASM loads the same compact FST
+bytes without building the old skeleton indexes.
 
-For Roman-origin requests, the runtime default skips Bangla-unit edit search and
-uses skeleton retrieval only. This is both faster and safer for Obadh output:
-edit-distance over a structurally wrong intermediate Bangla form tends to add
-expensive, low-quality candidates that crowd out better phonetic matches. Passing
-`--max-edit-cost` to `eval` or `export-candidates` explicitly opts Roman-origin
-experiments back into edit search.
+The older compact `.lex` commands remain for compatibility and offline candidate
+export while the FST path takes over production lookup. `eval` and
+`export-candidates` still operate on `.lex` artifacts until their evaluation
+flow is migrated.
 
 `eval` and `export-candidates` accept `--max-candidates`, `--max-edit-cost`,
 `--max-skeleton-candidates`, `--max-skeleton-edit-cost`, and
 `--search-known-input`. Keep production defaults tight, but use a wider pool for
 offline candidate export and reranker training.
 
-`inspect-lexicon` reports trie and skeleton-index sizes so runtime memory impact
-is visible before a lexicon is shipped.
+`inspect-fst-lexicon` reports FST entry count and artifact size so runtime
+footprint is visible before a lexicon is shipped.
 
 ## Web Interface
 

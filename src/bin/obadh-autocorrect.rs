@@ -13,6 +13,8 @@ use serde::Serialize;
 
 #[path = "obadh_autocorrect/corpus.rs"]
 mod corpus;
+#[path = "obadh_autocorrect/fst_cli.rs"]
+mod fst_cli;
 
 use corpus::{
     expand_corpus_inputs, is_bangla_lexicon_word, is_clean_roman_word_input, normalize_bangla_text,
@@ -96,6 +98,14 @@ enum Command {
         #[arg(long, default_value_t = false)]
         allow_non_bangla: bool,
     },
+    BuildFstLexicon {
+        #[arg(long, required = true)]
+        input: Vec<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = false)]
+        allow_non_bangla: bool,
+    },
     ExportLexicon {
         #[arg(long)]
         input: PathBuf,
@@ -103,6 +113,12 @@ enum Command {
         output: PathBuf,
     },
     InspectLexicon {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long, default_value_t = false)]
+        pretty: bool,
+    },
+    InspectFstLexicon {
         #[arg(long)]
         input: PathBuf,
         #[arg(long, default_value_t = false)]
@@ -125,6 +141,24 @@ enum Command {
         max_skeleton_edit_cost: Option<u16>,
         #[arg(long = "no-search-known-input", default_value_t = true, action = ArgAction::SetFalse)]
         search_known_input: bool,
+        #[arg(long, default_value_t = DEFAULT_SUGGEST_RESPONSE_CANDIDATES)]
+        response_candidates: usize,
+        #[arg(long, default_value_t = false)]
+        pretty: bool,
+    },
+    SuggestFst {
+        #[arg(long)]
+        lexicon: PathBuf,
+        #[arg(long)]
+        input: String,
+        #[arg(long, default_value_t = fst_cli::default_max_distance())]
+        max_distance: u32,
+        #[arg(long)]
+        max_edit_cost: Option<u16>,
+        #[arg(long, default_value_t = RUNTIME_RERANK_POOL_SIZE)]
+        max_candidates: usize,
+        #[arg(long, default_value_t = fst_cli::default_prefix_candidates())]
+        max_prefix_candidates: usize,
         #[arg(long, default_value_t = DEFAULT_SUGGEST_RESPONSE_CANDIDATES)]
         response_candidates: usize,
         #[arg(long, default_value_t = false)]
@@ -556,6 +590,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let report = build_lexicon_artifact(&input, &output, allow_non_bangla)?;
             print_json(&report, true)?;
         }
+        Command::BuildFstLexicon {
+            input,
+            output,
+            allow_non_bangla,
+        } => {
+            let report = fst_cli::build_fst_lexicon_artifact(&input, &output, allow_non_bangla)?;
+            print_json(&report, true)?;
+        }
         Command::ExportLexicon { input, output } => {
             let report = export_lexicon_tsv(&input, &output)?;
             print_json(&report, true)?;
@@ -576,6 +618,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 pretty,
             )?;
+        }
+        Command::InspectFstLexicon { input, pretty } => {
+            let report = fst_cli::inspect_fst_lexicon(&input)?;
+            print_json(&report, pretty)?;
         }
         Command::Suggest {
             lexicon,
@@ -599,6 +645,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 search_known_input,
             );
             let report = suggest(&input, lexicon_model, config, response_candidates);
+            print_json(&report, pretty)?;
+        }
+        Command::SuggestFst {
+            lexicon,
+            input,
+            max_distance,
+            max_edit_cost,
+            max_candidates,
+            max_prefix_candidates,
+            response_candidates,
+            pretty,
+        } => {
+            let lexicon_model = fst_cli::read_fst_lexicon(&lexicon)?;
+            let report = fst_cli::suggest_fst(
+                &input,
+                &lexicon_model,
+                max_distance,
+                max_edit_cost,
+                max_candidates,
+                max_prefix_candidates,
+                response_candidates,
+            )?;
             print_json(&report, pretty)?;
         }
         Command::Eval {

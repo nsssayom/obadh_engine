@@ -144,7 +144,7 @@ optimize_wasm() {
     for wasmfile in pkg/*.wasm; do
         [ -e "$wasmfile" ] || continue
         local optimized="${wasmfile}.opt"
-        wasm-opt --enable-bulk-memory -O "$wasmfile" -o "$optimized" || error "Failed to optimize $wasmfile"
+        wasm-opt --enable-bulk-memory --enable-nontrapping-float-to-int -O "$wasmfile" -o "$optimized" || error "Failed to optimize $wasmfile"
         mv "$optimized" "$wasmfile" || error "Failed to replace optimized WASM file"
     done
 }

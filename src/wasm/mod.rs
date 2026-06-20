@@ -5,7 +5,8 @@ use web_sys::Performance;
 
 use crate::{
     AutocorrectConfig, AutocorrectDecision, AutocorrectEngine, CandidateFeatures,
-    CorrectionCandidate, CorrectionSource, Lexicon, LexiconEntry, LexiconStats, ObadhEngine,
+    CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon, FstSuggestOptions, Lexicon,
+    LexiconEntry, LexiconStats, ObadhEngine,
 };
 
 const AUTOCORRECT_RERANK_POOL_SIZE: usize = 512;
@@ -90,8 +91,9 @@ pub struct TransliterationResult {
     pub token_analysis: Option<Vec<TokenAnalysis>>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, Serialize)]
 pub struct AutocorrectLexiconStats {
+    pub artifact_kind: &'static str,
     pub entries: usize,
     pub trie_nodes: usize,
     pub trie_edges: usize,
@@ -105,8 +107,8 @@ pub struct AutocorrectCandidateInfo {
     pub text: String,
     pub source: &'static str,
     pub edit_cost: u16,
-    pub frequency: u32,
-    pub score: i32,
+    pub frequency: u64,
+    pub score: i64,
     pub features: [i16; crate::AUTOCORRECT_FEATURE_DIM],
 }
 
@@ -302,8 +304,13 @@ impl Default for ObadhaWasm {
 #[wasm_bindgen]
 pub struct ObadhAutocorrectWasm {
     obadh: ObadhEngine,
-    engine: AutocorrectEngine,
-    stats: LexiconStats,
+    backend: AutocorrectBackend,
+    stats: AutocorrectLexiconStats,
+}
+
+enum AutocorrectBackend {
+    Compact(AutocorrectEngine),
+    Fst(FstLexicon<Vec<u8>>),
 }
 
 #[wasm_bindgen]
@@ -320,6 +327,13 @@ impl ObadhAutocorrectWasm {
         Ok(Self::from_lexicon(lexicon))
     }
 
+    #[wasm_bindgen(js_name = fromFstLexicon)]
+    pub fn from_fst_lexicon(bytes: &[u8]) -> Result<ObadhAutocorrectWasm, JsValue> {
+        let lexicon = FstLexicon::from_bytes(bytes.to_vec())
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        Ok(Self::from_fst(lexicon))
+    }
+
     #[wasm_bindgen(js_name = fromTsv)]
     pub fn from_tsv(lexicon_tsv: &str) -> Result<ObadhAutocorrectWasm, JsValue> {
         let entries = parse_lexicon_tsv(lexicon_tsv).map_err(|error| JsValue::from_str(&error))?;
@@ -328,8 +342,7 @@ impl ObadhAutocorrectWasm {
 
     #[wasm_bindgen]
     pub fn stats(&self) -> Result<JsValue, JsValue> {
-        to_value(&AutocorrectLexiconStats::from(self.stats))
-            .map_err(|error| JsValue::from_str(&error.to_string()))
+        to_value(&self.stats).map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     #[wasm_bindgen]
@@ -343,14 +356,25 @@ impl ObadhAutocorrectWasm {
                 elapsed_ms: now() - start,
                 replacement: None,
                 candidates: Vec::new(),
-                lexicon: AutocorrectLexiconStats::from(self.stats),
+                lexicon: self.stats,
             };
             return to_value(&empty_result).map_err(|error| JsValue::from_str(&error.to_string()));
         }
 
-        let request = self.obadh.autocorrect_request(roman_input);
-        let decision = self.engine.decide(request);
-        let result = autocorrect_result(roman_input, decision, now() - start, self.stats);
+        let result = match &self.backend {
+            AutocorrectBackend::Compact(engine) => {
+                let request = self.obadh.autocorrect_request(roman_input);
+                autocorrect_result(
+                    roman_input,
+                    engine.decide(request),
+                    now() - start,
+                    self.stats,
+                )
+            }
+            AutocorrectBackend::Fst(lexicon) => {
+                fst_autocorrect_result(roman_input, &self.obadh, lexicon, now() - start)?
+            }
+        };
         to_value(&result).map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
@@ -366,8 +390,34 @@ impl ObadhAutocorrectWasm {
         let stats = lexicon.stats();
         Self {
             obadh: ObadhEngine::new(),
-            engine: AutocorrectEngine::with_config(lexicon, autocorrect_lab_config()),
+            backend: AutocorrectBackend::Compact(AutocorrectEngine::with_config(
+                lexicon,
+                autocorrect_lab_config(),
+            )),
+            stats: AutocorrectLexiconStats::from(stats),
+        }
+    }
+
+    fn from_fst(lexicon: FstLexicon<Vec<u8>>) -> Self {
+        let stats = AutocorrectLexiconStats::from_fst(lexicon.len());
+        Self {
+            obadh: ObadhEngine::new(),
+            backend: AutocorrectBackend::Fst(lexicon),
             stats,
+        }
+    }
+}
+
+impl AutocorrectLexiconStats {
+    fn from_fst(entries: usize) -> Self {
+        Self {
+            artifact_kind: "fst",
+            entries,
+            trie_nodes: 0,
+            trie_edges: 0,
+            skeleton_keys: 0,
+            unique_skeletons: 0,
+            skeleton_delete_keys: 0,
         }
     }
 }
@@ -375,6 +425,7 @@ impl ObadhAutocorrectWasm {
 impl From<LexiconStats> for AutocorrectLexiconStats {
     fn from(stats: LexiconStats) -> Self {
         Self {
+            artifact_kind: "compact",
             entries: stats.entries,
             trie_nodes: stats.trie_nodes,
             trie_edges: stats.trie_edges,
@@ -395,11 +446,21 @@ fn autocorrect_lab_config() -> AutocorrectConfig {
     }
 }
 
+fn fst_autocorrect_lab_options() -> FstSuggestOptions {
+    FstSuggestOptions {
+        max_distance: crate::FST_MAX_LEVENSHTEIN_DISTANCE,
+        max_candidates: AUTOCORRECT_RERANK_POOL_SIZE,
+        response_candidates: AUTOCORRECT_RESPONSE_CANDIDATES,
+        max_prefix_candidates: AUTOCORRECT_RESPONSE_CANDIDATES,
+        ..FstSuggestOptions::default()
+    }
+}
+
 fn autocorrect_result(
     roman_input: &str,
     decision: AutocorrectDecision,
     elapsed_ms: f64,
-    stats: LexiconStats,
+    stats: AutocorrectLexiconStats,
 ) -> AutocorrectLabResult {
     AutocorrectLabResult {
         roman_input: roman_input.to_string(),
@@ -411,8 +472,34 @@ fn autocorrect_result(
             .as_ref()
             .map(autocorrect_candidate_info),
         candidates: autocorrect_candidate_infos(&decision.candidates),
-        lexicon: AutocorrectLexiconStats::from(stats),
+        lexicon: stats,
     }
+}
+
+fn fst_autocorrect_result(
+    roman_input: &str,
+    obadh: &ObadhEngine,
+    lexicon: &FstLexicon<Vec<u8>>,
+    elapsed_ms: f64,
+) -> Result<AutocorrectLabResult, JsValue> {
+    let obadh_output = obadh.transliterate(roman_input);
+    let decision = lexicon
+        .suggest(&obadh_output, fst_autocorrect_lab_options())
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    Ok(AutocorrectLabResult {
+        roman_input: roman_input.to_string(),
+        obadh_output: obadh_output.clone(),
+        input: obadh_output,
+        elapsed_ms,
+        replacement: None,
+        candidates: decision
+            .candidates
+            .into_iter()
+            .take(AUTOCORRECT_RESPONSE_CANDIDATES)
+            .map(fst_autocorrect_candidate_info)
+            .collect(),
+        lexicon: AutocorrectLexiconStats::from_fst(lexicon.len()),
+    })
 }
 
 fn autocorrect_candidate_infos(
@@ -430,9 +517,20 @@ fn autocorrect_candidate_info(candidate: &CorrectionCandidate) -> AutocorrectCan
         text: candidate.text.clone(),
         source: correction_source_name(candidate.source),
         edit_cost: candidate.edit_cost.0,
+        frequency: candidate.frequency as u64,
+        score: candidate.score as i64,
+        features: candidate_features_array(candidate.features),
+    }
+}
+
+fn fst_autocorrect_candidate_info(candidate: FstCandidate) -> AutocorrectCandidateInfo {
+    AutocorrectCandidateInfo {
+        text: candidate.text,
+        source: candidate.source.as_str(),
+        edit_cost: candidate.edit_cost,
         frequency: candidate.frequency,
         score: candidate.score,
-        features: candidate_features_array(candidate.features),
+        features: [0; crate::AUTOCORRECT_FEATURE_DIM],
     }
 }
 

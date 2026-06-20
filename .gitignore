@@ -33,6 +33,8 @@ data/autocorrect/training/**
 
 # Local book/corpus drops for manual extraction smoke tests.
 epubs/
+*.epub
+*.EPUB
 
 # Package locks
 # Comment the following line if you want to keep package-lock.json in version control

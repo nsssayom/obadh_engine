@@ -293,11 +293,17 @@
           if (source === 'no_change') {
             return 'keep';
           }
-          if (source === 'lexicon_edit') {
+          if (source === 'lexicon_edit' || source === 'fst_edit_distance') {
             return 'edit';
+          }
+          if (source === 'prefix_completion' || source === 'fst_prefix_completion') {
+            return 'prefix';
           }
           if (source === 'phonetic_skeleton') {
             return 'skeleton';
+          }
+          if (source === 'fst_exact') {
+            return 'exact';
           }
           return source || '';
         },
@@ -656,7 +662,7 @@
                   <span
                     class="rounded-full px-2.5 py-1 text-xs font-semibold"
                     :class="autocorrectLoaded ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'"
-                    x-text="autocorrectLoaded ? 'lexicon' : 'offline'"></span>
+                    x-text="autocorrectLoaded ? (autocorrectStats?.artifact_kind || 'lexicon') : 'offline'"></span>
                 </div>
 
                 <div x-show="autocorrectError" class="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" x-text="autocorrectError"></div>
@@ -860,13 +866,13 @@
     }
 
     async function initAutocorrectLab() {
-      const response = await fetch('./assets/autocorrect/bn.lex', { cache: 'no-store' });
+      const response = await fetch('./assets/autocorrect/bn.fst', { cache: 'no-store' });
       if (!response.ok) {
-        throw new Error(`Autocorrect lexicon fetch failed: ${response.status}`);
+        throw new Error(`Autocorrect FST fetch failed: ${response.status}`);
       }
 
       const bytes = new Uint8Array(await response.arrayBuffer());
-      window.obadhAutocorrect = ObadhAutocorrectWasm.fromCompactLexicon(bytes);
+      window.obadhAutocorrect = ObadhAutocorrectWasm.fromFstLexicon(bytes);
 
       window.autocorrectStats = window.obadhAutocorrect.stats();
     }

@@ -11,13 +11,13 @@ data/autocorrect/
   lexicons/epub_bn.tsv
   lexicons/wiki_bn.tsv
   lexicons/bn.tsv
-  models/bn.lex
+  models/bn.fst
 ```
 
 `lexicons/epub_bn.tsv` and `lexicons/wiki_bn.tsv` are source-specific
 word-frequency TSVs. `lexicons/bn.tsv` is the unified auditable Bangla
-word-frequency TSV. `models/bn.lex` is the compact runtime binary built from the
-unified TSV. Raw EPUB/text/JSON corpora stay outside this directory; the local
+word-frequency TSV. `models/bn.fst` is the production finite-state lexicon
+artifact built from the unified TSV. Raw EPUB/text/JSON corpora stay outside this directory; the local
 `epubs/` directory and Kaggle cache are corpus inputs, not repo artifacts.
 Temporary candidate exports or training scratch files should go under ignored
 scratch directories such as
@@ -26,17 +26,10 @@ scratch directories such as
 
 ## Runtime Artifact Contract
 
-Runtime autocorrect should load a compact Obadh lexicon artifact, not CSV or raw
-dataset files. Build artifacts with:
+Runtime autocorrect should load the FST artifact, not CSV or raw dataset files.
+Build artifacts with:
 
 ```bash
-cargo run --bin obadh-autocorrect -- prepare-lexicon \
-  --input epubs \
-  --words-output data/autocorrect/lexicons/epub_bn.tsv \
-  --lexicon-output data/autocorrect/tmp/epub_bn.lex \
-  --min-frequency 1 \
-  --pretty
-
 cargo run --bin obadh-autocorrect -- extract-lexicon \
   --input path/to/clean_corpus.txt \
   --input path/to/book.epub \
@@ -64,16 +57,15 @@ cargo run --bin obadh-autocorrect -- merge-lexicon \
   --output data/autocorrect/lexicons/bn.tsv \
   --drop-invalid
 
-cargo run --bin obadh-autocorrect -- build-lexicon \
+cargo run --bin obadh-autocorrect -- build-fst-lexicon \
   --input data/autocorrect/lexicons/bn.tsv \
-  --output data/autocorrect/models/bn.lex
+  --output data/autocorrect/models/bn.fst
 
-cargo run --bin obadh-autocorrect -- export-lexicon \
-  --input www/assets/autocorrect/bn.lex \
-  --output data/autocorrect/tmp/shipped_words.tsv
+cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
+  --input data/autocorrect/models/bn.fst --pretty
 
-cargo run --bin obadh-autocorrect -- suggest \
-  --lexicon path/to/obadh.bn.lex \
+cargo run --bin obadh-autocorrect -- suggest-fst \
+  --lexicon data/autocorrect/models/bn.fst \
   --input kmn --pretty
 ```
 
@@ -86,12 +78,12 @@ Input TSV format:
 The frequency column is optional and defaults to `1`. Bangla-only validation is
 enabled by default.
 
-The current compact artifact magic is `OBACLEX3`. It stores each word's
-frequency plus precomputed Bangla unit length and an interned phonetic-skeleton
-table so mobile and WASM startup do not recompute all derived analysis from
-scratch or keep duplicate skeleton strings in memory. The loader still accepts
-legacy `OBACLEX1` and `OBACLEX2` artifacts; `OBACLEX1` rebuilds the missing
-analysis on load, while `OBACLEX2` interns its per-entry skeletons at load time.
+The FST artifact maps each NFC-normalized Bangla word to its unigram frequency.
+Native lookup uses memory mapping; WASM keeps the compact byte blob and queries
+it without expanding the corpus into trie/skeleton heap structures. The CLI
+still contains the older `OBACLEX3` compact artifact commands for compatibility
+and offline candidate export, but that artifact is no longer the shipped
+runtime path.
 
 `extract-lexicon` accepts one or more `--input` UTF-8 text/HTML files, EPUB
 files, JSON files, or directories and emits a sorted word-frequency TSV.
@@ -118,29 +110,30 @@ The extraction JSON report includes `text_inputs`, `html_inputs`, `epub_inputs`,
 Treat fallback EPUB extraction as lower-trust corpus input because navigation,
 appendix, or unreferenced publication files may be mixed into the token stream.
 
-`prepare-lexicon` is the repeatable local corpus ingestion path. It runs
-extraction, strict Bangla-only audit, and compact lexicon artifact build in one
-step. Drop additional EPUB files under `epubs/` and rerun the command above to
-refresh the checked-in TSV and `.lex` artifact.
+Drop additional EPUB files under `epubs/`, refresh the source TSV, merge the
+sources, and rebuild `data/autocorrect/models/bn.fst` from
+`data/autocorrect/lexicons/bn.tsv`.
 
-Use `export-lexicon` only when a compact runtime artifact needs to be inspected
-or recovered back into TSV form. Do not use the previously shipped artifact as a
-standing input for normal rebuilds; repeatedly merging it back into the corpus
-will compound old generated frequencies. The clean local runtime build path is
-the curated corpus itself:
+Do not use previously generated artifacts as standing inputs for normal
+rebuilds; repeatedly merging them back into the corpus will compound old
+generated frequencies. The clean local runtime build path is the curated corpus
+itself:
 
 ```bash
 cargo run --bin obadh-autocorrect -- extract-lexicon \
   --input epubs \
-  --output data/autocorrect/tmp/bn.all.tsv \
+  --output data/autocorrect/lexicons/epub_bn.tsv \
   --min-frequency 1
 
-cargo run --bin obadh-autocorrect -- prepare-lexicon \
-  --input epubs \
-  --words-output data/autocorrect/lexicons/epub_bn.tsv \
-  --lexicon-output data/autocorrect/tmp/epub_bn.lex \
-  --min-frequency 1 \
-  --pretty
+cargo run --bin obadh-autocorrect -- merge-lexicon \
+  --input data/autocorrect/lexicons/epub_bn.tsv \
+  --input data/autocorrect/lexicons/wiki_bn.tsv \
+  --output data/autocorrect/lexicons/bn.tsv \
+  --drop-invalid
+
+cargo run --bin obadh-autocorrect -- build-fst-lexicon \
+  --input data/autocorrect/lexicons/bn.tsv \
+  --output data/autocorrect/models/bn.fst
 ```
 
 The current Wikipedia source is the Kaggle `hurutta/bangla-wikipedia-dataset`

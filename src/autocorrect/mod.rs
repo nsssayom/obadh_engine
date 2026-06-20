@@ -8,11 +8,17 @@
 mod artifact;
 mod bangla;
 mod edit;
+mod fst_lexicon;
 mod lexicon;
 mod ranker;
 
 pub use artifact::LexiconArtifactError;
 pub use edit::{weighted_edit_distance, EditCost};
+pub use fst_lexicon::{
+    FstCandidate, FstCandidateSource, FstLexicon, FstSuggestError, FstSuggestOptions,
+    FstSuggestResult, DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES,
+    FST_MAX_LEVENSHTEIN_DISTANCE,
+};
 pub use lexicon::{Lexicon, LexiconEntry, LexiconStats};
 pub use ranker::{
     AutocorrectConfig, AutocorrectDecision, AutocorrectEngine, CandidateFeatures,

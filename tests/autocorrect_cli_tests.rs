@@ -97,6 +97,111 @@ fn autocorrect_cli_builds_inspects_and_evaluates_artifacts() {
 }
 
 #[test]
+fn autocorrect_cli_builds_and_queries_fst_lexicon() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(
+        &lexicon_tsv,
+        "কেমন\t100\nকমন\t20\nযেমন\t30\nবিজ্ঞান\t70\nঅকালপক্ক\t5\n",
+    )
+    .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+    let build_json = json_stdout(&build);
+    assert_eq!(build_json["entries"], 5);
+    assert_eq!(build_json["input_rows"], 5);
+    assert_eq!(build_json["duplicate_rows"], 0);
+    assert_eq!(build_json["total_frequency"], 225);
+    assert_eq!(build_json["max_frequency"], 100);
+    assert!(artifact.exists());
+
+    let inspect = run_obadh_autocorrect(["inspect-fst-lexicon", "--input", path_str(&artifact)]);
+    assert!(inspect.status.success(), "stderr: {}", stderr(&inspect));
+    let inspect_json = json_stdout(&inspect);
+    assert_eq!(inspect_json["entries"], 5);
+    assert_eq!(inspect_json["artifact_bytes"], build_json["artifact_bytes"]);
+
+    let exact = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "biggan",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(exact.status.success(), "stderr: {}", stderr(&exact));
+    let exact_json = json_stdout(&exact);
+    assert_eq!(exact_json["obadh_output"], "বিজ্ঞান");
+    assert_eq!(exact_json["exact_frequency"], 70);
+    let exact_candidate = exact_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "বিজ্ঞান")
+        .expect("exact Obadh output should be returned");
+    assert_eq!(exact_candidate["source"], "fst_exact");
+    assert_eq!(exact_candidate["edit_cost"], 0);
+
+    let edit = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "kmn",
+        "--max-distance",
+        "1",
+        "--max-candidates",
+        "64",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(edit.status.success(), "stderr: {}", stderr(&edit));
+    let edit_json = json_stdout(&edit);
+    assert_eq!(edit_json["obadh_output"], "ক্মন");
+    let kemon = edit_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "কেমন")
+        .expect("কেমন should be present through bounded FST edit search");
+    assert_eq!(kemon["source"], "fst_edit_distance");
+
+    let prefix = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "kem",
+        "--max-distance",
+        "0",
+        "--max-prefix-candidates",
+        "8",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(prefix.status.success(), "stderr: {}", stderr(&prefix));
+    let prefix_json = json_stdout(&prefix);
+    assert_eq!(prefix_json["obadh_output"], "কেম");
+    let prefix_kemon = prefix_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "কেমন")
+        .expect("কেমন should be present through FST prefix search");
+    assert_eq!(prefix_kemon["source"], "fst_prefix_completion");
+}
+
+#[test]
 fn autocorrect_cli_builds_lexicon_from_multiple_sources() {
     let workspace = TempWorkspace::new("obadh-autocorrect-cli-merge-lexicons");
     let primary = workspace.path("primary.tsv");
