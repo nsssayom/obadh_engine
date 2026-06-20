@@ -37,6 +37,9 @@ data/autocorrect/models/**
 !data/autocorrect/manifests/
 !data/autocorrect/manifests/**
 
+# Local book/corpus drops for manual extraction smoke tests.
+epubs/
+
 # Package locks
 # Comment the following line if you want to keep package-lock.json in version control
 #www/package-lock.json

@@ -33,6 +33,11 @@ cargo run --bin obadh-autocorrect -- audit-pairs \
 cargo run --bin obadh-autocorrect -- build-lexicon \
   --input path/to/merged_bn_words.tsv \
   --output path/to/obadh.bn.lex
+
+cargo run --bin obadh-autocorrect -- suggest \
+  --lexicon path/to/obadh.bn.lex \
+  --char-reranker path/to/char_candidate_reranker.json \
+  --input kmn --pretty
 ```
 
 Input TSV format:

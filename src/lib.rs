@@ -3,8 +3,6 @@
 //! This library provides a transliteration engine for converting Roman script
 //! to Bengali script, focusing on accuracy and linguistic correctness.
 
-use std::collections::BTreeSet;
-
 pub mod autocorrect;
 pub mod definitions;
 pub mod engine;
@@ -88,49 +86,14 @@ impl ObadhEngine {
     /// typing buffer and Obadh's deterministic Bangla output.
     pub fn autocorrect_request(&self, roman_input: &str) -> CorrectionRequest {
         let output = self.transliterate(roman_input);
-        let generated_candidates = self.roman_edit_candidates(roman_input, &output);
+        let generated_candidates =
+            autocorrect::roman_edit_candidates(roman_input, &output, |variant| {
+                self.transliterate(variant)
+            });
         CorrectionRequest::new(output.clone())
             .with_roman_input(roman_input)
             .with_obadh_output(output)
             .with_generated_candidates(generated_candidates)
-    }
-
-    fn roman_edit_candidates(&self, roman_input: &str, obadh_output: &str) -> Vec<String> {
-        const MAX_ROMAN_INPUT_CHARS: usize = 32;
-        const MAX_GENERATED_OUTPUTS: usize = 24;
-
-        let chars = roman_input.chars().collect::<Vec<_>>();
-        if chars.len() > MAX_ROMAN_INPUT_CHARS || !is_simple_roman_word(&chars) {
-            return Vec::new();
-        }
-
-        let mut outputs = BTreeSet::new();
-        for index in 1..chars.len() {
-            if !is_roman_consonant(chars[index - 1]) || !is_roman_consonant(chars[index]) {
-                continue;
-            }
-            if chars[index - 1].eq_ignore_ascii_case(&chars[index]) {
-                continue;
-            }
-
-            let mut variant = String::with_capacity(roman_input.len() + 1);
-            for (char_index, ch) in chars.iter().enumerate() {
-                if char_index == index {
-                    variant.push('o');
-                }
-                variant.push(*ch);
-            }
-
-            let output = self.transliterate(&variant);
-            if output != obadh_output {
-                outputs.insert(output);
-            }
-            if outputs.len() >= MAX_GENERATED_OUTPUTS {
-                break;
-            }
-        }
-
-        outputs.into_iter().collect()
     }
 }
 
@@ -138,15 +101,4 @@ impl Default for ObadhEngine {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn is_simple_roman_word(chars: &[char]) -> bool {
-    chars
-        .iter()
-        .all(|ch| ch.is_ascii_alphabetic() || matches!(ch, '\'' | '`' | ',' | '.'))
-}
-
-fn is_roman_consonant(ch: char) -> bool {
-    let ch = ch.to_ascii_lowercase();
-    ch.is_ascii_alphabetic() && !matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u')
 }

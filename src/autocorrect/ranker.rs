@@ -148,8 +148,8 @@ impl Default for AutocorrectConfig {
             search_known_input: false,
             max_skeleton_candidates: 12,
             max_skeleton_edit_cost: 1,
-            max_generated_candidates: 16,
-            max_generated_edit_cost: 8,
+            max_generated_candidates: 24,
+            max_generated_edit_cost: 10,
         }
     }
 }

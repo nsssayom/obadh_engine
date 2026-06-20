@@ -8,7 +8,7 @@
     "max_skeleton_candidates": 512,
     "max_skeleton_edit_cost": 1,
     "search_known_input": true,
-    "roman_edit_candidates": "insert missing o between non-identical adjacent roman consonants"
+    "roman_edit_candidates": "bounded Roman edit generation: j-to-z alias bases, lowercase-o to uppercase-O bases for vowel-sparse inputs, missing-vowel insertion between non-identical adjacent roman consonants, priority two-gap/final-vowel variants, capped at 24 generated outputs"
   },
   "artifacts": {
     "model_json": "data/autocorrect/models/char_candidate_reranker.coverage512.json",
@@ -28,6 +28,7 @@
     "test_target_present_rows": 7943
   },
   "metrics": {
+    "scope": "model artifact metrics captured before the runtime two-gap missing-vowel generator update; rerun full eval when the next cleaned training/eval split is rebuilt",
     "reranked_dev_top1_given_present": 0.7903853395255429,
     "reranked_dev_mrr_given_present": 0.8678771072649338,
     "reranked_test_top1_given_present": 0.7839607201309329,
@@ -58,6 +59,11 @@
     "local_bench_shipped_roman_request_decide_and_rerank_512": "approximately 360 microseconds"
   },
   "spot_checks": {
-    "okalpokko": "অকালপক্ক is rank 1 in the shipped playground suggestions"
+    "okalpokko": "অকালপক্ক is rank 1 in the shipped playground suggestions",
+    "kmn": "কেমন is rank 1 with the runtime two-gap missing-vowel generator and shipped char reranker",
+    "tmr": "তোমার is rank 1 with the runtime O-aware sparse missing-vowel generator and shipped char reranker",
+    "kthay": "কোথায় is visible in the shipped suggestions with generated-candidate evidence; it remains suggestion-only because কথায় is also a valid deterministic output",
+    "jmn": "যেমন is visible with generated-candidate evidence from the bounded j-to-z alias plus missing-vowel path",
+    "krbo": "করবো is rank 1 with the runtime lowercase-o to uppercase-O generated base and shipped char reranker"
   }
 }

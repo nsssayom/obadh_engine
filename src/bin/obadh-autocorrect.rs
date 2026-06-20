@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use obadh_engine::{
     weighted_edit_distance, AutocorrectConfig, AutocorrectEngine, CharCandidateReranker,
     CharReplacementPolicy, CorrectionCandidate, CorrectionRequest, CorrectionSource, Lexicon,
@@ -18,6 +18,9 @@ use corpus::{
     expand_corpus_inputs, is_bangla_lexicon_word, is_clean_roman_word_input, normalize_bangla_text,
     read_corpus_text, BanglaTokenIter, CorpusSourceStats,
 };
+
+const RUNTIME_RERANK_POOL_SIZE: usize = 512;
+const DEFAULT_SUGGEST_RESPONSE_CANDIDATES: usize = 24;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -82,6 +85,34 @@ enum Command {
     InspectLexicon {
         #[arg(long)]
         input: PathBuf,
+        #[arg(long, default_value_t = false)]
+        pretty: bool,
+    },
+    Suggest {
+        #[arg(long)]
+        lexicon: PathBuf,
+        #[arg(long)]
+        input: String,
+        #[arg(long)]
+        char_reranker: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        char_autoreplace: bool,
+        #[arg(long)]
+        char_autoreplace_min_score: Option<f32>,
+        #[arg(long)]
+        char_autoreplace_min_margin: Option<f32>,
+        #[arg(long)]
+        max_candidates: Option<usize>,
+        #[arg(long)]
+        max_edit_cost: Option<u16>,
+        #[arg(long)]
+        max_skeleton_candidates: Option<usize>,
+        #[arg(long)]
+        max_skeleton_edit_cost: Option<u16>,
+        #[arg(long = "no-search-known-input", default_value_t = true, action = ArgAction::SetFalse)]
+        search_known_input: bool,
+        #[arg(long, default_value_t = DEFAULT_SUGGEST_RESPONSE_CANDIDATES)]
+        response_candidates: usize,
         #[arg(long, default_value_t = false)]
         pretty: bool,
     },
@@ -308,6 +339,16 @@ struct EvalReport {
 }
 
 #[derive(Debug, Serialize)]
+struct SuggestReport {
+    input: String,
+    obadh_output: String,
+    replacement: Option<String>,
+    candidate_count: usize,
+    returned_candidates: usize,
+    candidates: Vec<SuggestCandidate>,
+}
+
+#[derive(Debug, Serialize)]
 struct ExportCandidatesReport {
     input: String,
     output: String,
@@ -345,6 +386,17 @@ struct CandidateExportCandidate {
     model_score: Option<f32>,
     features: [i16; AUTOCORRECT_FEATURE_DIM],
     label: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SuggestCandidate {
+    text: String,
+    source: &'static str,
+    edit_cost: u16,
+    frequency: u32,
+    score: i32,
+    model_score: Option<f32>,
+    features: [i16; AUTOCORRECT_FEATURE_DIM],
 }
 
 impl EvalReport {
@@ -502,6 +554,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pretty,
             )?;
         }
+        Command::Suggest {
+            lexicon,
+            input,
+            char_reranker,
+            char_autoreplace,
+            char_autoreplace_min_score,
+            char_autoreplace_min_margin,
+            max_candidates,
+            max_edit_cost,
+            max_skeleton_candidates,
+            max_skeleton_edit_cost,
+            search_known_input,
+            response_candidates,
+            pretty,
+        } => {
+            let lexicon_model = read_compact_lexicon(&lexicon)?;
+            let char_reranker_model = read_char_reranker(char_reranker.as_ref())?;
+            let char_replacement_policy = resolve_char_replacement_policy(
+                char_reranker_model.as_ref(),
+                char_autoreplace,
+                char_autoreplace_min_score,
+                char_autoreplace_min_margin,
+            )?;
+            let config = autocorrect_runtime_config(
+                max_candidates,
+                max_edit_cost,
+                max_skeleton_candidates,
+                max_skeleton_edit_cost,
+                search_known_input,
+            );
+            let report = suggest(
+                &input,
+                lexicon_model,
+                config,
+                char_reranker_model.as_ref(),
+                char_replacement_policy,
+                response_candidates,
+            );
+            print_json(&report, pretty)?;
+        }
         Command::Eval {
             lexicon,
             input,
@@ -620,6 +712,22 @@ fn autocorrect_config(
     }
     config.search_known_input = search_known_input;
     config
+}
+
+fn autocorrect_runtime_config(
+    max_candidates: Option<usize>,
+    max_edit_cost: Option<u16>,
+    max_skeleton_candidates: Option<usize>,
+    max_skeleton_edit_cost: Option<u16>,
+    search_known_input: bool,
+) -> AutocorrectConfig {
+    autocorrect_config(
+        Some(max_candidates.unwrap_or(RUNTIME_RERANK_POOL_SIZE)),
+        max_edit_cost,
+        Some(max_skeleton_candidates.unwrap_or(RUNTIME_RERANK_POOL_SIZE)),
+        max_skeleton_edit_cost,
+        search_known_input,
+    )
 }
 
 fn extract_lexicon(
@@ -1044,6 +1152,56 @@ fn resolve_char_replacement_policy(
     Ok(Some(policy))
 }
 
+fn suggest(
+    input: &str,
+    lexicon_model: Lexicon,
+    config: AutocorrectConfig,
+    char_reranker: Option<&CharCandidateReranker>,
+    char_replacement_policy: Option<CharReplacementPolicy>,
+    response_candidates: usize,
+) -> SuggestReport {
+    let engine = AutocorrectEngine::with_config(lexicon_model, config);
+    let obadh = ObadhEngine::new();
+    let request = obadh.autocorrect_request(input);
+    let obadh_output = request.current.clone();
+    let mut decision = engine.decide(request);
+    let ranked_candidates = char_reranker.map(|reranker| {
+        let ranked = reranker.rank_candidates(input, &decision.candidates);
+        if let Some(policy) = char_replacement_policy {
+            decision.replacement = reranker.replacement_from_ranked_candidates(&ranked, policy);
+        }
+        decision.candidates = ranked
+            .iter()
+            .map(|scored| scored.candidate.clone())
+            .collect();
+        ranked
+    });
+    let candidate_count = decision.candidates.len();
+    let candidates = if let Some(ranked_candidates) = &ranked_candidates {
+        ranked_candidates
+            .iter()
+            .take(response_candidates)
+            .map(suggest_scored_candidate)
+            .collect::<Vec<_>>()
+    } else {
+        decision
+            .candidates
+            .iter()
+            .take(response_candidates)
+            .map(suggest_candidate)
+            .collect::<Vec<_>>()
+    };
+
+    SuggestReport {
+        input: input.to_string(),
+        obadh_output,
+        replacement: decision.replacement.map(|candidate| candidate.text),
+        candidate_count,
+        returned_candidates: candidates.len(),
+        candidates,
+    }
+}
+
 fn evaluate(
     input: &PathBuf,
     lexicon: &PathBuf,
@@ -1274,6 +1432,24 @@ fn export_scored_candidate(
     expected: &str,
 ) -> CandidateExportCandidate {
     let mut candidate = export_candidate(&scored.candidate, expected);
+    candidate.model_score = Some(scored.model_score);
+    candidate
+}
+
+fn suggest_candidate(candidate: &CorrectionCandidate) -> SuggestCandidate {
+    SuggestCandidate {
+        text: candidate.text.clone(),
+        source: correction_source_name(candidate.source),
+        edit_cost: candidate.edit_cost.0,
+        frequency: candidate.frequency,
+        score: candidate.score,
+        model_score: None,
+        features: candidate.features.as_i16_array(),
+    }
+}
+
+fn suggest_scored_candidate(scored: &ScoredCorrectionCandidate) -> SuggestCandidate {
+    let mut candidate = suggest_candidate(&scored.candidate);
     candidate.model_score = Some(scored.model_score);
     candidate
 }

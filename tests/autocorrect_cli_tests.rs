@@ -584,6 +584,176 @@ fn autocorrect_cli_audits_clean_roman_pair_quality() {
 }
 
 #[test]
+fn autocorrect_cli_suggests_runtime_candidates_for_roman_input() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-suggest");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.lex");
+
+    fs::write(
+        &lexicon_tsv,
+        "কেমন\t100\nকোন\t80\nকেন\t60\nএখন\t40\nতোমার\t30\nকোথায়\t20\nযেমন\t10\nযাবো\t9\nকরবো\t8\n",
+    )
+    .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "kmn",
+        "--max-candidates",
+        "64",
+        "--max-skeleton-candidates",
+        "64",
+        "--response-candidates",
+        "64",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+    let suggest_json = json_stdout(&suggest);
+
+    assert_eq!(suggest_json["input"], "kmn");
+    assert_eq!(suggest_json["obadh_output"], "ক্মন");
+    assert!(suggest_json["candidate_count"].as_u64().unwrap() >= 2);
+    assert_eq!(
+        suggest_json["returned_candidates"].as_u64().unwrap(),
+        suggest_json["candidates"].as_array().unwrap().len() as u64
+    );
+    let kemon = suggest_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "কেমন")
+        .expect("কেমন should be present as a runtime suggestion");
+    assert_eq!(kemon["source"], "phonetic_skeleton");
+    assert_eq!(kemon["features"].as_array().unwrap().len(), 10);
+    assert_eq!(kemon["features"][8], 1);
+
+    let suggest = run_obadh_autocorrect([
+        "suggest",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "tmr",
+        "--max-candidates",
+        "64",
+        "--max-skeleton-candidates",
+        "64",
+        "--response-candidates",
+        "64",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+    let suggest_json = json_stdout(&suggest);
+    let tomar = suggest_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "তোমার")
+        .expect("তোমার should be present as a runtime suggestion");
+    assert_eq!(tomar["features"][8], 1);
+
+    let suggest = run_obadh_autocorrect([
+        "suggest",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "kthay",
+        "--max-candidates",
+        "64",
+        "--max-skeleton-candidates",
+        "64",
+        "--response-candidates",
+        "64",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+    let suggest_json = json_stdout(&suggest);
+    let kothay = suggest_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "কোথায়")
+        .expect("কোথায় should be present as a runtime suggestion");
+    assert_eq!(kothay["features"][8], 1);
+
+    let suggest = run_obadh_autocorrect([
+        "suggest",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "jmn",
+        "--max-candidates",
+        "64",
+        "--max-skeleton-candidates",
+        "64",
+        "--response-candidates",
+        "64",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+    let suggest_json = json_stdout(&suggest);
+    let jemon = suggest_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "যেমন")
+        .expect("যেমন should be present as a runtime suggestion");
+    assert_eq!(jemon["features"][8], 1);
+
+    let suggest = run_obadh_autocorrect([
+        "suggest",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "jbo",
+        "--max-candidates",
+        "64",
+        "--max-skeleton-candidates",
+        "64",
+        "--response-candidates",
+        "64",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+    let suggest_json = json_stdout(&suggest);
+    let jabo = suggest_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "যাবো")
+        .expect("যাবো should be present as a runtime suggestion");
+    assert_eq!(jabo["features"][8], 1);
+
+    let suggest = run_obadh_autocorrect([
+        "suggest",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "krbo",
+        "--max-candidates",
+        "64",
+        "--max-skeleton-candidates",
+        "64",
+        "--response-candidates",
+        "64",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+    let suggest_json = json_stdout(&suggest);
+    let korbo = suggest_json["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["text"] == "করবো")
+        .expect("করবো should be present as a runtime suggestion");
+    assert_eq!(korbo["features"][8], 1);
+}
+
+#[test]
 fn autocorrect_cli_exports_labeled_candidate_jsonl() {
     let workspace = TempWorkspace::new("obadh-autocorrect-cli-export-candidates");
     let lexicon_tsv = workspace.path("lexicon.tsv");

@@ -123,6 +123,65 @@ fn autocorrect_request_generates_roman_missing_vowel_neighbors() {
 }
 
 #[test]
+fn autocorrect_request_generates_two_gap_roman_missing_vowel_neighbors() {
+    let obadh = ObadhEngine::new();
+    let request = obadh.autocorrect_request("kmn");
+
+    assert_eq!(request.current, "ক্মন");
+    assert!(request
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate == "কেমন"));
+    assert!(
+        request.generated_candidates.len() <= 24,
+        "generated candidates should stay bounded: {:?}",
+        request.generated_candidates
+    );
+}
+
+#[test]
+fn autocorrect_request_generates_prioritized_sparse_roman_vowel_variants() {
+    let obadh = ObadhEngine::new();
+    let tomar = obadh.autocorrect_request("tmr");
+    let tomake = obadh.autocorrect_request("tmk");
+    let kothay = obadh.autocorrect_request("kthay");
+    let jemon = obadh.autocorrect_request("jmn");
+    let jabo = obadh.autocorrect_request("jbo");
+    let korbo = obadh.autocorrect_request("krbo");
+
+    assert!(tomar
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate == "তোমার"));
+    assert!(tomake
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate == "তোমাকে"));
+    assert!(kothay
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate == "কোথায়"));
+    assert!(jemon
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate == "যেমন"));
+    assert!(jabo
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate == "যাবো"));
+    assert!(korbo
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate == "করবো"));
+    assert!(tomar.generated_candidates.len() <= 24);
+    assert!(tomake.generated_candidates.len() <= 24);
+    assert!(kothay.generated_candidates.len() <= 24);
+    assert!(jemon.generated_candidates.len() <= 24);
+    assert!(jabo.generated_candidates.len() <= 24);
+    assert!(korbo.generated_candidates.len() <= 24);
+}
+
+#[test]
 fn autocorrect_can_suggest_generated_roman_neighbor_without_lexicon_entry() {
     let obadh = ObadhEngine::new();
     let autocorrect = AutocorrectEngine::with_config(

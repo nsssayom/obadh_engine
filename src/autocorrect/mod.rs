@@ -12,6 +12,7 @@ mod edit;
 mod lexicon;
 mod mlp;
 mod ranker;
+mod roman_edit;
 
 pub use artifact::LexiconArtifactError;
 pub use char_reranker::{
@@ -25,3 +26,4 @@ pub use ranker::{
     AutocorrectConfig, AutocorrectDecision, AutocorrectEngine, CandidateFeatures,
     CorrectionCandidate, CorrectionRequest, CorrectionSource, AUTOCORRECT_FEATURE_DIM,
 };
+pub(crate) use roman_edit::roman_edit_candidates;

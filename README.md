@@ -235,6 +235,12 @@ cargo run --bin obadh-autocorrect -- build-lexicon \
 cargo run --bin obadh-autocorrect -- inspect-lexicon \
   --input path/to/obadh.bn.lex --pretty
 
+# Inspect live Roman-input suggestions through the runtime path
+cargo run --bin obadh-autocorrect -- suggest \
+  --lexicon path/to/obadh.bn.lex \
+  --char-reranker path/to/char_candidate_reranker.json \
+  --input kmn --pretty
+
 # Evaluate Bangla typo pairs: observed<TAB>expected
 cargo run --bin obadh-autocorrect -- eval \
   --lexicon path/to/obadh.bn.lex \
