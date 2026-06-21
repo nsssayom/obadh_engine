@@ -6,6 +6,8 @@ This project is an Avro successor in ambition, but the base layer is not an Avro
 
 Live playground: [https://sayom.me/obadh_engine/](https://sayom.me/obadh_engine/)
 
+![Obadh Playground typing demo](docs/assets/screenshots/obadh-playground-typing-demo.gif)
+
 ## Core Contract
 
 Obadh's deterministic transliterator must remain dictionary-free.
