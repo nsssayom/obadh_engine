@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use obadh_engine::{
-    AutocorrectConfig, AutocorrectEngine, CorrectionRequest, Lexicon, LexiconEntry, ObadhEngine,
-    Tokenizer,
+    AutocorrectEngine, CorrectionRequest, FstLexicon, FstSuggestOptions, LexiconEntry,
+    ObadhEngine, Tokenizer,
 };
 use std::time::Duration;
 
@@ -12,7 +12,7 @@ const MIXED_RULE_TEXT: &str =
     "kA khA gA. rrkSh rrT``sa; k,,y k,,w m,,w,,ra\nngga ngghAt jNG jn 123.45";
 const LENIENT_MIXED_TEXT: &str = "ami😀 12.34 Taka. rZyab🔥 rrkSh 1.a2 songskrriti🚫";
 const AUTOCORRECT_INPUT: &str = "কীরন";
-const SHIPPED_AUTOCORRECT_LEXICON: &[u8] = include_bytes!("../www/assets/autocorrect/bn.lex");
+const SHIPPED_AUTOCORRECT_FST: &[u8] = include_bytes!("../www/assets/autocorrect/bn.fst");
 
 fn bench_tokenizer(c: &mut Criterion) {
     let tokenizer = Tokenizer::new();
@@ -57,26 +57,22 @@ fn bench_autocorrect(c: &mut Criterion) {
     let request = CorrectionRequest::new(AUTOCORRECT_INPUT);
 
     let mut init_group = c.benchmark_group("autocorrect_init");
-    init_group.throughput(Throughput::Bytes(SHIPPED_AUTOCORRECT_LEXICON.len() as u64));
-    init_group.bench_function("shipped_compact_lexicon_decode_and_index", |b| {
-        b.iter(|| {
-            Lexicon::from_compact_bytes(black_box(SHIPPED_AUTOCORRECT_LEXICON))
-                .expect("shipped autocorrect lexicon should load")
-        });
+    init_group.throughput(Throughput::Bytes(SHIPPED_AUTOCORRECT_FST.len() as u64));
+    init_group.bench_function("shipped_fst_map_from_bytes", |b| {
+        b.iter(|| FstLexicon::from_bytes(black_box(SHIPPED_AUTOCORRECT_FST.to_vec()))
+            .expect("shipped FST lexicon should load"));
     });
     init_group.finish();
 
-    let shipped_lexicon = Lexicon::from_compact_bytes(SHIPPED_AUTOCORRECT_LEXICON)
-        .expect("shipped autocorrect lexicon should load");
-    let shipped_autocorrect = AutocorrectEngine::with_config(
-        shipped_lexicon,
-        AutocorrectConfig {
-            max_candidates: 512,
-            search_known_input: true,
-            max_skeleton_candidates: 512,
-            ..AutocorrectConfig::default()
-        },
-    );
+    let shipped_fst = FstLexicon::from_bytes(SHIPPED_AUTOCORRECT_FST.to_vec())
+        .expect("shipped FST lexicon should load");
+    let fst_options = FstSuggestOptions {
+        max_distance: 2,
+        max_candidates: 512,
+        max_prefix_candidates: 24,
+        response_candidates: 12,
+        ..FstSuggestOptions::default()
+    };
     let mut group = c.benchmark_group("autocorrect");
     group.throughput(Throughput::Elements(1));
     group.bench_function("decide_stress_lexicon_input", |b| {
@@ -90,11 +86,10 @@ fn bench_autocorrect(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("shipped_sparse_roman_request_decide_512", |b| {
-        b.iter(|| {
-            let request = obadh.autocorrect_request(black_box("kmn"));
-            shipped_autocorrect.decide(black_box(request))
-        });
+    group.bench_function("shipped_fst_suggest_sushil_512", |b| {
+        b.iter(|| shipped_fst
+            .suggest(black_box("সুশিল"), black_box(fst_options))
+            .expect("shipped FST suggestion should succeed"));
     });
     group.finish();
 }

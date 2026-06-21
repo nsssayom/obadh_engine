@@ -1,57 +1,57 @@
-# Known Issues in Obadh Engine
+# Known Issues
 
-This document tracks current limitations and planned future work for the deterministic Obadh Engine core. It should not list already-fixed behavior as open work.
+This file tracks current limitations for Obadh v0.3.0. It should not list behavior that is already fixed or behavior that belongs only to historical experiments.
 
-## Tokenizer Issues
+## Deterministic Core
 
-1. **Conjunct Formation Policy**: The tokenizer filters implicit conjuncts through a compiled valid-conjunct trie. This prevents arbitrary consonant fusion, but some legal clusters still need better syllable-boundary policy so the engine can decide when implicit clustering is helpful and when the user should type an explicit `,,` boundary.
+1. **Broader Rule-Corpus Validation**
 
-2. **Alias Admission**: Common "chh" and uppercase "C"/"Ch"/"Chh"/"CH"/"CHH" aliases are handled for ছ, including c+ছ conjunct aliases. Titlecase and all-caps aspirated digraphs such as "Kh"/"KH", "Gh"/"GH", "Jh"/"JH", "Th"/"TH", "Dh"/"DH", "Ph"/"PH", and "Bh"/"BH" compose through normal consonant, vowel, and canonical conjunct rules. Missing one-letter alphabetic case variants are generated from the exact rule table only when the typed case is unclaimed and not reserved; today that admits `B`/`G`/`K`/`P`/`F`/`V`/`L`/`H`, while exact signals such as `T`, `D`, `N`, `S`, `I`, `U`, `O`, `Y`, `M`, and narrow `Z` remain protected. The pronounced "kkh" alias family maps to orthographic ক্ষ alongside "ksh"/"kSh", and `gg` maps to orthographic জ্ঞ alongside `jNG`/`jn`. Future aliases need an Obadh-specific linguistic or usability reason; external keyboard layouts are comparison data, not acceptance criteria.
+   The core has regression coverage for vowels, consonants, numerals, punctuation, explicit hasant notation, reph, phola forms, valid conjunct filtering, case fallback, mixed-script boundaries, and documented rule probes. The remaining gap is scale: the deliberate input corpus should grow into a larger matrix of linguistically meaningful Roman patterns so awkward but rule-correct spellings are found early.
 
-3. **Complex Rule Handling**: The tokenizer needs more sophisticated rules to handle special cases like:
-   - When two consonants should form conjuncts vs. when they should remain separate
-   - Proper handling of less common consonant clusters and cluster boundaries
+2. **Conjunct Boundary Ergonomics**
 
-4. **Consonant Cluster Recognition**: Current regression coverage protects representative valid clusters, explicit hasant behavior, reph, phola forms, and anusvara-bounded clusters. Broader implicit-cluster behavior still needs corpus-driven validation against deliberate Roman input patterns.
+   Implicit conjuncts are filtered through compiled valid-conjunct data, and explicit `,,` remains the deliberate boundary tool. Some legal but rare cluster cases still need more corpus-backed review to decide whether the default path should be implicit composition or explicit user signaling.
 
-## Transliterator Issues
+3. **Alias Admission Discipline**
 
-1. **Advanced Orthography Rules**: Some spellings need explicit, deterministic Roman input rather than whole-word exceptions. The engine should prefer composable rules and documented user input patterns over dictionary-style word overrides.
+   Accepted aliases must continue to be justified by Obadh's own phonetic, orthographic, or ergonomic contract. External keyboard behavior is comparison data only. Broad aliases that weaken deliberate typing should stay out of the core.
 
-2. **Corpus Validation**: Representative cluster, vowel, hasant, phola, mixed-script, CLI, and WASM cases are covered, and `data/rules/deliberate_input_corpus.md` now provides a source-controlled seed corpus of deliberate rule probes. The next validation gap is expanding that corpus into a larger systematic matrix that can expose awkward but rule-correct spellings before higher-level suggestion systems exist.
+## Autocorrect Workbench
 
-3. **Documentation Completeness**: The main deliberate-input contract is documented, but every accepted alias should continue to be tied back to a canonical rule signal in user-facing docs.
+1. **Lexicon Coverage**
 
-## Autocorrect Workbench Issues
+   The FST candidate generator can only surface words present in the runtime lexicon or loanword lexicon. More curated Bangla sources are still needed before production accuracy can be judged seriously.
 
-1. **Lexicon Coverage Ceiling**: The current runtime candidate generator is lexicon-backed. If the expected target is absent from the compact lexicon artifact, the candidate generator cannot surface it. Curated high-coverage Bangla word-frequency sources are still required before production accuracy can be judged fairly.
+2. **Source Weighting**
 
-2. **Ranker Calibration**: The FST runtime ranker is conservative and currently relies on deterministic channel priors, Bangla-unit edit cost, and unigram frequency. It can surface exact baselines, bounded Roman separator repairs, edit candidates, suffix completions, prefix completions, and low-cost nasal-mark candidates, but contextual ranking is still future work.
+   The unified lexicon currently combines curated EPUB, Wikipedia, newspaper, and loanword sources. Source weighting is still basic; future rebuilds should keep high-quality formal and literary sources from being drowned out by noisy or register-specific corpus counts.
 
-3. **Evaluation Migration**: `suggest-fst` is the production runtime path, but `eval` and `export-candidates` still use the older compact `.lex` artifact. Those flows should move onto the FST candidate generator before any serious reranker training depends on exported candidates.
+3. **Ranking Calibration**
 
-4. **Corpus Quality And Weighting**: The current unified lexicon is useful for local product work but not final. More curated Bangla book, corpus, and formal vocabulary sources are needed, along with source weighting so noisy or register-specific terms do not dominate keyboard suggestions.
+   The v0.3.0 ranker is intentionally conservative and explainable: channel priors, weighted Bangla-unit edit cost, unigram frequency, bounded Roman repairs, suffix/prefix completions, and loanword lookup. Contextual ranking and personalization are future layers, not part of the deterministic core.
+
+4. **Evaluation Migration**
+
+   `suggest-fst` is the production runtime path. Older compact `.lex` evaluation/export flows still exist for compatibility and tests, but serious retrieval evaluation should move fully onto the FST candidate generator.
+
+5. **Keyboard-Time Performance Profiling**
+
+   Native CLI process timings include startup and are not a substitute for loaded keyboard-runtime latency. The next profiling pass should measure the loaded FST path inside the long-lived runtime, especially on mobile-class hardware and WASM.
+
+## Playground
+
+1. **Mobile Interaction Validation**
+
+   The v0.3.0 mobile composer is substantially cleaner, but it still needs hands-on testing on real mobile browsers and iOS keyboard-adjacent constraints.
+
+2. **Debug Surface Scope**
+
+   The inspector now exposes useful live/autocorrect data, but the exact split between user-facing playground controls and deeper developer diagnostics should keep evolving as the autocorrect layer matures.
 
 ## Future Work
 
-1. Implement a more linguistically accurate algorithm for forming conjuncts based on Bengali orthography rules.
-
-2. Expand deterministic phonetic and orthographic rules without hardcoded whole-word mappings.
-
-3. Expand the source-controlled rule-probe corpus and add tooling to audit larger deliberate Roman input pattern sets against the deterministic engine.
-
-4. Maintain and expand the Criterion benchmark suite for tokenizer/transliterator hot paths as new deterministic rules are added.
-
-5. Expand test coverage to ensure all edge cases are handled correctly.
-
-6. Add a phonetic rule system that better matches Bengali orthography's special cases while preserving one canonical deliberate signal wherever possible.
-
-7. Consider implementing explicit normalization passes for documented Roman rule patterns before tokenization.
-
-8. Consider a custom weighted FST traversal or weighted automaton if the bounded post-retrieval channels are no longer enough for keyboard-time autocorrect. The current design intentionally avoids expanding the FST into heap-heavy data structures.
-
-## Notes
-
-The current version has regression coverage for basic vowel and consonant composition, explicit hasant notation, valid conjunct filtering, phola forms, lowercase `o` as an inherent-vowel terminator after consonant, conjunct, and reph units, the non-conjunct `র‌্য` ZWNJ signal, mixed-script preservation, numerals, and the CLI/library path. Runtime vowel, consonant, numeral, diacritic, and symbol signals have source-contract tests against their documented rule tables or deliberate-input contract; documented arrow examples in `data/rules/simplified_rules.md` and deliberate rule probes in `data/rules/deliberate_input_corpus.md` are also checked against the public engine path. The rule-probe corpus now covers base-vs-phola separation, nasal shorthand vs. literal anusvara escape, vocalic ঋ vs. reph, vowel-sequence composition, marked-consonant vowel boundaries, and accepted aspirated alias composition. Every source `data/conjuncts.csv` Roman conjunct key is checked through the public engine rendering path, including the composable <code>rrt``</code> signal for `র্ৎ`; vowel-bearing source conjuncts are also checked with canonical dependent vowel signs, and all source conjuncts are checked with explicit `,,` hasant between source components. Compiled implicit conjunct keys must now come from `data/conjuncts.csv` or from declared deterministic alias families, so hidden table-only conjuncts cannot enter the core unnoticed. The direct-rendering path and tokenized debug path share text-boundary predicates and have parity coverage for decimal separators, explicit hasant markers, khanda-ta notation, standalone marks, and mixed-script boundaries. The project also has a Criterion hot-path benchmark target for tokenizer and transliterator rule-stress inputs.
-
-More complex cases involving conjuncts, vowel ambiguity, and deliberate input conventions need broader corpus-driven validation. That validation should expand deterministic rules, not introduce dictionary-style word overrides into the core engine.
+- Expand the deliberate input probe corpus.
+- Add loaded-runtime FST latency benchmarks.
+- Improve corpus admission and source weighting.
+- Keep the deterministic rule docs synchronized with every accepted alias.
+- Add a future neural/contextual reranker only after lexicon retrieval and deterministic behavior are stable.

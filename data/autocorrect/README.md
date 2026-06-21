@@ -287,27 +287,11 @@ cargo run --bin obadh-autocorrect -- audit-pairs \
   --input-kind roman --pretty
 ```
 
-`eval` and `export-candidates` currently operate on the older compact `.lex`
-artifact for offline compatibility. The production runtime path is `bn.fst`;
-the evaluation/export path should be migrated before any serious model training
-depends on it.
+The production retrieval path is `suggest-fst` over `bn.fst` and, when needed,
+`en_bn_loanwords.fst`. Older compact-artifact evaluation commands still exist
+for compatibility, but new evaluation work should target the FST path.
 
-```bash
-cargo run --bin obadh-autocorrect -- eval \
-  --lexicon path/to/obadh.bn.lex \
-  --input path/to/eval_pairs.tsv \
-  --input-kind bangla --pretty
-
-cargo run --bin obadh-autocorrect -- export-candidates \
-  --lexicon path/to/obadh.bn.lex \
-  --input path/to/eval_pairs.tsv \
-  --output path/to/candidates.jsonl \
-  --input-kind bangla \
-  --max-candidates 64 \
-  --max-skeleton-candidates 128
-```
-
-Important evaluation fields:
+Important evaluation fields to preserve when building FST-based reports:
 
 - `baseline_accuracy`: input already equals target.
 - `final_output_accuracy`: output after autocorrect equals target.
@@ -331,8 +315,8 @@ High-priority candidates:
 - Bangladesh National Corpus if access and license permit derived artifacts.
 - LDC-IL Gold Standard Bengali Raw Text Corpus if redistribution terms permit.
 - Wikimedia-derived sources with proper attribution and filtering.
-- Google Dakshina `bn` for romanized/native evaluation pairs, not as the only
-  word inventory.
+- Carefully inspected romanized/native pairs for evaluation only. Do not admit a
+  transliteration dataset into the runtime lexicon just because it is large.
 
 Secondary candidates:
 
