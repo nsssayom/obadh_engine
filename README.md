@@ -6,45 +6,6 @@ This project is an Avro successor in ambition, but the base layer is not an Avro
 
 Live playground: [https://sayom.me/obadh_engine/](https://sayom.me/obadh_engine/)
 
-![Obadh Playground typing demo](docs/assets/screenshots/obadh-playground-typing-demo.gif)
-
-## v0.3.0 Snapshot
-
-- Deterministic core version: `0.3.0`
-- Playground version: `0.3.0`
-- Runtime Bangla autocorrect artifact: FST, `845,461` entries, `8,847,897` bytes
-- Runtime English-loanword artifact: FST, `1,776` English keys, `1,815` entries, `89,427` bytes
-- Optimized WASM payload: about `280 KB`
-- Release CLI transliteration sample: `100,000` iterations averaged `0.002815 ms` per run locally
-
-Metrics above were measured from the checked-in v0.3.0 artifacts on June 21, 2026. They are engineering sanity checks, not a production SLA.
-
-## Demo
-
-The current playground uses one composer surface. Space commits the deterministic Obadh draft; autocorrect suggestions are shown in the ribbon and must be selected deliberately.
-
-Demo Roman input:
-
-```text
-aji e probhate robir kor
-kemone poshil praNer por
-```
-
-Committed output:
-
-```text
-আজি এ প্রভাতে রবির কর
-কেমনে পশিল প্রাণের পর
-```
-
-Desktop:
-
-![Obadh Playground desktop](docs/assets/screenshots/obadh-playground-desktop.png)
-
-Mobile:
-
-![Obadh Playground mobile](docs/assets/screenshots/obadh-playground-mobile.png)
-
 ## Core Contract
 
 Obadh's deterministic transliterator must remain dictionary-free.
