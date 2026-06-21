@@ -174,6 +174,17 @@ impl Transliterator {
                 continue;
             }
 
+            if character == '.' {
+                let dot_run_len = ascii_dot_run_len(text, i);
+                if dot_run_len > 1 {
+                    self.flush_current_word(&mut result, text, &mut state);
+                    result.push_str(&text[i..i + dot_run_len]);
+                    state.previous_boundary = TokenNumberBoundary::default();
+                    i += dot_run_len;
+                    continue;
+                }
+            }
+
             if character.is_whitespace() {
                 self.flush_current_word(&mut result, text, &mut state);
                 result.push(character);
@@ -337,6 +348,13 @@ fn estimated_render_capacity(tokens: &[Token]) -> usize {
 
 fn estimated_text_render_capacity(text: &str) -> usize {
     text.len().saturating_mul(3)
+}
+
+fn ascii_dot_run_len(text: &str, byte_index: usize) -> usize {
+    text[byte_index..]
+        .bytes()
+        .take_while(|byte| *byte == b'.')
+        .count()
 }
 
 #[cfg(test)]

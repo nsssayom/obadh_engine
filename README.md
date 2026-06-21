@@ -205,8 +205,17 @@ path.
 Current checked-in artifacts:
 
 ```text
-data/autocorrect/lexicons/bn.tsv
+data/autocorrect/lexicons/raw/epub_bn.tsv
+data/autocorrect/lexicons/raw/wiki_bn.tsv
+data/autocorrect/lexicons/raw/news_bn.tsv
+data/autocorrect/lexicons/curated/epub_bn.tsv
+data/autocorrect/lexicons/curated/wiki_bn.tsv
+data/autocorrect/lexicons/curated/news_bn.tsv
+data/autocorrect/lexicons/loanwords/en_bn_loanwords.tsv
+data/autocorrect/lexicons/derived/loan_bn.tsv
+data/autocorrect/lexicons/merged/bn.tsv
 data/autocorrect/models/bn.fst
+data/autocorrect/models/en_bn_loanwords.fst
 ```
 
 Typical corpus-to-runtime flow:
@@ -226,9 +235,16 @@ cargo run --bin obadh-autocorrect -- audit-lexicon \
   --input path/to/clean_bn_words.tsv --pretty
 
 # Merge curated word-frequency TSVs into one clean source
+cargo run --bin obadh-autocorrect -- export-loanword-bangla-lexicon \
+  --input data/autocorrect/lexicons/loanwords/en_bn_loanwords.tsv \
+  --output data/autocorrect/lexicons/derived/loan_bn.tsv \
+  --frequency 16
+
 cargo run --bin obadh-autocorrect -- merge-lexicon \
   --input path/to/epub_words.tsv \
   --input path/to/wiki_words.tsv \
+  --input path/to/news_words.tsv \
+  --input data/autocorrect/lexicons/derived/loan_bn.tsv \
   --output path/to/merged_bn_words.tsv \
   --drop-invalid
 
@@ -247,6 +263,11 @@ cargo run --bin obadh-autocorrect -- build-fst-lexicon \
   --input path/to/merged_bn_words.tsv \
   --output path/to/obadh.bn.fst
 
+cargo run --bin obadh-autocorrect -- build-loanword-lexicon \
+  --input data/autocorrect/lexicons/loanwords/en_bn_loanwords.tsv \
+  --output path/to/obadh.en_bn_loanwords.fst \
+  --frequency 16
+
 # Inspect the shipped runtime artifact
 cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
   --input path/to/obadh.bn.fst --pretty
@@ -254,6 +275,7 @@ cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
 # Inspect live Roman-input suggestions through the runtime path
 cargo run --bin obadh-autocorrect -- suggest-fst \
   --lexicon path/to/obadh.bn.fst \
+  --loanwords path/to/obadh.en_bn_loanwords.fst \
   --input cad \
   --max-distance 2 \
   --max-candidates 512 \
@@ -281,12 +303,23 @@ The runtime FST path combines several bounded candidate channels:
   must pass through Obadh and exact FST lookup before they become candidates.
 - **Bangla edit search**: bounded Unicode Levenshtein search is intersected with
   the FST; candidates are then scored with Bangla-unit-aware weighted edit cost.
+- **Orthographic vowel-length correction**: same-surface `ই/ঈ`, `ি/ী`, `উ/ঊ`,
+  and `ু/ূ` variants get a narrow orthographic channel. This lets a common
+  spelling such as `সুশীল` beat a very rare exact surface like `সুশিল` without
+  allowing unrelated frequent words to dominate.
 - **Stem suffix completion**: exact stems can surface common Bengali determiner,
   case/focus, and plural suffix forms if those full forms exist in the FST.
 - **Chandrabindu rescue**: if the exact baseline is a lexicon word, Obadh probes
   only plausible vowel-bearing chandrabindu positions on that word with direct
   exact FST lookups. This is not a corpus scan and not a global spelling
   mutation pass.
+- **English loanwords**: a separate compact English-key FST maps curated English
+  spellings to Bangla loanword surfaces. Runtime queries are ASCII
+  case-normalized, so `university`, `University`, and `UNIVERSITY` hit the same
+  key. Exact English keys are admitted directly; slight misspellings use bounded
+  adjacent-transposition probes and a tiny ASCII edit automaton over the
+  English-key FST. Fuzzy loanword repairs are suppressed when Obadh's
+  deterministic Bangla output is already an exact lexicon word.
 - **Prefix completion**: bounded FST prefix lookup supports autocomplete-style
   suggestions.
 

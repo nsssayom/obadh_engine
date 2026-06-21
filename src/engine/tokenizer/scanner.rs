@@ -32,6 +32,20 @@ pub(super) fn tokenize_text(text: &str) -> Vec<Token> {
             continue;
         }
 
+        if c == '.' {
+            let run_len = ascii_dot_run_len(text, i);
+            if run_len > 1 {
+                current_word.flush_into(&mut tokens);
+                tokens.push(Token {
+                    content: text[i..i + run_len].to_string(),
+                    token_type: TokenType::Punctuation,
+                    position: i,
+                });
+                i += run_len;
+                continue;
+            }
+        }
+
         if c.is_whitespace() {
             current_word.flush_into(&mut tokens);
             tokens.push(Token {
@@ -63,6 +77,13 @@ pub(super) fn tokenize_text(text: &str) -> Vec<Token> {
     current_word.flush_into(&mut tokens);
 
     tokens
+}
+
+fn ascii_dot_run_len(text: &str, byte_index: usize) -> usize {
+    text[byte_index..]
+        .bytes()
+        .take_while(|byte| *byte == b'.')
+        .count()
 }
 
 struct CurrentWord {

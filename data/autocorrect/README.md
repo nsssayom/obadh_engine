@@ -14,19 +14,47 @@ changing the core transliteration contract.
 data/autocorrect/
   README.md
   lexicons/
-    epub_bn.tsv
-    wiki_bn.tsv
-    bn.tsv
+    raw/
+      epub_bn.tsv
+      wiki_bn.tsv
+      news_bn.tsv
+    curated/
+      epub_bn.tsv
+      wiki_bn.tsv
+      news_bn.tsv
+    loanwords/
+      en_bn_loanwords.tsv
+    derived/
+      loan_bn.tsv
+    merged/
+      bn.tsv
   models/
     bn.fst
+    en_bn_loanwords.fst
 ```
 
-- `lexicons/epub_bn.tsv`: word-frequency TSV extracted from locally curated
+- `lexicons/raw/epub_bn.tsv`: word-frequency TSV extracted from locally curated
   EPUB books.
-- `lexicons/wiki_bn.tsv`: word-frequency TSV extracted from the accepted Bangla
-  Wikipedia source.
-- `lexicons/bn.tsv`: unified, auditable Bangla word-frequency TSV.
-- `models/bn.fst`: production finite-state lexicon built from `bn.tsv`.
+- `lexicons/raw/wiki_bn.tsv`: word-frequency TSV extracted from the accepted
+  Bangla Wikipedia source.
+- `lexicons/raw/news_bn.tsv`: word-frequency TSV extracted from the accepted
+  Furcifer Bangla newspaper source.
+- `lexicons/curated/epub_bn.tsv`: curated EPUB lexicon after low-frequency
+  semantic/noise filtering.
+- `lexicons/curated/wiki_bn.tsv`: curated Wikipedia lexicon after
+  low-frequency semantic/noise filtering.
+- `lexicons/curated/news_bn.tsv`: curated newspaper lexicon after
+  low-frequency semantic/noise filtering.
+- `lexicons/loanwords/en_bn_loanwords.tsv`: curated English spelling to Bangla
+  loanword TSV for words such as `university`, `engineering`, and `train`.
+- `lexicons/derived/loan_bn.tsv`: generated Bangla-only TSV exported from the
+  curated loanword source so those Bangla surfaces also exist in the main
+  lexicon.
+- `lexicons/merged/bn.tsv`: unified, auditable Bangla word-frequency TSV.
+- `models/bn.fst`: production finite-state lexicon built from
+  `lexicons/merged/bn.tsv`.
+- `models/en_bn_loanwords.fst`: compact English-key FST for exact and bounded
+  fuzzy loanword correction.
 
 Raw corpus inputs stay outside this directory. The local `epubs/` directory,
 Kaggle caches, downloaded JSON, temporary candidate dumps, and training exports
@@ -40,9 +68,12 @@ data/autocorrect/training/
 
 ## Runtime Artifact Contract
 
-Runtime autocorrect loads `models/bn.fst`, not CSV, raw corpora, or large parsed
-TSV structures. The FST maps each NFC-normalized Bangla word to its unigram
-frequency.
+Runtime autocorrect loads `models/bn.fst` and, when available,
+`models/en_bn_loanwords.fst`; it does not parse CSV, raw corpora, or large TSV
+structures on the keyboard hot path. The Bangla FST maps each NFC-normalized
+Bangla word to its unigram frequency. The loanword FST maps lowercase ASCII
+English keys to one or more curated Bangla spellings; runtime loanword queries
+are ASCII case-normalized before lookup.
 
 Native tools memory-map the FST so the lexicon is not expanded into a
 heap-resident trie. WASM loads the same compact byte blob and queries it in
@@ -65,7 +96,7 @@ Extract a source TSV:
 ```bash
 cargo run --bin obadh-autocorrect -- extract-lexicon \
   --input epubs \
-  --output data/autocorrect/lexicons/epub_bn.tsv \
+  --output data/autocorrect/lexicons/raw/epub_bn.tsv \
   --min-frequency 1
 ```
 
@@ -73,16 +104,42 @@ Audit a source TSV:
 
 ```bash
 cargo run --bin obadh-autocorrect -- audit-lexicon \
-  --input data/autocorrect/lexicons/epub_bn.tsv --pretty
+  --input data/autocorrect/lexicons/raw/epub_bn.tsv --pretty
 ```
 
-Merge accepted TSV sources:
+Extract the accepted newspaper source:
 
 ```bash
+python3 tools/autocorrect/extract_news_json_lexicon.py \
+  --input ~/.cache/kagglehub/datasets/furcifer/bangla-newspaper-dataset/versions/2/data_v2/data_v2.json \
+  --output data/autocorrect/lexicons/raw/news_bn.tsv
+```
+
+Generate derived loanword surfaces, curate noisy sources, and merge accepted
+TSV sources:
+
+```bash
+cargo run --bin obadh-autocorrect -- export-loanword-bangla-lexicon \
+  --input data/autocorrect/lexicons/loanwords/en_bn_loanwords.tsv \
+  --output data/autocorrect/lexicons/derived/loan_bn.tsv \
+  --frequency 16
+
+python3 tools/autocorrect/curate_lexicon_sources.py \
+  --epub data/autocorrect/lexicons/raw/epub_bn.tsv \
+  --wiki data/autocorrect/lexicons/raw/wiki_bn.tsv \
+  --news data/autocorrect/lexicons/raw/news_bn.tsv \
+  --loan data/autocorrect/lexicons/derived/loan_bn.tsv \
+  --epub-output data/autocorrect/lexicons/curated/epub_bn.tsv \
+  --wiki-output data/autocorrect/lexicons/curated/wiki_bn.tsv \
+  --news-output data/autocorrect/lexicons/curated/news_bn.tsv \
+  --quarantine-output data/autocorrect/tmp/curation_quarantine.tsv
+
 cargo run --bin obadh-autocorrect -- merge-lexicon \
-  --input data/autocorrect/lexicons/epub_bn.tsv \
-  --input data/autocorrect/lexicons/wiki_bn.tsv \
-  --output data/autocorrect/lexicons/bn.tsv \
+  --input data/autocorrect/lexicons/curated/epub_bn.tsv \
+  --input data/autocorrect/lexicons/curated/wiki_bn.tsv \
+  --input data/autocorrect/lexicons/curated/news_bn.tsv \
+  --input data/autocorrect/lexicons/derived/loan_bn.tsv \
+  --output data/autocorrect/lexicons/merged/bn.tsv \
   --drop-invalid
 ```
 
@@ -90,11 +147,19 @@ Build and inspect the runtime FST:
 
 ```bash
 cargo run --bin obadh-autocorrect -- build-fst-lexicon \
-  --input data/autocorrect/lexicons/bn.tsv \
+  --input data/autocorrect/lexicons/merged/bn.tsv \
   --output data/autocorrect/models/bn.fst
+
+cargo run --bin obadh-autocorrect -- build-loanword-lexicon \
+  --input data/autocorrect/lexicons/loanwords/en_bn_loanwords.tsv \
+  --output data/autocorrect/models/en_bn_loanwords.fst \
+  --frequency 16
 
 cargo run --bin obadh-autocorrect -- inspect-fst-lexicon \
   --input data/autocorrect/models/bn.fst --pretty
+
+cargo run --bin obadh-autocorrect -- inspect-loanword-lexicon \
+  --input data/autocorrect/models/en_bn_loanwords.fst --pretty
 ```
 
 Probe the runtime path:
@@ -102,6 +167,7 @@ Probe the runtime path:
 ```bash
 cargo run --bin obadh-autocorrect -- suggest-fst \
   --lexicon data/autocorrect/models/bn.fst \
+  --loanwords data/autocorrect/models/en_bn_loanwords.fst \
   --input cad \
   --max-distance 2 \
   --max-candidates 512 \
@@ -134,6 +200,16 @@ The runtime FST path is deliberately bounded:
   plural suffixes, validated by exact FST lookup.
 - Exact-baseline-only chandrabindu rescue over plausible vowel-bearing positions,
   validated by exact FST lookup.
+- English loanword exact lookup against the compact loanword FST. This handles
+  properly spelled English loanword input without touching the deterministic
+  transliterator. Runtime query case is normalized, so `university`,
+  `University`, and `UNIVERSITY` share the same stored key.
+- Bounded English-key repair against the compact loanword FST for slight
+  misspellings. The default path uses exact lookup first, adjacent transposition
+  probes, then a tiny ASCII edit automaton with dynamic distance: no fuzzy search
+  for short ambiguous keys, distance `1` for medium keys, and distance `2` for
+  longer keys. Fuzzy loanword repairs are suppressed when Obadh's Bangla baseline
+  is already an exact lexicon hit; exact loanword matches remain allowed.
 - Bounded prefix lookup for autocomplete-style suggestions.
 
 No word-specific correction table belongs in this layer. If a candidate is not
@@ -168,15 +244,15 @@ dataset, specifically the `wiki_bn_articles` JSON directory:
 ```bash
 cargo run --bin obadh-autocorrect -- extract-lexicon \
   --input ~/.cache/kagglehub/datasets/hurutta/bangla-wikipedia-dataset/versions/1/wiki_bn_articles \
-  --output data/autocorrect/lexicons/wiki_bn.tsv \
+  --output data/autocorrect/lexicons/raw/wiki_bn.tsv \
   --min-frequency 1
 
 cargo run --bin obadh-autocorrect -- merge-lexicon \
-  --input data/autocorrect/lexicons/wiki_bn.tsv \
-  --output data/autocorrect/lexicons/wiki_bn.tsv.clean \
+  --input data/autocorrect/lexicons/raw/wiki_bn.tsv \
+  --output data/autocorrect/lexicons/raw/wiki_bn.tsv.clean \
   --drop-invalid
 
-mv data/autocorrect/lexicons/wiki_bn.tsv.clean data/autocorrect/lexicons/wiki_bn.tsv
+mv data/autocorrect/lexicons/raw/wiki_bn.tsv.clean data/autocorrect/lexicons/raw/wiki_bn.tsv
 ```
 
 Do not merge generated artifacts back into source TSVs. Rebuild from the curated

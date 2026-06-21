@@ -15,6 +15,8 @@ use serde::Serialize;
 mod corpus;
 #[path = "obadh_autocorrect/fst_cli.rs"]
 mod fst_cli;
+#[path = "obadh_autocorrect/loanword_cli.rs"]
+mod loanword_cli;
 
 use corpus::{
     expand_corpus_inputs, is_bangla_lexicon_word, is_clean_roman_word_input, normalize_bangla_text,
@@ -106,6 +108,22 @@ enum Command {
         #[arg(long, default_value_t = false)]
         allow_non_bangla: bool,
     },
+    ExportLoanwordBanglaLexicon {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = loanword_cli::default_frequency())]
+        frequency: u32,
+    },
+    BuildLoanwordLexicon {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = loanword_cli::default_frequency())]
+        frequency: u32,
+    },
     ExportLexicon {
         #[arg(long)]
         input: PathBuf,
@@ -119,6 +137,12 @@ enum Command {
         pretty: bool,
     },
     InspectFstLexicon {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long, default_value_t = false)]
+        pretty: bool,
+    },
+    InspectLoanwordLexicon {
         #[arg(long)]
         input: PathBuf,
         #[arg(long, default_value_t = false)]
@@ -149,6 +173,8 @@ enum Command {
     SuggestFst {
         #[arg(long)]
         lexicon: PathBuf,
+        #[arg(long)]
+        loanwords: Option<PathBuf>,
         #[arg(long)]
         input: String,
         #[arg(long, default_value_t = fst_cli::default_max_distance())]
@@ -598,6 +624,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let report = fst_cli::build_fst_lexicon_artifact(&input, &output, allow_non_bangla)?;
             print_json(&report, true)?;
         }
+        Command::ExportLoanwordBanglaLexicon {
+            input,
+            output,
+            frequency,
+        } => {
+            let report = loanword_cli::export_loanword_bangla_lexicon(&input, &output, frequency)?;
+            print_json(&report, true)?;
+        }
+        Command::BuildLoanwordLexicon {
+            input,
+            output,
+            frequency,
+        } => {
+            let report = loanword_cli::build_loanword_lexicon_artifact(&input, &output, frequency)?;
+            print_json(&report, true)?;
+        }
         Command::ExportLexicon { input, output } => {
             let report = export_lexicon_tsv(&input, &output)?;
             print_json(&report, true)?;
@@ -621,6 +663,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::InspectFstLexicon { input, pretty } => {
             let report = fst_cli::inspect_fst_lexicon(&input)?;
+            print_json(&report, pretty)?;
+        }
+        Command::InspectLoanwordLexicon { input, pretty } => {
+            let report = loanword_cli::inspect_loanword_lexicon(&input)?;
             print_json(&report, pretty)?;
         }
         Command::Suggest {
@@ -649,6 +695,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::SuggestFst {
             lexicon,
+            loanwords,
             input,
             max_distance,
             max_edit_cost,
@@ -658,9 +705,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             pretty,
         } => {
             let lexicon_model = fst_cli::read_fst_lexicon(&lexicon)?;
+            let loanword_model = loanwords
+                .as_ref()
+                .map(loanword_cli::read_loanword_lexicon)
+                .transpose()?;
             let report = fst_cli::suggest_fst(
                 &input,
                 &lexicon_model,
+                loanword_model.as_ref(),
                 max_distance,
                 max_edit_cost,
                 max_candidates,

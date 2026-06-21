@@ -6,7 +6,10 @@ use fst::automaton::{Automaton, Str};
 use fst::{IntoStreamer, Streamer};
 use serde::Serialize;
 
-use super::bangla::{differs_only_by_nasal_or_breath_mark, for_each_chandrabindu_variant};
+use super::bangla::{
+    differs_only_by_nasal_or_breath_mark, differs_only_by_vowel_length,
+    for_each_chandrabindu_variant,
+};
 use super::edit::weighted_edit_distance;
 use super::morphology::{stem_suffix_completions, StemSuffixCompletion};
 
@@ -21,6 +24,8 @@ const EXACT_BASELINE_CHANNEL_PRIOR: i64 = 16_384;
 const EDIT_DISTANCE_CHANNEL_PENALTY: i64 = 2048;
 const DIACRITIC_EDIT_CHANNEL_PRIOR: i64 = 1024;
 const DIACRITIC_EDIT_COST_SCALE: i64 = 256;
+const ORTHOGRAPHIC_VOWEL_LENGTH_CHANNEL_PRIOR: i64 = 12_288;
+const ORTHOGRAPHIC_VOWEL_LENGTH_COST_SCALE: i64 = 64;
 const PREFIX_COMPLETION_CHANNEL_PENALTY: i64 = 192;
 const STEM_SUFFIX_COMPLETION_PRIOR: i64 = 768;
 const STEM_SUFFIX_COST_SCALE: i64 = 256;
@@ -32,6 +37,11 @@ const ROMAN_STRONG_VELAR_NASAL_REPAIR_EXACT_BONUS: i64 = 12_288;
 const ROMAN_STRONG_REPAIR_FREQUENCY_FLOOR: u64 = 128;
 const ROMAN_REPAIR_COST_SCALE: i64 = 1024;
 const ROMAN_REPAIR_SURFACE_COST_SCALE: i64 = 128;
+const ENGLISH_LOANWORD_EXACT_PRIOR: i64 = 10_240;
+const ENGLISH_LOANWORD_FUZZY_PRIOR: i64 = 8_704;
+const ENGLISH_LOANWORD_REPAIR_COST_SCALE: i64 = 1536;
+const ENGLISH_LOANWORD_SURFACE_COST_SCALE: i64 = 64;
+const ENGLISH_LOANWORD_PREFIX_TRUNCATION_PENALTY: i64 = 12_288;
 
 #[derive(Debug)]
 pub struct FstLexicon<D: AsRef<[u8]> = Vec<u8>> {
@@ -67,6 +77,21 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
         &self,
         baseline: &str,
         repaired_baselines: &[FstRepairedBaseline<'_>],
+        options: FstSuggestOptions,
+    ) -> Result<FstSuggestResult, FstSuggestError> {
+        self.suggest_with_repaired_baselines_and_loanwords(
+            baseline,
+            repaired_baselines,
+            &[],
+            options,
+        )
+    }
+
+    pub fn suggest_with_repaired_baselines_and_loanwords(
+        &self,
+        baseline: &str,
+        repaired_baselines: &[FstRepairedBaseline<'_>],
+        loanword_matches: &[FstLoanwordMatch<'_>],
         options: FstSuggestOptions,
     ) -> Result<FstSuggestResult, FstSuggestError> {
         if options.max_distance > FST_MAX_LEVENSHTEIN_DISTANCE {
@@ -157,6 +182,19 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
             }
         }
 
+        for loanword in loanword_matches {
+            if loanword.bangla_output.is_empty() {
+                continue;
+            }
+            if exact_frequency.is_some() && loanword.repair_cost > 0 {
+                continue;
+            }
+            let frequency = self
+                .exact_frequency(loanword.bangla_output)
+                .unwrap_or(loanword.frequency);
+            insert_english_loanword_candidate(&mut seeds, loanword, frequency, baseline);
+        }
+
         let mut ranked = seeds.into_values().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
             right
@@ -186,6 +224,16 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
 pub struct FstRepairedBaseline<'a> {
     pub roman_input: &'a str,
     pub bangla_output: &'a str,
+    pub repair_kind: &'static str,
+    pub repair_cost: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FstLoanwordMatch<'a> {
+    pub roman_input: &'a str,
+    pub roman_repair: &'a str,
+    pub bangla_output: &'a str,
+    pub frequency: u64,
     pub repair_kind: &'static str,
     pub repair_cost: u16,
 }
@@ -249,9 +297,12 @@ pub enum FstCandidateSource {
     Exact,
     EditDistance,
     DiacriticEdit,
+    OrthographicVowelLengthEdit,
     PrefixCompletion,
     StemSuffixCompletion,
     RomanRepairExact,
+    EnglishLoanwordExact,
+    EnglishLoanwordFuzzy,
 }
 
 impl FstCandidateSource {
@@ -260,9 +311,12 @@ impl FstCandidateSource {
             Self::Exact => "fst_exact",
             Self::EditDistance => "fst_edit_distance",
             Self::DiacriticEdit => "fst_diacritic_edit",
+            Self::OrthographicVowelLengthEdit => "fst_orthographic_vowel_length_edit",
             Self::PrefixCompletion => "fst_prefix_completion",
             Self::StemSuffixCompletion => "fst_stem_suffix_completion",
             Self::RomanRepairExact => "fst_roman_repair_exact",
+            Self::EnglishLoanwordExact => "fst_english_loanword_exact",
+            Self::EnglishLoanwordFuzzy => "fst_english_loanword_fuzzy",
         }
     }
 
@@ -271,9 +325,12 @@ impl FstCandidateSource {
             Self::Exact => EXACT_BASELINE_CHANNEL_PRIOR,
             Self::EditDistance => -EDIT_DISTANCE_CHANNEL_PENALTY,
             Self::DiacriticEdit => DIACRITIC_EDIT_CHANNEL_PRIOR,
+            Self::OrthographicVowelLengthEdit => ORTHOGRAPHIC_VOWEL_LENGTH_CHANNEL_PRIOR,
             Self::PrefixCompletion => -PREFIX_COMPLETION_CHANNEL_PENALTY,
             Self::StemSuffixCompletion => STEM_SUFFIX_COMPLETION_PRIOR,
             Self::RomanRepairExact => 0,
+            Self::EnglishLoanwordExact => ENGLISH_LOANWORD_EXACT_PRIOR,
+            Self::EnglishLoanwordFuzzy => ENGLISH_LOANWORD_FUZZY_PRIOR,
         }
     }
 }
@@ -314,6 +371,10 @@ fn insert_fst_candidate(
         && differs_only_by_nasal_or_breath_mark(baseline, text)
     {
         FstCandidateSource::DiacriticEdit
+    } else if source == FstCandidateSource::EditDistance
+        && differs_only_by_vowel_length(baseline, text)
+    {
+        FstCandidateSource::OrthographicVowelLengthEdit
     } else {
         source
     };
@@ -374,6 +435,39 @@ fn insert_stem_suffix_candidate(
     insert_best_candidate(seeds, candidate);
 }
 
+fn insert_english_loanword_candidate(
+    seeds: &mut BTreeMap<String, FstCandidate>,
+    loanword: &FstLoanwordMatch<'_>,
+    frequency: u64,
+    baseline: &str,
+) {
+    let edit_cost = weighted_edit_distance(baseline, loanword.bangla_output).0;
+    let source = if loanword.repair_cost == 0 {
+        FstCandidateSource::EnglishLoanwordExact
+    } else {
+        FstCandidateSource::EnglishLoanwordFuzzy
+    };
+    let score = english_loanword_candidate_score(
+        source,
+        edit_cost,
+        loanword.repair_cost,
+        frequency,
+        loanword.roman_input,
+        loanword.roman_repair,
+    );
+    let candidate = FstCandidate {
+        text: loanword.bangla_output.to_string(),
+        source,
+        edit_cost,
+        frequency,
+        score,
+        roman_repair: Some(loanword.roman_repair.to_string()),
+        roman_repair_kind: Some(loanword.repair_kind),
+        roman_repair_cost: Some(loanword.repair_cost),
+    };
+    insert_best_candidate(seeds, candidate);
+}
+
 fn insert_diacritic_candidate(
     seeds: &mut BTreeMap<String, FstCandidate>,
     text: &str,
@@ -413,6 +507,10 @@ fn fst_candidate_score(source: FstCandidateSource, edit_cost: u16, frequency: u6
         return frequency_score(frequency) + source.prior()
             - (edit_cost as i64 * DIACRITIC_EDIT_COST_SCALE);
     }
+    if source == FstCandidateSource::OrthographicVowelLengthEdit {
+        return frequency_score(frequency) + source.prior()
+            - (edit_cost as i64 * ORTHOGRAPHIC_VOWEL_LENGTH_COST_SCALE);
+    }
 
     frequency_score(frequency) - (edit_cost as i64 * SURFACE_EDIT_COST_SCALE) + source.prior()
 }
@@ -445,6 +543,47 @@ fn stem_suffix_candidate_score(edit_cost: u16, suffix_cost: u16, frequency: u64)
     frequency_score(frequency) + FstCandidateSource::StemSuffixCompletion.prior()
         - (suffix_cost as i64 * STEM_SUFFIX_COST_SCALE)
         - (edit_cost as i64 * STEM_SUFFIX_SURFACE_COST_SCALE)
+}
+
+fn english_loanword_candidate_score(
+    source: FstCandidateSource,
+    edit_cost: u16,
+    repair_cost: u16,
+    frequency: u64,
+    roman_input: &str,
+    roman_repair: &str,
+) -> i64 {
+    let prefix_truncation_penalty = if source == FstCandidateSource::EnglishLoanwordFuzzy {
+        english_loanword_prefix_truncation_penalty(roman_input, roman_repair)
+    } else {
+        0
+    };
+
+    frequency_score(frequency) + source.prior()
+        - (repair_cost as i64 * ENGLISH_LOANWORD_REPAIR_COST_SCALE)
+        - (edit_cost as i64 * ENGLISH_LOANWORD_SURFACE_COST_SCALE)
+        - prefix_truncation_penalty
+}
+
+fn english_loanword_prefix_truncation_penalty(roman_input: &str, roman_repair: &str) -> i64 {
+    let input = roman_input.as_bytes();
+    let repair = roman_repair.as_bytes();
+    if input.len() <= repair.len() || !input[..repair.len()].eq_ignore_ascii_case(repair) {
+        return 0;
+    }
+
+    let omitted = &input[repair.len()..];
+    let Some(last_repair_byte) = repair.last().map(u8::to_ascii_lowercase) else {
+        return 0;
+    };
+    if omitted
+        .iter()
+        .all(|byte| byte.to_ascii_lowercase() == last_repair_byte)
+    {
+        return 0;
+    }
+
+    ENGLISH_LOANWORD_PREFIX_TRUNCATION_PENALTY
 }
 
 fn frequency_score(frequency: u64) -> i64 {
@@ -623,7 +762,9 @@ fn is_utf8_continuation(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{FstCandidateSource, FstLexicon, FstRepairedBaseline, FstSuggestOptions};
+    use super::{
+        FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions,
+    };
 
     #[test]
     fn fst_suggest_handles_bangla_unicode_edit_distance() {
@@ -734,6 +875,45 @@ mod tests {
             .iter()
             .filter(|candidate| candidate.source == FstCandidateSource::EditDistance)
             .all(|candidate| first.score > candidate.score));
+    }
+
+    #[test]
+    fn orthographic_vowel_length_candidate_can_beat_rare_exact_baseline() {
+        let lexicon = test_lexicon([("সুশিল", 3), ("সুশীল", 550), ("সুনীল", 1_220)]);
+
+        let result = lexicon
+            .suggest(
+                "সুশিল",
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("vowel-length candidate should be returned");
+        assert_eq!(first.text, "সুশীল");
+        assert_eq!(
+            first.source,
+            FstCandidateSource::OrthographicVowelLengthEdit
+        );
+
+        let unrelated = result
+            .candidates
+            .iter()
+            .find(|candidate| candidate.text == "সুনীল")
+            .expect("unrelated edit candidate should still be visible");
+        assert!(
+            first.score > unrelated.score,
+            "vowel-length score {} should beat unrelated edit score {}",
+            first.score,
+            unrelated.score
+        );
     }
 
     #[test]
@@ -852,6 +1032,195 @@ mod tests {
         assert_eq!(first.roman_repair.as_deref(), Some("okalopokk"));
         assert_eq!(first.roman_repair_kind, Some("inserted_separator_o"));
         assert_eq!(first.roman_repair_cost, Some(1));
+    }
+
+    #[test]
+    fn english_loanword_exact_channel_can_bridge_distant_obadh_output() {
+        let lexicon = test_lexicon([("উনিভেরসিতা", 2), ("ইউনিভার্সিটি", 16), ("ইউনিয়ন", 4096)]);
+        let loanwords = [FstLoanwordMatch {
+            roman_input: "university",
+            roman_repair: "university",
+            bangla_output: "ইউনিভার্সিটি",
+            frequency: 16,
+            repair_kind: "english_loanword_exact",
+            repair_cost: 0,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines_and_loanwords(
+                "উনিভেরসিত্য",
+                &[],
+                &loanwords,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    response_candidates: 4,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("loanword candidate should be returned");
+        assert_eq!(first.text, "ইউনিভার্সিটি");
+        assert_eq!(first.source, FstCandidateSource::EnglishLoanwordExact);
+        assert_eq!(first.roman_repair.as_deref(), Some("university"));
+        assert_eq!(first.roman_repair_kind, Some("english_loanword_exact"));
+    }
+
+    #[test]
+    fn english_loanword_fuzzy_channel_repairs_misspelled_english_keys() {
+        let lexicon = test_lexicon([("উনিভেরসিতা", 2), ("ইউনিভার্সিটি", 9407)]);
+        let loanwords = [FstLoanwordMatch {
+            roman_input: "universty",
+            roman_repair: "university",
+            bangla_output: "ইউনিভার্সিটি",
+            frequency: 16,
+            repair_kind: "english_loanword_fuzzy",
+            repair_cost: 1,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines_and_loanwords(
+                "উনিভেরস্ত্য",
+                &[],
+                &loanwords,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    response_candidates: 4,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("fuzzy loanword candidate should be returned");
+        assert_eq!(first.text, "ইউনিভার্সিটি");
+        assert_eq!(first.source, FstCandidateSource::EnglishLoanwordFuzzy);
+        assert_eq!(first.roman_repair.as_deref(), Some("university"));
+        assert_eq!(first.roman_repair_kind, Some("english_loanword_fuzzy"));
+        assert_eq!(first.roman_repair_cost, Some(1));
+    }
+
+    #[test]
+    fn fuzzy_english_loanword_prefix_truncation_does_not_beat_close_bangla_edit() {
+        let lexicon = test_lexicon([("আমেরিকা", 10_018), ("আমেরিকান", 20_752)]);
+        let loanwords = [FstLoanwordMatch {
+            roman_input: "american",
+            roman_repair: "america",
+            bangla_output: "আমেরিকা",
+            frequency: 16,
+            repair_kind: "english_loanword_fuzzy",
+            repair_cost: 1,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines_and_loanwords(
+                "আমেরিচান",
+                &[],
+                &loanwords,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("Bangla edit candidate should be returned");
+        assert_eq!(first.text, "আমেরিকান");
+        assert_eq!(first.source, FstCandidateSource::EditDistance);
+
+        let loanword = result
+            .candidates
+            .iter()
+            .find(|candidate| candidate.text == "আমেরিকা")
+            .expect("prefix-truncated loanword candidate should still be visible");
+        assert_eq!(loanword.source, FstCandidateSource::EnglishLoanwordFuzzy);
+        assert!(
+            first.score > loanword.score,
+            "close Bangla edit score {} should beat prefix-truncated loanword score {}",
+            first.score,
+            loanword.score
+        );
+    }
+
+    #[test]
+    fn fuzzy_english_loanword_repeated_final_key_typo_stays_strong() {
+        let lexicon = test_lexicon([("উনিভেরসিতা", 2), ("ইউনিভার্সিটি", 9407)]);
+        let loanwords = [FstLoanwordMatch {
+            roman_input: "universityy",
+            roman_repair: "university",
+            bangla_output: "ইউনিভার্সিটি",
+            frequency: 16,
+            repair_kind: "english_loanword_fuzzy",
+            repair_cost: 1,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines_and_loanwords(
+                "উনিভেরসিত্য্য",
+                &[],
+                &loanwords,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    response_candidates: 4,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("fuzzy loanword candidate should be returned");
+        assert_eq!(first.text, "ইউনিভার্সিটি");
+        assert_eq!(first.source, FstCandidateSource::EnglishLoanwordFuzzy);
+    }
+
+    #[test]
+    fn fuzzy_english_loanword_does_not_beat_valid_bangla_exact_hit() {
+        let lexicon = test_lexicon([("মাদার", 1017), ("রাডার", 9000)]);
+        let loanwords = [FstLoanwordMatch {
+            roman_input: "madar",
+            roman_repair: "radar",
+            bangla_output: "রাডার",
+            frequency: 16,
+            repair_kind: "english_loanword_fuzzy",
+            repair_cost: 1,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines_and_loanwords(
+                "মাদার",
+                &[],
+                &loanwords,
+                FstSuggestOptions {
+                    max_distance: 2,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("valid exact candidate should be returned");
+        assert_eq!(first.text, "মাদার");
+        assert_eq!(first.source, FstCandidateSource::Exact);
+        assert!(result
+            .candidates
+            .iter()
+            .all(|candidate| candidate.source != FstCandidateSource::EnglishLoanwordFuzzy));
     }
 
     #[test]

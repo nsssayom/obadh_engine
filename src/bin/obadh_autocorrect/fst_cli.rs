@@ -3,9 +3,10 @@ use std::io::BufWriter;
 use std::path::PathBuf;
 
 use obadh_engine::{
-    roman_repaired_outputs, FstCandidate, FstLexicon, FstRepairedBaseline, FstSuggestOptions,
-    ObadhEngine, RomanRepairOptions, RomanRepairedOutput, DEFAULT_FST_MAX_DISTANCE,
-    DEFAULT_FST_PREFIX_CANDIDATES, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
+    roman_repaired_outputs, FstCandidate, FstLexicon, FstLoanwordMatch, FstRepairedBaseline,
+    FstSuggestOptions, LoanwordLexicon, LoanwordSearchOptions, ObadhEngine, RomanRepairOptions,
+    RomanRepairedOutput, DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES,
+    DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 use serde::Serialize;
 
@@ -126,6 +127,7 @@ pub fn inspect_fst_lexicon(
 pub fn suggest_fst(
     input: &str,
     lexicon_model: &FstLexicon<FstMapData>,
+    loanword_model: Option<&LoanwordLexicon<Vec<u8>>>,
     max_distance: u32,
     max_edit_cost: Option<u16>,
     max_candidates: usize,
@@ -144,9 +146,25 @@ pub fn suggest_fst(
             repair_cost: repair.repair_cost,
         })
         .collect::<Vec<_>>();
-    let result = lexicon_model.suggest_with_repaired_baselines(
+    let loanword_suggestions = loanword_model
+        .map(|loanwords| loanwords.suggestions(input, LoanwordSearchOptions::for_input(input)))
+        .transpose()?
+        .unwrap_or_default();
+    let fst_loanword_matches = loanword_suggestions
+        .iter()
+        .map(|entry| FstLoanwordMatch {
+            roman_input: input,
+            roman_repair: entry.english.as_str(),
+            bangla_output: entry.bangla.as_str(),
+            frequency: entry.frequency,
+            repair_kind: entry.kind.as_str(),
+            repair_cost: entry.edit_cost,
+        })
+        .collect::<Vec<_>>();
+    let result = lexicon_model.suggest_with_repaired_baselines_and_loanwords(
         &obadh_output,
         &repaired_baselines,
+        &fst_loanword_matches,
         FstSuggestOptions {
             max_distance,
             max_edit_cost,

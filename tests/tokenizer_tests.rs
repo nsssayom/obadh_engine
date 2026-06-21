@@ -35,6 +35,20 @@ fn test_text_tokenization() {
             (".", TokenType::Punctuation),
         ]
     );
+
+    let tokens = tokenizer.tokenize_text("ami... 12.34...");
+    assert_eq!(
+        token_shapes(&tokens),
+        vec![
+            ("ami", TokenType::Word),
+            ("...", TokenType::Punctuation),
+            (" ", TokenType::Whitespace),
+            ("12", TokenType::Number),
+            (".", TokenType::Punctuation),
+            ("34", TokenType::Number),
+            ("...", TokenType::Punctuation),
+        ]
+    );
 }
 
 #[test]

@@ -6,8 +6,9 @@ use web_sys::Performance;
 use crate::{
     roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
     CandidateFeatures, CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon,
-    FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats, ObadhEngine,
-    RomanRepairOptions, RomanRepairedOutput, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
+    FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats,
+    LoanwordLexicon, LoanwordSearchOptions, ObadhEngine, RomanRepairOptions, RomanRepairedOutput,
+    DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 
 const AUTOCORRECT_RERANK_POOL_SIZE: usize = 512;
@@ -96,6 +97,7 @@ pub struct TransliterationResult {
 pub struct AutocorrectLexiconStats {
     pub artifact_kind: &'static str,
     pub entries: usize,
+    pub loanword_entries: usize,
     pub trie_nodes: usize,
     pub trie_edges: usize,
     pub skeleton_keys: usize,
@@ -317,7 +319,10 @@ pub struct ObadhAutocorrectWasm {
 
 enum AutocorrectBackend {
     Compact(AutocorrectEngine),
-    Fst(FstLexicon<Vec<u8>>),
+    Fst {
+        lexicon: FstLexicon<Vec<u8>>,
+        loanwords: Option<LoanwordLexicon<Vec<u8>>>,
+    },
 }
 
 #[wasm_bindgen]
@@ -338,7 +343,19 @@ impl ObadhAutocorrectWasm {
     pub fn from_fst_lexicon(bytes: &[u8]) -> Result<ObadhAutocorrectWasm, JsValue> {
         let lexicon = FstLexicon::from_bytes(bytes.to_vec())
             .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        Ok(Self::from_fst(lexicon))
+        Ok(Self::from_fst(lexicon, None))
+    }
+
+    #[wasm_bindgen(js_name = fromFstLexiconWithLoanwords)]
+    pub fn from_fst_lexicon_with_loanwords(
+        bytes: &[u8],
+        loanword_bytes: &[u8],
+    ) -> Result<ObadhAutocorrectWasm, JsValue> {
+        let lexicon = FstLexicon::from_bytes(bytes.to_vec())
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let loanwords = LoanwordLexicon::from_bytes(loanword_bytes.to_vec())
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        Ok(Self::from_fst(lexicon, Some(loanwords)))
     }
 
     #[wasm_bindgen(js_name = fromTsv)]
@@ -378,9 +395,13 @@ impl ObadhAutocorrectWasm {
                     self.stats,
                 )
             }
-            AutocorrectBackend::Fst(lexicon) => {
-                fst_autocorrect_result(roman_input, &self.obadh, lexicon, now() - start)?
-            }
+            AutocorrectBackend::Fst { lexicon, loanwords } => fst_autocorrect_result(
+                roman_input,
+                &self.obadh,
+                lexicon,
+                loanwords.as_ref(),
+                now() - start,
+            )?,
         };
         to_value(&result).map_err(|error| JsValue::from_str(&error.to_string()))
     }
@@ -405,21 +426,29 @@ impl ObadhAutocorrectWasm {
         }
     }
 
-    fn from_fst(lexicon: FstLexicon<Vec<u8>>) -> Self {
-        let stats = AutocorrectLexiconStats::from_fst(lexicon.len());
+    fn from_fst(lexicon: FstLexicon<Vec<u8>>, loanwords: Option<LoanwordLexicon<Vec<u8>>>) -> Self {
+        let stats = AutocorrectLexiconStats::from_fst(
+            lexicon.len(),
+            loanwords.as_ref().map_or(0, |l| l.len()),
+        );
         Self {
             obadh: ObadhEngine::new(),
-            backend: AutocorrectBackend::Fst(lexicon),
+            backend: AutocorrectBackend::Fst { lexicon, loanwords },
             stats,
         }
     }
 }
 
 impl AutocorrectLexiconStats {
-    fn from_fst(entries: usize) -> Self {
+    fn from_fst(entries: usize, loanword_entries: usize) -> Self {
         Self {
-            artifact_kind: "fst",
+            artifact_kind: if loanword_entries == 0 {
+                "fst"
+            } else {
+                "fst+loan"
+            },
             entries,
+            loanword_entries,
             trie_nodes: 0,
             trie_edges: 0,
             skeleton_keys: 0,
@@ -434,6 +463,7 @@ impl From<LexiconStats> for AutocorrectLexiconStats {
         Self {
             artifact_kind: "compact",
             entries: stats.entries,
+            loanword_entries: 0,
             trie_nodes: stats.trie_nodes,
             trie_edges: stats.trie_edges,
             skeleton_keys: stats.skeleton_keys,
@@ -487,6 +517,7 @@ fn fst_autocorrect_result(
     roman_input: &str,
     obadh: &ObadhEngine,
     lexicon: &FstLexicon<Vec<u8>>,
+    loanwords: Option<&LoanwordLexicon<Vec<u8>>>,
     elapsed_ms: f64,
 ) -> Result<AutocorrectLabResult, JsValue> {
     let obadh_output = obadh.transliterate(roman_input);
@@ -500,10 +531,29 @@ fn fst_autocorrect_result(
             repair_cost: repair.repair_cost,
         })
         .collect::<Vec<_>>();
+    let loanword_suggestions = loanwords
+        .map(|loanwords| {
+            loanwords.suggestions(roman_input, LoanwordSearchOptions::for_input(roman_input))
+        })
+        .transpose()
+        .map_err(|error| JsValue::from_str(&error.to_string()))?
+        .unwrap_or_default();
+    let fst_loanword_matches = loanword_suggestions
+        .iter()
+        .map(|entry| FstLoanwordMatch {
+            roman_input,
+            roman_repair: entry.english.as_str(),
+            bangla_output: entry.bangla.as_str(),
+            frequency: entry.frequency,
+            repair_kind: entry.kind.as_str(),
+            repair_cost: entry.edit_cost,
+        })
+        .collect::<Vec<_>>();
     let decision = lexicon
-        .suggest_with_repaired_baselines(
+        .suggest_with_repaired_baselines_and_loanwords(
             &obadh_output,
             &repaired_baselines,
+            &fst_loanword_matches,
             fst_autocorrect_lab_options(),
         )
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
@@ -519,7 +569,10 @@ fn fst_autocorrect_result(
             .take(AUTOCORRECT_RESPONSE_CANDIDATES)
             .map(fst_autocorrect_candidate_info)
             .collect(),
-        lexicon: AutocorrectLexiconStats::from_fst(lexicon.len()),
+        lexicon: AutocorrectLexiconStats::from_fst(
+            lexicon.len(),
+            loanwords.map_or(0, |loanwords| loanwords.len()),
+        ),
     })
 }
 

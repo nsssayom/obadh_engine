@@ -217,9 +217,18 @@ fn test_decimal_point_is_not_dari_between_numbers() {
 }
 
 #[test]
+fn test_ascii_ellipsis_is_preserved_while_single_period_becomes_dari() {
+    let engine = ObadhEngine::new();
+
+    assert_eq!(engine.transliterate("ami."), "আমি।");
+    assert_eq!(engine.transliterate("ami..."), "আমি...");
+    assert_eq!(engine.transliterate("ami... 12.34..."), "আমি... ১২.৩৪...");
+}
+
+#[test]
 fn test_contextual_token_transliteration_matches_tokenized_render() {
     let engine = ObadhEngine::new();
-    let tokens = engine.tokenize("12.34 a1.b2.");
+    let tokens = engine.tokenize("12.34 a1.b2. ami...");
 
     let rendered_tokens = (0..tokens.len())
         .map(|index| {
@@ -231,7 +240,19 @@ fn test_contextual_token_transliteration_matches_tokenized_render() {
 
     assert_eq!(
         rendered_tokens,
-        vec!["১২", ".", "৩৪", " ", "আ১", "।", "ব২", "।"]
+        vec![
+            "১২",
+            ".",
+            "৩৪",
+            " ",
+            "আ১",
+            "।",
+            "ব২",
+            "।",
+            " ",
+            "আমি",
+            "..."
+        ]
     );
     assert_eq!(
         rendered_tokens.concat(),

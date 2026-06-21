@@ -107,6 +107,27 @@ pub(crate) fn differs_only_by_nasal_or_breath_mark(left: &str, right: &str) -> b
         && (has_nasal_or_breath_mark(left) || has_nasal_or_breath_mark(right))
 }
 
+pub(crate) fn differs_only_by_vowel_length(left: &str, right: &str) -> bool {
+    if left == right {
+        return false;
+    }
+
+    let mut changed = false;
+    let mut left_chars = left.chars();
+    let mut right_chars = right.chars();
+
+    loop {
+        match (left_chars.next(), right_chars.next()) {
+            (Some(left), Some(right)) if left == right => {}
+            (Some(left), Some(right)) if vowel_length_fold(left) == vowel_length_fold(right) => {
+                changed = true;
+            }
+            (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => return changed,
+        }
+    }
+}
+
 pub(crate) fn for_each_chandrabindu_variant(text: &str, mut visit: impl FnMut(&str)) {
     if text.is_empty() || text.chars().any(is_nasal_or_breath_mark) {
         return;
@@ -159,6 +180,16 @@ fn has_nasal_or_breath_mark(text: &str) -> bool {
 
 fn is_nasal_or_breath_mark(ch: char) -> bool {
     matches!(ch, '\u{0981}'..='\u{0983}')
+}
+
+fn vowel_length_fold(ch: char) -> char {
+    match ch {
+        'ঈ' => 'ই',
+        'ঊ' => 'উ',
+        'ী' => 'ি',
+        'ূ' => 'ু',
+        _ => ch,
+    }
 }
 
 fn skeleton_char(ch: char) -> Option<char> {
@@ -219,8 +250,8 @@ fn fold_aspiration(ch: char) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::{
-        bangla_units, differs_only_by_nasal_or_breath_mark, for_each_chandrabindu_variant,
-        phonetic_skeleton,
+        bangla_units, differs_only_by_nasal_or_breath_mark, differs_only_by_vowel_length,
+        for_each_chandrabindu_variant, phonetic_skeleton,
     };
 
     #[test]
@@ -246,6 +277,16 @@ mod tests {
         assert!(!differs_only_by_nasal_or_breath_mark("চাদ", "চাদ"));
         assert!(!differs_only_by_nasal_or_breath_mark("চাদ", "চাদর"));
         assert!(!differs_only_by_nasal_or_breath_mark("চাল", "চাঁদ"));
+    }
+
+    #[test]
+    fn vowel_length_variants_require_same_surface_except_i_u_length() {
+        assert!(differs_only_by_vowel_length("সুশিল", "সুশীল"));
+        assert!(differs_only_by_vowel_length("দুর", "দূর"));
+        assert!(differs_only_by_vowel_length("ইদ", "ঈদ"));
+        assert!(!differs_only_by_vowel_length("সুশিল", "সুনীল"));
+        assert!(!differs_only_by_vowel_length("সুশিল", "সুশিল"));
+        assert!(!differs_only_by_vowel_length("নদি", "নদীতে"));
     }
 
     #[test]
