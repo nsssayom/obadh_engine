@@ -34,6 +34,8 @@ pub struct RomanRepairedOutput {
 pub enum RomanRepairKind {
     Original,
     InsertedSeparatorO,
+    SplitAspiratedConsonant,
+    LowercaseRToFlap,
     PalatalNasalJaFromNg,
     PalatalNasalJaFromNz,
     VelarNasalFromNg,
@@ -44,6 +46,8 @@ impl RomanRepairKind {
         match self {
             Self::Original => "original",
             Self::InsertedSeparatorO => "inserted_separator_o",
+            Self::SplitAspiratedConsonant => "split_aspirated_consonant",
+            Self::LowercaseRToFlap => "lowercase_r_to_flap",
             Self::PalatalNasalJaFromNg => "palatal_nasal_ja_from_ng",
             Self::PalatalNasalJaFromNz => "palatal_nasal_ja_from_nz",
             Self::VelarNasalFromNg => "velar_nasal_from_ng",
@@ -73,6 +77,26 @@ pub fn roman_repair_beam(input: &str, options: RomanRepairOptions) -> Vec<RomanR
             repaired.text.clone(),
             repaired.cost,
             RomanRepairKind::InsertedSeparatorO,
+        );
+    }
+
+    for repaired in aspirated_separator_o_repairs(input) {
+        push_repair(
+            &mut repairs,
+            options.max_repairs,
+            repaired.text,
+            repaired.cost,
+            RomanRepairKind::SplitAspiratedConsonant,
+        );
+    }
+
+    for repaired in lowercase_r_to_flap_repairs(input) {
+        push_repair(
+            &mut repairs,
+            options.max_repairs,
+            repaired.text,
+            repaired.cost,
+            RomanRepairKind::LowercaseRToFlap,
         );
     }
 
@@ -162,6 +186,58 @@ fn separator_o_repairs(input: &str, tokenizer: &Tokenizer) -> Vec<SeparatorRepai
             cost: 1,
         })
         .collect()
+}
+
+fn aspirated_separator_o_repairs(input: &str) -> Vec<SeparatorRepair> {
+    let bytes = input.as_bytes();
+    if bytes.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut repairs = Vec::new();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if is_lowercase_aspirated_digraph(bytes[index], bytes[index + 1]) {
+            repairs.push(SeparatorRepair {
+                text: insert_separator_o(input, index + 1),
+                cost: 1,
+            });
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    repairs
+}
+
+fn is_lowercase_aspirated_digraph(left: u8, right: u8) -> bool {
+    right == b'h' && matches!(left, b'k' | b'g' | b'c' | b'j' | b't' | b'd' | b'p' | b'b')
+}
+
+fn lowercase_r_to_flap_repairs(input: &str) -> Vec<SeparatorRepair> {
+    let bytes = input.as_bytes();
+    let mut repairs = Vec::new();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'r' || is_reph_rr_context(bytes, index) {
+            continue;
+        }
+
+        let mut repaired = String::with_capacity(input.len());
+        repaired.push_str(&input[..index]);
+        repaired.push('R');
+        repaired.push_str(&input[index + 1..]);
+        repairs.push(SeparatorRepair {
+            text: repaired,
+            cost: 1,
+        });
+    }
+
+    repairs
+}
+
+fn is_reph_rr_context(bytes: &[u8], index: usize) -> bool {
+    bytes.get(index.wrapping_sub(1)) == Some(&b'r') || bytes.get(index + 1) == Some(&b'r')
 }
 
 fn insert_separator_o(input: &str, byte_index: usize) -> String {
@@ -414,6 +490,46 @@ mod tests {
                 && repair.cost == 2
                 && repair.kind == RomanRepairKind::InsertedSeparatorO
         }));
+    }
+
+    #[test]
+    fn splits_lowercase_aspirated_digraph_when_h_was_intended_as_consonant() {
+        let repairs = roman_repair_beam("bhu", RomanRepairOptions::default());
+
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "bohu"
+                && repair.cost == 1
+                && repair.kind == RomanRepairKind::SplitAspiratedConsonant
+        }));
+    }
+
+    #[test]
+    fn does_not_split_deliberate_uppercase_aspirated_signals() {
+        let repairs = roman_repair_beam("bHu", RomanRepairOptions::default());
+
+        assert!(!repairs
+            .iter()
+            .any(|repair| repair.text == "boHu" || repair.text == "bohu"));
+    }
+
+    #[test]
+    fn repairs_lowercase_r_to_explicit_flap_signal() {
+        let repairs = roman_repair_beam("dariye", RomanRepairOptions::default());
+
+        assert!(repairs.iter().any(|repair| {
+            repair.text == "daRiye"
+                && repair.cost == 1
+                && repair.kind == RomanRepairKind::LowercaseRToFlap
+        }));
+    }
+
+    #[test]
+    fn does_not_repair_reph_rr_signal_to_flap() {
+        let repairs = roman_repair_beam("rram", RomanRepairOptions::default());
+
+        assert!(!repairs
+            .iter()
+            .any(|repair| repair.text == "Rram" || repair.text == "rRam"));
     }
 
     #[test]

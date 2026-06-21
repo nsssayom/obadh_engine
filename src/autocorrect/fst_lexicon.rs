@@ -22,7 +22,7 @@ const SURFACE_EDIT_COST_SCALE: i64 = 1536;
 // claims that the deterministic baseline is always the intended word.
 const EXACT_BASELINE_CHANNEL_PRIOR: i64 = 16_384;
 const EDIT_DISTANCE_CHANNEL_PENALTY: i64 = 2048;
-const DIACRITIC_EDIT_CHANNEL_PRIOR: i64 = 1024;
+const DIACRITIC_EDIT_CHANNEL_PRIOR: i64 = 12_288;
 const DIACRITIC_EDIT_COST_SCALE: i64 = 256;
 const ORTHOGRAPHIC_VOWEL_LENGTH_CHANNEL_PRIOR: i64 = 12_288;
 const ORTHOGRAPHIC_VOWEL_LENGTH_COST_SCALE: i64 = 64;
@@ -31,6 +31,8 @@ const STEM_SUFFIX_COMPLETION_PRIOR: i64 = 768;
 const STEM_SUFFIX_COST_SCALE: i64 = 256;
 const STEM_SUFFIX_SURFACE_COST_SCALE: i64 = 64;
 const ROMAN_SEPARATOR_REPAIR_EXACT_BONUS: i64 = 4_096;
+const ROMAN_ASPIRATED_SPLIT_REPAIR_EXACT_BONUS: i64 = 2_048;
+const ROMAN_FLAP_REPAIR_EXACT_BONUS: i64 = 2_048;
 const ROMAN_PALATAL_NASAL_REPAIR_EXACT_BONUS: i64 = 768;
 const ROMAN_VELAR_NASAL_REPAIR_EXACT_BONUS: i64 = 2_048;
 const ROMAN_STRONG_VELAR_NASAL_REPAIR_EXACT_BONUS: i64 = 12_288;
@@ -180,6 +182,20 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
             if let Some(frequency) = self.exact_frequency(repair.bangla_output) {
                 insert_repaired_baseline_candidate(&mut seeds, repair, frequency, baseline);
             }
+
+            for_each_chandrabindu_variant(repair.bangla_output, |variant| {
+                if let Some(frequency) = self.exact_frequency(variant) {
+                    insert_repaired_baseline_text_candidate(
+                        &mut seeds,
+                        repair.roman_input,
+                        repair.repair_kind,
+                        repair.repair_cost,
+                        variant,
+                        frequency,
+                        baseline,
+                    );
+                }
+            });
         }
 
         for loanword in loanword_matches {
@@ -398,18 +414,37 @@ fn insert_repaired_baseline_candidate(
     frequency: u64,
     baseline: &str,
 ) {
-    let edit_cost = weighted_edit_distance(baseline, repair.bangla_output).0;
-    let score =
-        roman_repair_candidate_score(edit_cost, repair.repair_cost, repair.repair_kind, frequency);
+    insert_repaired_baseline_text_candidate(
+        seeds,
+        repair.roman_input,
+        repair.repair_kind,
+        repair.repair_cost,
+        repair.bangla_output,
+        frequency,
+        baseline,
+    );
+}
+
+fn insert_repaired_baseline_text_candidate(
+    seeds: &mut BTreeMap<String, FstCandidate>,
+    roman_input: &str,
+    repair_kind: &'static str,
+    repair_cost: u16,
+    bangla_output: &str,
+    frequency: u64,
+    baseline: &str,
+) {
+    let edit_cost = weighted_edit_distance(baseline, bangla_output).0;
+    let score = roman_repair_candidate_score(edit_cost, repair_cost, repair_kind, frequency);
     let candidate = FstCandidate {
-        text: repair.bangla_output.to_string(),
+        text: bangla_output.to_string(),
         source: FstCandidateSource::RomanRepairExact,
         edit_cost,
         frequency,
         score,
-        roman_repair: Some(repair.roman_input.to_string()),
-        roman_repair_kind: Some(repair.repair_kind),
-        roman_repair_cost: Some(repair.repair_cost),
+        roman_repair: Some(roman_input.to_string()),
+        roman_repair_kind: Some(repair_kind),
+        roman_repair_cost: Some(repair_cost),
     };
     insert_best_candidate(seeds, candidate);
 }
@@ -535,6 +570,8 @@ fn roman_repair_exact_bonus(repair_kind: &str, frequency: u64) -> i64 {
             ROMAN_STRONG_VELAR_NASAL_REPAIR_EXACT_BONUS
         }
         "velar_nasal_from_ng" => ROMAN_VELAR_NASAL_REPAIR_EXACT_BONUS,
+        "split_aspirated_consonant" => ROMAN_ASPIRATED_SPLIT_REPAIR_EXACT_BONUS,
+        "lowercase_r_to_flap" => ROMAN_FLAP_REPAIR_EXACT_BONUS,
         _ => ROMAN_SEPARATOR_REPAIR_EXACT_BONUS,
     }
 }
@@ -942,6 +979,30 @@ mod tests {
     }
 
     #[test]
+    fn high_frequency_diacritic_variant_can_beat_rare_exact_baseline() {
+        let lexicon = test_lexicon([("দাড়িয়ে", 203), ("দাঁড়িয়ে", 18_053)]);
+
+        let result = lexicon
+            .suggest(
+                "দাড়িয়ে",
+                FstSuggestOptions {
+                    max_distance: 1,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("diacritic candidate should be returned");
+        assert_eq!(first.text, "দাঁড়িয়ে");
+        assert_eq!(first.source, FstCandidateSource::DiacriticEdit);
+    }
+
+    #[test]
     fn exact_stem_can_surface_valid_suffix_completions() {
         let lexicon = test_lexicon([("নদী", 100), ("নদীটি", 30), ("নদীকে", 20), ("নদীকথা", 200)]);
 
@@ -1032,6 +1093,39 @@ mod tests {
         assert_eq!(first.roman_repair.as_deref(), Some("okalopokk"));
         assert_eq!(first.roman_repair_kind, Some("inserted_separator_o"));
         assert_eq!(first.roman_repair_cost, Some(1));
+    }
+
+    #[test]
+    fn repaired_roman_baseline_seeds_diacritic_variants() {
+        let lexicon = test_lexicon([("দাড়িয়ে", 203), ("দাঁড়িয়ে", 18_053), ("হারিয়ে", 27_441)]);
+        let repairs = [FstRepairedBaseline {
+            roman_input: "daRiye",
+            bangla_output: "দাড়িয়ে",
+            repair_kind: "lowercase_r_to_flap",
+            repair_cost: 1,
+        }];
+
+        let result = lexicon
+            .suggest_with_repaired_baselines(
+                "দারিয়ে",
+                &repairs,
+                FstSuggestOptions {
+                    max_distance: 1,
+                    max_candidates: 16,
+                    response_candidates: 16,
+                    ..FstSuggestOptions::default()
+                },
+            )
+            .expect("Bangla FST lookup should succeed");
+
+        let first = result
+            .candidates
+            .first()
+            .expect("repaired diacritic candidate should be returned");
+        assert_eq!(first.text, "দাঁড়িয়ে");
+        assert_eq!(first.source, FstCandidateSource::RomanRepairExact);
+        assert_eq!(first.roman_repair.as_deref(), Some("daRiye"));
+        assert_eq!(first.roman_repair_kind, Some("lowercase_r_to_flap"));
     }
 
     #[test]

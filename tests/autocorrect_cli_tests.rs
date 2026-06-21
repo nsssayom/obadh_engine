@@ -250,6 +250,112 @@ fn autocorrect_cli_prefers_one_step_roman_repair_over_expensive_surface_edit() {
 }
 
 #[test]
+fn autocorrect_cli_surfaces_split_aspirated_roman_repair() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-aspirated-split-roman-repair");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "ভু\t125\nবহু\t24144\nভূ\t3348\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "bhu",
+        "--max-distance",
+        "2",
+        "--max-candidates",
+        "64",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "ভু");
+    assert!(json["roman_repairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|repair| repair["input"] == "bohu" && repair["output"] == "বহু"));
+
+    let candidates = json["candidates"].as_array().unwrap();
+    let exact = candidates
+        .iter()
+        .find(|candidate| candidate["text"] == "ভু")
+        .expect("deterministic exact candidate should remain visible");
+    assert_eq!(exact["source"], "fst_exact");
+
+    let target = candidates
+        .iter()
+        .find(|candidate| candidate["text"] == "বহু")
+        .expect("বহু should be surfaced through aspirated split repair");
+    assert_eq!(target["source"], "fst_roman_repair_exact");
+    assert_eq!(target["roman_repair"], "bohu");
+    assert_eq!(target["roman_repair_kind"], "split_aspirated_consonant");
+    assert_eq!(target["roman_repair_cost"], 1);
+}
+
+#[test]
+fn autocorrect_cli_promotes_lowercase_r_to_flap_repair_with_mark_variant() {
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-flap-mark-roman-repair");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+
+    fs::write(&lexicon_tsv, "হারিয়ে\t27441\nদাড়িয়ে\t203\nদাঁড়িয়ে\t18053\n")
+        .expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "dariye",
+        "--max-distance",
+        "1",
+        "--max-candidates",
+        "64",
+        "--response-candidates",
+        "8",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "দারিয়ে");
+    assert!(json["roman_repairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|repair| repair["input"] == "daRiye" && repair["output"] == "দাড়িয়ে"));
+
+    let first = &json["candidates"].as_array().unwrap()[0];
+    assert_eq!(first["text"], "দাঁড়িয়ে");
+    assert_eq!(first["source"], "fst_roman_repair_exact");
+    assert_eq!(first["roman_repair"], "daRiye");
+    assert_eq!(first["roman_repair_kind"], "lowercase_r_to_flap");
+    assert_eq!(first["roman_repair_cost"], 1);
+}
+
+#[test]
 fn autocorrect_cli_surfaces_stem_suffix_completions() {
     let workspace = TempWorkspace::new("obadh-autocorrect-cli-fst-suffix");
     let lexicon_tsv = workspace.path("lexicon.tsv");

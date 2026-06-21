@@ -58,22 +58,36 @@ fn longest_conjunct_prefix_in_range(
 ) -> Option<usize> {
     let mut node = conjunct_defs.conjunct_match_root();
     let mut best_length = None;
+    let mut parts = BorrowedParts::new();
+    let mut trie_active = true;
 
-    'candidate: for (current, unit) in units.iter().enumerate().take(end).skip(start) {
+    for (current, unit) in units.iter().enumerate().take(end).skip(start) {
         if unit.text.is_empty() {
             break;
         }
 
         for part in unit.text.split(",,") {
-            let Some(next_node) = conjunct_defs.advance_conjunct_match(node, part) else {
-                break 'candidate;
-            };
-            node = next_node;
+            parts.push(part);
+
+            if trie_active {
+                if let Some(next_node) = conjunct_defs.advance_conjunct_match(node, part) {
+                    node = next_node;
+                } else {
+                    trie_active = false;
+                }
+            }
         }
 
         let length = current - start + 1;
-        if length >= 2 && conjunct_defs.conjunct_match_value(node).is_some() {
+        if length >= 2
+            && ((trie_active && conjunct_defs.conjunct_match_value(node).is_some())
+                || conjunct_defs.can_form_derived_conjunct_from_parts(parts.as_slice()))
+        {
             best_length = Some(length);
+        }
+
+        if !trie_active && !conjunct_defs.can_match_derived_conjunct_prefix(parts.as_slice()) {
+            break;
         }
     }
 
