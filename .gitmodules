@@ -1,0 +1,6 @@
+[submodule "data/autocorrect"]
+	path = data/autocorrect
+	url = https://github.com/nsssayom/obadh_autocorrect_dataset.git
+[submodule "data/autosuggest"]
+	path = data/autosuggest
+	url = https://github.com/nsssayom/obadh_autosuggest_dataset.git

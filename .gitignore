@@ -24,12 +24,17 @@ www/node_modules/
 __pycache__/
 *.py[cod]
 
-# Local autocorrect scratch space. Curated lexicon TSVs and compact runtime
-# lexicon binaries under data/autocorrect/lexicons and data/autocorrect/models
-# are intentional repo artifacts.
+# Data-heavy autocorrect/autosuggest artifacts live in direct data-only
+# submodules at data/autocorrect and data/autosuggest. Scratch outputs stay
+# ignored if those paths are used without the submodules.
 data/autocorrect/tmp/**
 data/autocorrect/candidates/**
 data/autocorrect/training/**
+data/autosuggest/tmp/**
+data/autosuggest/training/**
+data/autosuggest/models/neural/dataset/**
+data/autosuggest/models/neural/checkpoints*/**
+data/autosuggest/models/neural/*.pt
 
 # Local book/corpus drops for manual extraction smoke tests.
 epubs/

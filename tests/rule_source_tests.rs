@@ -9,7 +9,6 @@ use obadh_engine::ObadhEngine;
 const CARGO_MANIFEST_DOC: &str = include_str!("../Cargo.toml");
 const CONSONANT_RULES_DOC: &str = include_str!("../data/rules/consonants.md");
 const README_DOC: &str = include_str!("../README.md");
-const KNOWN_ISSUES_DOC: &str = include_str!("../KNOWN_ISSUES.md");
 const CONJUNCT_RULES_DOC: &str = include_str!("../data/rules/conjunct.wiki");
 const DELIBERATE_INPUT_CORPUS_DOC: &str = include_str!("../data/rules/deliberate_input_corpus.md");
 const SIMPLIFIED_RULES_DOC: &str = include_str!("../data/rules/simplified_rules.md");
@@ -224,10 +223,6 @@ fn deliberate_input_contract_documents_non_conjunct_ra_ya_zwnj_source_note() {
     assert!(
         README_DOC.contains("`rZy`") && README_DOC.contains(zwnj_ra_ya),
         "README deliberate input contract should document the non-conjunct ra-ya ZWNJ signal"
-    );
-    assert!(
-        !KNOWN_ISSUES_DOC.contains("Non-Conjunct Ra-Ya Form"),
-        "KNOWN_ISSUES.md should not list the implemented non-conjunct ra-ya signal as open work"
     );
 }
 

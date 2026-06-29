@@ -56,6 +56,13 @@
         autocorrectError: null,
         autocorrectStats: null,
         autocorrectResult: null,
+        autosuggestLoaded: false,
+        autosuggestError: null,
+        autosuggestStats: null,
+        autosuggestResult: null,
+        autosuggestRequestId: 0,
+        runtimeResources: null,
+        runtimeResourceTimer: null,
         draftText: '',
         labLexiconText: '',
         showLexiconEditor: false,
@@ -79,6 +86,11 @@
           if (window.obadhaWasm) {
             this.wasmLoaded = true;
             this.version = window.obadhaWasm.get_version();
+            this.autocorrectLoaded = Boolean(window.obadhAutocorrect);
+            this.autocorrectStats = window.autocorrectStats || null;
+            this.autosuggestLoaded = Boolean(window.obadhAutosuggest);
+            this.autosuggestStats = window.autosuggestStats || null;
+            this.startResourceSampler();
           } else {
             // Wait for WASM to load
             window.addEventListener('wasm-loaded', (event) => {
@@ -88,16 +100,24 @@
                 this.autocorrectLoaded = Boolean(window.obadhAutocorrect);
                 this.autocorrectError = event.detail?.autocorrectError || null;
                 this.autocorrectStats = window.autocorrectStats || null;
+                this.autosuggestLoaded = Boolean(window.obadhAutosuggest);
+                this.autosuggestError = event.detail?.autosuggestError || null;
+                this.autosuggestStats = window.autosuggestStats || null;
                 this.version = window.obadhaWasm.get_version();
+                this.startResourceSampler();
                 
                 // Transliterate any text that might be in the input
                 if (this.inputText !== '') {
                   this.debouncedTransliterate();
+                } else {
+                  this.refreshAutosuggest();
                 }
               } else {
                 this.loadingError = event.detail?.error || 'Unknown error loading Obadh Engine';
                 this.autocorrectLoaded = false;
                 this.autocorrectError = null;
+                this.autosuggestLoaded = false;
+                this.autosuggestError = null;
               }
             });
           }
@@ -139,6 +159,7 @@
             token_analysis: null
           };
           this.autocorrectResult = null;
+          this.autosuggestResult = null;
           this.draftText = '';
         },
         
@@ -313,6 +334,50 @@
           return Number(value || 0).toLocaleString('en-US');
         },
 
+        formatBytes(bytes) {
+          if (bytes === null || bytes === undefined || Number.isNaN(Number(bytes))) {
+            return '—';
+          }
+
+          const value = Number(bytes);
+          const units = ['B', 'KB', 'MB', 'GB'];
+          let unitIndex = 0;
+          let scaled = value;
+          while (scaled >= 1024 && unitIndex < units.length - 1) {
+            scaled /= 1024;
+            unitIndex += 1;
+          }
+          const decimals = scaled >= 100 || unitIndex === 0 ? 0 : scaled >= 10 ? 1 : 2;
+          return `${scaled.toFixed(decimals)} ${units[unitIndex]}`;
+        },
+
+        startResourceSampler() {
+          if (this.runtimeResourceTimer) {
+            return;
+          }
+          this.updateRuntimeResources();
+          this.runtimeResourceTimer = window.setInterval(() => this.updateRuntimeResources(), 1000);
+        },
+
+        updateRuntimeResources() {
+          if (typeof window.collectObadhRuntimeResources !== 'function') {
+            return;
+          }
+          this.runtimeResources = window.collectObadhRuntimeResources();
+          this.autosuggestStats = window.autosuggestStats || this.autosuggestStats;
+        },
+
+        resourceSummaryRows() {
+          const resources = this.runtimeResources || {};
+          const neuralPayloadBytes = (resources.autosuggestModelBytes || 0) + (resources.autosuggestVocabBytes || 0);
+          return [
+            ['WASM', this.formatBytes(resources.wasmLinearMemoryBytes), 'exact'],
+            ['Heap', resources.browserHeapAvailable ? this.formatBytes(resources.browserHeapUsedBytes) : 'n/a', resources.browserHeapAvailable ? 'browser' : 'unavailable'],
+            ['Neural', neuralPayloadBytes ? this.formatBytes(neuralPayloadBytes) : '—', 'assets'],
+            ['AI', this.formatDuration(resources.autosuggestLastLatencyMs), 'last'],
+          ];
+        },
+
         candidateRows() {
           return (this.autocorrectResult?.candidates || []).slice(0, 12);
         },
@@ -334,6 +399,28 @@
           }
 
           return rows;
+        },
+
+        autosuggestFeedRows() {
+          if (this.draftText || this.activeProbeRange()) {
+            return [];
+          }
+
+          return (this.autosuggestResult?.candidates || []).slice(0, 5).map((candidate) => ({
+            ...candidate,
+            kind: 'autosuggest',
+          }));
+        },
+
+        activeFeedRows() {
+          if (this.draftText) {
+            return this.correctionFeedRows().map((candidate) => ({
+              ...candidate,
+              kind: 'autocorrect',
+            }));
+          }
+
+          return this.autosuggestFeedRows();
         },
 
         activeProbeRange() {
@@ -373,6 +460,58 @@
 
         autocorrectProbeInput() {
           return this.activeProbeRange()?.text || '';
+        },
+
+        autosuggestContextText() {
+          const input = this.activeInputElement();
+          const caret = input && Number.isFinite(input.selectionStart)
+            ? input.selectionStart
+            : this.inputText.length;
+          return this.inputText.slice(0, caret);
+        },
+
+        shouldAutosuggestFromContext(text) {
+          if (!text || this.activeProbeRange()) {
+            return false;
+          }
+
+          const last = text[text.length - 1];
+          if (!last || !/[\s।!?]/.test(last)) {
+            return false;
+          }
+
+          return this.banglaContextTokens(text).length > 0;
+        },
+
+        banglaContextTokens(text) {
+          const tokens = [];
+          let current = '';
+          for (const ch of String(text || '').normalize('NFC')) {
+            if (this.isBanglaWordChar(ch)) {
+              current += ch;
+            } else if (current) {
+              tokens.push(current);
+              current = '';
+            }
+          }
+          if (current) {
+            tokens.push(current);
+          }
+          return tokens;
+        },
+
+        isBanglaWordChar(ch) {
+          if (!ch) {
+            return false;
+          }
+          const code = ch.codePointAt(0);
+          if (code < 0x0980 || code > 0x09FF) {
+            return false;
+          }
+          if (code >= 0x09E6 && code <= 0x09EF) {
+            return false;
+          }
+          return ch !== '।' && ch !== '॥' && ch !== '৳';
         },
 
         draftOutput() {
@@ -464,6 +603,7 @@
           this.$nextTick(() => {
             const caret = before.length + replacement.length + suffix.length + separator.length;
             this.restoreInputFocus(caret);
+            this.refreshAutosuggest();
           });
         },
 
@@ -652,6 +792,42 @@
           this.commitActiveDraft(candidate, false);
         },
 
+        commitAutosuggestCandidate(candidate) {
+          if (!candidate?.text) {
+            return;
+          }
+
+          const input = this.activeInputElement();
+          const start = input && Number.isFinite(input.selectionStart)
+            ? input.selectionStart
+            : this.inputText.length;
+          const end = input && Number.isFinite(input.selectionEnd)
+            ? input.selectionEnd
+            : start;
+          const before = this.inputText.slice(0, start);
+          const after = this.inputText.slice(end);
+          const leading = before && !/\s$/.test(before) ? ' ' : '';
+          const trailing = after && !/^\s/.test(after) ? ' ' : ' ';
+          const replacement = `${leading}${candidate.text}${trailing}`;
+
+          this.inputText = `${before}${replacement}${after}`;
+          this.doTransliterate();
+
+          this.$nextTick(() => {
+            this.restoreInputFocus(before.length + replacement.length);
+            this.refreshAutosuggest();
+          });
+        },
+
+        commitFeedCandidate(candidate) {
+          if (candidate?.kind === 'autosuggest' || candidate?.source === 'autosuggest_neural') {
+            this.commitAutosuggestCandidate(candidate);
+            return;
+          }
+
+          this.commitCorrectionCandidate(candidate);
+        },
+
         activeInputElement() {
           return document.getElementById('composer-text') || this.$refs.composerText;
         },
@@ -700,6 +876,9 @@
           if (source === 'fst_roman_repair_exact') {
             return 'roman';
           }
+          if (source === 'autosuggest_neural') {
+            return 'next';
+          }
           return source || '';
         },
 
@@ -707,6 +886,7 @@
           if (!this.autocorrectLoaded || !window.obadhAutocorrect) {
             this.autocorrectResult = null;
             this.refreshDraftText();
+            this.refreshAutosuggest();
             return;
           }
 
@@ -714,9 +894,11 @@
           if (probe === '') {
             this.autocorrectResult = null;
             this.refreshDraftText();
+            this.refreshAutosuggest();
             return;
           }
 
+          this.autosuggestResult = null;
           try {
             this.autocorrectResult = window.obadhAutocorrect.suggest(probe);
             this.autocorrectStats = this.autocorrectResult.lexicon;
@@ -726,6 +908,39 @@
             this.autocorrectResult = null;
             this.autocorrectError = err.message || String(err);
             this.refreshDraftText();
+          }
+        },
+
+        async refreshAutosuggest() {
+          const requestId = ++this.autosuggestRequestId;
+
+          if (!this.autosuggestLoaded || !window.obadhAutosuggest || this.activeProbeRange()) {
+            this.autosuggestResult = null;
+            return;
+          }
+
+          const contextText = this.autosuggestContextText();
+          if (!this.shouldAutosuggestFromContext(contextText)) {
+            this.autosuggestResult = null;
+            return;
+          }
+
+          const contextTokens = this.banglaContextTokens(contextText);
+          try {
+            const result = await window.obadhAutosuggest.suggest(contextTokens, 5);
+            if (requestId !== this.autosuggestRequestId) {
+              return;
+            }
+            this.autosuggestResult = result;
+            this.autosuggestStats = result.model || window.autosuggestStats || null;
+            this.autosuggestError = null;
+          } catch (err) {
+            if (requestId !== this.autosuggestRequestId) {
+              return;
+            }
+            console.error('Autosuggest error:', err);
+            this.autosuggestResult = null;
+            this.autosuggestError = err.message || String(err);
           }
         },
 
@@ -1010,11 +1225,11 @@
                     </span>
                   </div>
 
-                  <template x-for="candidate in correctionFeedRows()" :key="'feed-' + candidate.text + candidate.source">
+                  <template x-for="candidate in activeFeedRows()" :key="'feed-' + candidate.text + candidate.source">
                     <button
                       data-ribbon-candidate
                       type="button"
-                      @click="commitCorrectionCandidate(candidate)"
+                      @click="commitFeedCandidate(candidate)"
                       class="group flex min-w-[7rem] flex-1 items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-2 text-center transition-colors hover:border-primary-300 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-primary-700 dark:hover:bg-primary-950 dark:focus:ring-offset-gray-950">
                       <span class="min-w-0">
                         <span class="font-bengali block truncate text-lg font-semibold leading-6 text-slate-950 dark:text-gray-100" x-text="candidate.text"></span>
@@ -1141,19 +1356,36 @@
                   JSON
                 </button>
               </div>
+
+              <div class="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <template x-for="row in resourceSummaryRows()" :key="row[0]">
+                  <div class="rounded-md bg-slate-50 px-2 py-2 dark:bg-gray-950">
+                    <div class="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-gray-600" x-text="row[0]"></div>
+                    <div class="truncate font-mono font-semibold text-slate-950 dark:text-gray-100" x-text="row[1]"></div>
+                    <div class="truncate font-mono text-[9px] uppercase tracking-wide text-slate-400 dark:text-gray-700" x-text="row[2]"></div>
+                  </div>
+                </template>
+              </div>
             </div>
 
             <div class="space-y-5 p-4">
               <section x-show="inspectorView === 'candidates'">
                 <div class="mb-3 flex items-center justify-between">
                   <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-gray-400">Autocorrect Lab</h3>
-                  <span
-                    class="rounded-full px-2.5 py-1 text-xs font-semibold"
-                    :class="autocorrectLoaded ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'"
-                    x-text="autocorrectLoaded ? (autocorrectStats?.artifact_kind || 'lexicon') : 'offline'"></span>
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="rounded-full px-2.5 py-1 text-xs font-semibold"
+                      :class="autocorrectLoaded ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'"
+                      x-text="autocorrectLoaded ? (autocorrectStats?.artifact_kind || 'lexicon') : 'offline'"></span>
+                    <span
+                      class="rounded-full px-2.5 py-1 text-xs font-semibold"
+                      :class="autosuggestLoaded ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'"
+                      x-text="autosuggestLoaded ? 'neural' : 'no neural'"></span>
+                  </div>
                 </div>
 
                 <div x-show="autocorrectError" class="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" x-text="autocorrectError"></div>
+                <div x-show="autosuggestError" class="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" x-text="autosuggestError"></div>
 
                 <div class="grid grid-cols-2 gap-2 text-xs">
                   <div class="rounded-md bg-slate-50 p-2 dark:bg-gray-950">
@@ -1206,6 +1438,24 @@
                 </div>
 
                 <div x-show="autocorrectLoaded && !autocorrectResult" class="mt-3 rounded-md bg-slate-50 p-3 text-sm text-slate-500 dark:bg-gray-950 dark:text-gray-500">No active probe</div>
+
+                <div x-show="autosuggestResult" class="mt-3 rounded-md border border-slate-200 p-3 dark:border-gray-800">
+                  <div class="flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-gray-500">
+                    <span>Next word</span>
+                    <span x-text="formatDuration(autosuggestResult?.elapsed_ms)"></span>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <template x-for="candidate in autosuggestFeedRows()" :key="'next-' + candidate.text + candidate.token_id">
+                      <button
+                        type="button"
+                        @click="commitAutosuggestCandidate(candidate)"
+                        class="flex w-full items-center justify-between gap-3 rounded-md border border-slate-200 px-3 py-2 text-left transition-colors hover:border-primary-300 hover:bg-primary-50 dark:border-gray-800 dark:hover:border-primary-700 dark:hover:bg-primary-950">
+                        <span class="font-bengali output-surface text-xl leading-7 text-slate-950 dark:text-gray-100" x-text="candidate.text"></span>
+                        <span class="font-mono text-xs text-slate-500 dark:text-gray-500" x-text="candidate.score"></span>
+                      </button>
+                    </template>
+                  </div>
+                </div>
 
                 <div class="mt-3 border-t border-slate-200 pt-3 dark:border-gray-800">
                   <button
@@ -1298,9 +1548,12 @@
     </footer>
   </div>
 
+  <script src="vendor/onnxruntime-web/ort.min.js"></script>
+
   <!-- WASM loader and main JavaScript -->
   <script type="module">
     const OBADH_ASSET_VERSION = String(Date.now());
+    const AUTOSUGGEST_CONTEXT_LENGTH = 16;
     const obadhModule = await import(`./js/obadh_engine.js?v=${OBADH_ASSET_VERSION}`);
     const {
       default: init,
@@ -1317,7 +1570,7 @@
       try {
         initializationAttempts++;
         
-        await init({
+        window.obadhWasmExports = await init({
           module_or_path: new URL(`./js/obadh_engine_bg.wasm?v=${OBADH_ASSET_VERSION}`, import.meta.url),
         });
         
@@ -1325,6 +1578,7 @@
         window.obadhaWasm = new ObadhaWasm();
         window.translitOptions = new TransliterationOptions();
         let autocorrectError = null;
+        let autosuggestError = null;
 
         try {
           await initAutocorrectLab();
@@ -1334,13 +1588,24 @@
           window.autocorrectStats = null;
           autocorrectError = err.message || 'Failed to initialize autocorrect lab';
         }
+
+        try {
+          await initAutosuggestLab();
+        } catch (err) {
+          console.error('Autosuggest initialization error:', err);
+          window.obadhAutosuggest = null;
+          window.autosuggestStats = null;
+          autosuggestError = err.message || 'Failed to initialize autosuggest lab';
+        }
         
         // Notify Alpine.js that initialization is complete
         window.dispatchEvent(new CustomEvent('wasm-loaded', { 
           detail: {
             success: true,
             autocorrectLoaded: Boolean(window.obadhAutocorrect),
-            autocorrectError
+            autocorrectError,
+            autosuggestLoaded: Boolean(window.obadhAutosuggest),
+            autosuggestError
           }
         }));
         
@@ -1361,22 +1626,205 @@
     }
 
     async function initAutocorrectLab() {
+      window.obadhRuntimeAssets = window.obadhRuntimeAssets || {};
       const response = await fetch(`./assets/autocorrect/bn.fst?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error(`Autocorrect FST fetch failed: ${response.status}`);
       }
 
       const bytes = new Uint8Array(await response.arrayBuffer());
+      window.obadhRuntimeAssets.autocorrectFstBytes = bytes.byteLength;
       const loanwordResponse = await fetch(`./assets/autocorrect/en_bn_loanwords.fst?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' });
       if (loanwordResponse.ok) {
         const loanwordBytes = new Uint8Array(await loanwordResponse.arrayBuffer());
+        window.obadhRuntimeAssets.loanwordFstBytes = loanwordBytes.byteLength;
         window.obadhAutocorrect = ObadhAutocorrectWasm.fromFstLexiconWithLoanwords(bytes, loanwordBytes);
       } else {
+        window.obadhRuntimeAssets.loanwordFstBytes = 0;
         window.obadhAutocorrect = ObadhAutocorrectWasm.fromFstLexicon(bytes);
       }
 
       window.autocorrectStats = window.obadhAutocorrect.stats();
     }
+
+    async function initAutosuggestLab() {
+      if (!window.ort) {
+        throw new Error('ONNX Runtime Web is unavailable');
+      }
+
+      window.obadhRuntimeAssets = window.obadhRuntimeAssets || {};
+      window.ort.env.wasm.numThreads = 1;
+      window.ort.env.wasm.wasmPaths = new URL('./vendor/onnxruntime-web/', window.location.href).href;
+
+      const [manifestResponse, vocabResponse, modelResponse] = await Promise.all([
+        fetch(`./assets/autosuggest/manifest.json?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
+        fetch(`./assets/autosuggest/vocab.tsv?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
+        fetch(`./assets/autosuggest/autosuggest.onnx?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
+      ]);
+
+      if (!manifestResponse.ok) {
+        throw new Error(`Autosuggest manifest fetch failed: ${manifestResponse.status}`);
+      }
+      if (!vocabResponse.ok) {
+        throw new Error(`Autosuggest vocab fetch failed: ${vocabResponse.status}`);
+      }
+      if (!modelResponse.ok) {
+        throw new Error(`Autosuggest ONNX fetch failed: ${modelResponse.status}`);
+      }
+
+      const manifest = await manifestResponse.json();
+      const vocabText = await vocabResponse.text();
+      const modelBuffer = await modelResponse.arrayBuffer();
+      const vocab = parseAutosuggestVocab(vocabText);
+      const started = performance.now();
+      const session = await window.ort.InferenceSession.create(modelBuffer, {
+        executionProviders: ['wasm'],
+        graphOptimizationLevel: 'all',
+      });
+      const loadElapsedMs = performance.now() - started;
+
+      window.obadhRuntimeAssets.autosuggestManifestBytes = Number(manifestResponse.headers.get('content-length')) || JSON.stringify(manifest).length;
+      window.obadhRuntimeAssets.autosuggestVocabBytes = new TextEncoder().encode(vocabText).byteLength;
+      window.obadhRuntimeAssets.autosuggestModelBytes = modelBuffer.byteLength;
+      window.obadhRuntimeAssets.onnxRuntimeAssetBytes = await fetchedAssetSize('./vendor/onnxruntime-web/ort.min.js')
+        + await fetchedAssetSize('./vendor/onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm');
+
+      const config = manifest.config || {};
+      const stats = {
+        artifact_kind: 'neural',
+        backend: 'onnxruntime-web/wasm',
+        context_length: Number(config.context_length) || AUTOSUGGEST_CONTEXT_LENGTH,
+        vocab_size: vocab.idToToken.length,
+        model_bytes: modelBuffer.byteLength,
+        vocab_bytes: window.obadhRuntimeAssets.autosuggestVocabBytes,
+        load_elapsed_ms: loadElapsedMs,
+        last_elapsed_ms: null,
+      };
+
+      window.obadhAutosuggest = {
+        stats,
+        suggest: async (contextTokens, limit = 5) => {
+          const elapsedStart = performance.now();
+          const encoded = encodeAutosuggestContext(contextTokens, vocab.tokenToId, stats.context_length);
+          const inputData = new BigInt64Array(encoded.length);
+          for (let index = 0; index < encoded.length; index += 1) {
+            inputData[index] = BigInt(encoded[index]);
+          }
+
+          const inputName = session.inputNames[0];
+          const outputName = session.outputNames[0];
+          const outputs = await session.run({
+            [inputName]: new window.ort.Tensor('int64', inputData, [1, stats.context_length]),
+          });
+          const logits = outputs[outputName].data;
+          const candidates = topAutosuggestCandidates(logits, vocab.idToToken, limit);
+          stats.last_elapsed_ms = performance.now() - elapsedStart;
+          return {
+            context: contextTokens.slice(-stats.context_length),
+            token_ids: encoded,
+            elapsed_ms: stats.last_elapsed_ms,
+            model: { ...stats },
+            candidates,
+          };
+        },
+      };
+
+      window.autosuggestStats = stats;
+    }
+
+    function parseAutosuggestVocab(tsv) {
+      const idToToken = [];
+      const tokenToId = new Map();
+      const lines = tsv.split(/\r?\n/);
+      for (let index = 1; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line) {
+          continue;
+        }
+        const [rawId, token] = line.split('\t');
+        const id = Number(rawId);
+        if (!Number.isInteger(id) || !token) {
+          continue;
+        }
+        idToToken[id] = token;
+        tokenToId.set(token, id);
+      }
+      return { idToToken, tokenToId };
+    }
+
+    function encodeAutosuggestContext(tokens, tokenToId, contextLength) {
+      const encoded = [1];
+      for (const token of tokens) {
+        encoded.push(tokenToId.get(token) || 2);
+      }
+      const clipped = encoded.slice(-contextLength);
+      while (clipped.length < contextLength) {
+        clipped.unshift(0);
+      }
+      return clipped;
+    }
+
+    function topAutosuggestCandidates(logits, idToToken, limit) {
+      const rows = [];
+      for (let id = 3; id < logits.length; id += 1) {
+        const token = idToToken[id];
+        if (!token) {
+          continue;
+        }
+        const score = Number(logits[id]);
+        if (rows.length < limit) {
+          rows.push({ id, token, score });
+          rows.sort((a, b) => b.score - a.score);
+          continue;
+        }
+        if (score > rows[rows.length - 1].score) {
+          rows[rows.length - 1] = { id, token, score };
+          rows.sort((a, b) => b.score - a.score);
+        }
+      }
+
+      return rows.map((row) => ({
+        text: row.token,
+        token_id: row.id,
+        score: Number(row.score.toFixed(4)),
+        source: 'autosuggest_neural',
+      }));
+    }
+
+    async function fetchedAssetSize(url) {
+      try {
+        const response = await fetch(`${url}?v=${OBADH_ASSET_VERSION}`, { method: 'HEAD', cache: 'no-store' });
+        if (response.ok) {
+          const length = Number(response.headers.get('content-length'));
+          if (Number.isFinite(length) && length > 0) {
+            return length;
+          }
+        }
+      } catch (_) {
+        // Fall back to zero; this metric is only for display.
+      }
+      return 0;
+    }
+
+    window.collectObadhRuntimeResources = () => {
+      const assets = window.obadhRuntimeAssets || {};
+      const heap = performance.memory || null;
+      const wasmMemory = window.obadhWasmExports?.memory?.buffer?.byteLength ?? null;
+      return {
+        sampledAt: Date.now(),
+        wasmLinearMemoryBytes: wasmMemory,
+        browserHeapAvailable: Boolean(heap),
+        browserHeapUsedBytes: heap?.usedJSHeapSize ?? null,
+        browserHeapTotalBytes: heap?.totalJSHeapSize ?? null,
+        browserHeapLimitBytes: heap?.jsHeapSizeLimit ?? null,
+        autocorrectAssetBytes: (assets.autocorrectFstBytes || 0) + (assets.loanwordFstBytes || 0),
+        autosuggestModelBytes: assets.autosuggestModelBytes || null,
+        autosuggestVocabBytes: assets.autosuggestVocabBytes || null,
+        onnxRuntimeAssetBytes: assets.onnxRuntimeAssetBytes || null,
+        autosuggestLastLatencyMs: window.autosuggestStats?.last_elapsed_ms ?? null,
+        autosuggestLoadLatencyMs: window.autosuggestStats?.load_elapsed_ms ?? null,
+      };
+    };
 
     window.loadAutocorrectFromTsv = (lexiconText) => {
       window.obadhAutocorrect = ObadhAutocorrectWasm.fromTsv(lexiconText);

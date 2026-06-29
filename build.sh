@@ -217,6 +217,11 @@ build_dist() {
         mkdir -p docs/assets
         cp -r www/assets/* docs/assets/ || error "Failed to copy assets directory"
     fi
+
+    if [ -d "www/vendor" ]; then
+        mkdir -p docs/vendor
+        cp -r www/vendor/* docs/vendor/ || error "Failed to copy vendor directory"
+    fi
     
     # Success message
     success "Distribution build complete! Files are ready in the docs directory."
