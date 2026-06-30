@@ -13,6 +13,8 @@ const PERSONAL_MAGIC: &[u8; 16] = b"OBPERSUGLM_V1\0\0\0";
 const PERSONAL_VERSION: u32 = 1;
 const PERSONAL_HEADER_LEN: usize = 32;
 const PERSONAL_ENTRY_LEN: usize = 24;
+const PERSONAL_INITIAL_ENTRY_CAPACITY: usize = 16;
+const PERSONAL_UNIGRAM_CACHE_LIMIT: usize = 16;
 
 pub const DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES: usize = 4096;
 pub const DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT: u16 = 2;
@@ -40,6 +42,14 @@ pub struct PersonalAutosuggestSuggestion {
     pub last_seen: u32,
     pub score: i32,
 }
+
+const EMPTY_PERSONAL_SUGGESTION: PersonalAutosuggestSuggestion = PersonalAutosuggestSuggestion {
+    token_id: 0,
+    context_len: 0,
+    count: 0,
+    last_seen: 0,
+    score: 0,
+};
 
 #[derive(Debug)]
 pub struct AutosuggestSession<'lm, D: AsRef<[u8]>> {
@@ -126,6 +136,33 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
         Ok(learned)
     }
 
+    /// Commit a token ID that was already resolved against this session's LM.
+    ///
+    /// Keyboard integrations can resolve a committed Bengali token once, then
+    /// stay on this path for personalization and future suggestions. `None`
+    /// represents a committed unknown token and clears recent context.
+    pub fn commit_token_id(
+        &mut self,
+        token_id: Option<u32>,
+        boundary_after: bool,
+    ) -> Result<bool, AutosuggestArtifactError> {
+        if let Some(id) = token_id {
+            self.validate_token_id(id)?;
+        }
+        let learned =
+            self.personal
+                .observe_resolved_token_id(&mut self.context, token_id, boundary_after);
+        self.candidates.clear();
+        Ok(learned)
+    }
+
+    /// Commit a token that is not represented in the autosuggest vocabulary.
+    pub fn commit_unknown(&mut self, boundary_after: bool) {
+        self.personal
+            .observe_resolved_token_id(&mut self.context, None, boundary_after);
+        self.candidates.clear();
+    }
+
     pub fn suggest(&mut self) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
         self.ensure_candidate_capacity();
         self.personal.suggest_with_lm_into(
@@ -158,11 +195,26 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
             )
     }
 
+    pub fn personal_snapshot_len(&self) -> usize {
+        self.personal.compact_snapshot_len()
+    }
+
+    pub fn write_personal_snapshot_into(&self, output: &mut Vec<u8>) {
+        self.personal.write_compact_bytes_into(output);
+    }
+
     fn ensure_candidate_capacity(&mut self) {
         let capacity = self.options.max_candidates.max(1);
         reserve_to(&mut self.personal_scratch, capacity);
         reserve_to(&mut self.model_scratch, capacity);
         reserve_to(&mut self.candidates, capacity);
+    }
+
+    fn validate_token_id(&self, token_id: u32) -> Result<(), AutosuggestArtifactError> {
+        if token_id >= self.lm.vocab_size() as u32 {
+            return Err(AutosuggestArtifactError::InvalidTokenId(token_id));
+        }
+        Ok(())
     }
 }
 
@@ -196,6 +248,7 @@ impl Error for PersonalAutosuggestError {}
 pub struct PersonalAutosuggest {
     config: PersonalAutosuggestConfig,
     entries: Vec<PersonalEntry>,
+    unigram_cache: PersonalUnigramCache,
     tick: u32,
 }
 
@@ -203,7 +256,8 @@ impl PersonalAutosuggest {
     pub fn new(config: PersonalAutosuggestConfig) -> Self {
         Self {
             config,
-            entries: Vec::with_capacity(config.max_entries),
+            entries: Vec::new(),
+            unigram_cache: PersonalUnigramCache::empty(),
             tick: 0,
         }
     }
@@ -232,6 +286,7 @@ impl PersonalAutosuggest {
 
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.unigram_cache.clear();
         self.tick = 0;
     }
 
@@ -240,6 +295,7 @@ impl PersonalAutosuggest {
             entry.count /= 2;
         }
         self.entries.retain(|entry| entry.count > 0);
+        self.rebuild_unigram_cache();
     }
 
     pub fn from_compact_bytes(
@@ -311,29 +367,38 @@ impl PersonalAutosuggest {
         entries.sort_by_key(|entry| (entry.context, entry.target_id));
         entries.dedup_by_key(|entry| (entry.context, entry.target_id));
 
-        Ok(Self {
+        let mut personal = Self {
             config,
             entries,
+            unigram_cache: PersonalUnigramCache::empty(),
             tick: max_seen,
-        })
+        };
+        personal.rebuild_unigram_cache();
+        Ok(personal)
     }
 
     pub fn to_compact_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(self.compact_snapshot_len());
-        bytes.extend_from_slice(PERSONAL_MAGIC);
-        write_snapshot_u32(&mut bytes, PERSONAL_VERSION);
-        write_snapshot_u32(&mut bytes, self.tick);
-        write_snapshot_u32(&mut bytes, self.entries.len() as u32);
-        write_snapshot_u32(&mut bytes, 0);
-        for entry in &self.entries {
-            write_snapshot_u32(&mut bytes, u32::from(entry.context.len));
-            write_snapshot_u32(&mut bytes, entry.context.ids[0]);
-            write_snapshot_u32(&mut bytes, entry.context.ids[1]);
-            write_snapshot_u32(&mut bytes, entry.target_id);
-            write_snapshot_u32(&mut bytes, u32::from(entry.count));
-            write_snapshot_u32(&mut bytes, entry.last_seen);
-        }
+        self.write_compact_bytes_into(&mut bytes);
         bytes
+    }
+
+    pub fn write_compact_bytes_into(&self, bytes: &mut Vec<u8>) {
+        bytes.clear();
+        reserve_to(bytes, self.compact_snapshot_len());
+        bytes.extend_from_slice(PERSONAL_MAGIC);
+        write_snapshot_u32(bytes, PERSONAL_VERSION);
+        write_snapshot_u32(bytes, self.tick);
+        write_snapshot_u32(bytes, self.entries.len() as u32);
+        write_snapshot_u32(bytes, 0);
+        for entry in &self.entries {
+            write_snapshot_u32(bytes, u32::from(entry.context.len));
+            write_snapshot_u32(bytes, entry.context.ids[0]);
+            write_snapshot_u32(bytes, entry.context.ids[1]);
+            write_snapshot_u32(bytes, entry.target_id);
+            write_snapshot_u32(bytes, u32::from(entry.count));
+            write_snapshot_u32(bytes, entry.last_seen);
+        }
     }
 
     pub fn observe_context_target(&mut self, context: AutosuggestContext, target_id: u32) {
@@ -366,24 +431,43 @@ impl PersonalAutosuggest {
             None => None,
         };
 
+        Ok(if token.text.is_some() {
+            self.observe_resolved_token_id(context, token_id, token.boundary_after)
+        } else {
+            if token.boundary_after {
+                context.push_boundary();
+            }
+            false
+        })
+    }
+
+    /// Observe a token ID that has already been resolved by the caller.
+    ///
+    /// This low-level API does not validate the ID against a model. Prefer
+    /// `AutosuggestSession::commit_token_id` when an LM is available.
+    pub fn observe_resolved_token_id(
+        &mut self,
+        context: &mut AutosuggestContext,
+        token_id: Option<u32>,
+        boundary_after: bool,
+    ) -> bool {
         let learned = match token_id {
             Some(id) if id > UNK_ID => {
                 self.observe_context_target(*context, id);
                 context.push_token_id(Some(id));
                 true
             }
-            Some(_) | None if token.text.is_some() => {
+            _ => {
                 context.push_unknown();
                 false
             }
-            _ => false,
         };
 
-        if token.boundary_after {
+        if boundary_after {
             context.push_boundary();
         }
 
-        Ok(learned)
+        learned
     }
 
     pub fn suggest_token_ids_into(
@@ -506,11 +590,17 @@ impl PersonalAutosuggest {
     }
 
     fn observe_key(&mut self, context: PersonalContext, target_id: u32) {
+        let mut changed_unigram = None;
+        let mut removed_unigram = None;
+
         match self.find_entry(context, target_id) {
             Ok(index) => {
                 let entry = &mut self.entries[index];
                 entry.count = entry.count.saturating_add(1);
                 entry.last_seen = self.tick;
+                if entry.context.is_empty() {
+                    changed_unigram = Some(*entry);
+                }
             }
             Err(index) => {
                 let entry = PersonalEntry {
@@ -520,16 +610,54 @@ impl PersonalAutosuggest {
                     last_seen: self.tick,
                 };
                 if self.entries.len() < self.config.max_entries {
+                    self.ensure_entry_capacity_for_insert();
                     self.entries.insert(index, entry);
-                } else if let Some(weakest) = self.weakest_entry_index() {
-                    self.entries.remove(weakest);
-                    self.insert_entry_sorted(entry);
+                    if context.is_empty() {
+                        changed_unigram = Some(entry);
+                    }
+                } else if let Some(weakest_index) = self.weakest_entry_index() {
+                    if entry_precedes(entry, self.entries[weakest_index]) {
+                        let removed = self.entries.remove(weakest_index);
+                        if removed.context.is_empty() {
+                            removed_unigram = Some(removed.target_id);
+                        }
+                        self.insert_entry_sorted(entry);
+                        if context.is_empty() {
+                            changed_unigram = Some(entry);
+                        }
+                    }
                 }
             }
+        }
+
+        if let Some(token_id) = removed_unigram {
+            self.unigram_cache.remove_token(token_id);
+        }
+        if let Some(entry) = changed_unigram {
+            self.unigram_cache.insert(entry.suggestion());
         }
     }
 
     fn collect_for_context(
+        &self,
+        context: PersonalContext,
+        limit: usize,
+        output: &mut Vec<PersonalAutosuggestSuggestion>,
+    ) {
+        if context.is_empty() {
+            self.unigram_cache
+                .collect(limit, self.config.min_count, output);
+            if output.len() >= limit || limit <= PERSONAL_UNIGRAM_CACHE_LIMIT {
+                return;
+            }
+            self.collect_for_context_scan(context, limit, output);
+            return;
+        }
+
+        self.collect_for_context_scan(context, limit, output);
+    }
+
+    fn collect_for_context_scan(
         &self,
         context: PersonalContext,
         limit: usize,
@@ -569,8 +697,33 @@ impl PersonalAutosuggest {
         self.entries
             .iter()
             .enumerate()
-            .min_by_key(|(_, entry)| (entry.count, entry.last_seen, entry.target_id))
+            .min_by_key(|(_, entry)| entry_strength_key(entry))
             .map(|(index, _)| index)
+    }
+
+    fn ensure_entry_capacity_for_insert(&mut self) {
+        if self.entries.len() < self.entries.capacity() || self.config.max_entries == 0 {
+            return;
+        }
+
+        let target = if self.entries.capacity() == 0 {
+            self.config.max_entries.min(PERSONAL_INITIAL_ENTRY_CAPACITY)
+        } else {
+            self.config
+                .max_entries
+                .min(self.entries.capacity().saturating_mul(2))
+        };
+        reserve_to(&mut self.entries, target);
+    }
+
+    fn rebuild_unigram_cache(&mut self) {
+        self.unigram_cache.clear();
+        let empty = PersonalContext::empty();
+        let start = self.entries.partition_point(|entry| entry.context < empty);
+        let end = start + self.entries[start..].partition_point(|entry| entry.context == empty);
+        for entry in &self.entries[start..end] {
+            self.unigram_cache.insert(entry.suggestion());
+        }
     }
 }
 
@@ -622,6 +775,102 @@ impl PersonalContext {
         context.ids[..len].copy_from_slice(&ids[start..]);
         context
     }
+
+    fn is_empty(self) -> bool {
+        self.len == 0
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PersonalUnigramCache {
+    len: u8,
+    items: [PersonalAutosuggestSuggestion; PERSONAL_UNIGRAM_CACHE_LIMIT],
+}
+
+impl PersonalUnigramCache {
+    fn empty() -> Self {
+        Self {
+            len: 0,
+            items: [EMPTY_PERSONAL_SUGGESTION; PERSONAL_UNIGRAM_CACHE_LIMIT],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    fn insert(&mut self, suggestion: PersonalAutosuggestSuggestion) {
+        self.remove_token(suggestion.token_id);
+
+        if self.len as usize >= PERSONAL_UNIGRAM_CACHE_LIMIT
+            && self
+                .last()
+                .is_some_and(|last| !suggestion_precedes(suggestion, last))
+        {
+            return;
+        }
+
+        if self.len as usize >= PERSONAL_UNIGRAM_CACHE_LIMIT {
+            self.len -= 1;
+        }
+
+        let len = self.len as usize;
+        let insert_at = self.items[..len]
+            .iter()
+            .position(|existing| suggestion_precedes(suggestion, *existing))
+            .unwrap_or(len);
+        if insert_at < len {
+            self.items.copy_within(insert_at..len, insert_at + 1);
+        }
+        self.items[insert_at] = suggestion;
+        self.len += 1;
+    }
+
+    fn remove_token(&mut self, token_id: u32) {
+        let len = self.len as usize;
+        if let Some(position) = self.items[..len]
+            .iter()
+            .position(|suggestion| suggestion.token_id == token_id)
+        {
+            self.remove_at(position);
+        }
+    }
+
+    fn collect(
+        &self,
+        limit: usize,
+        min_count: u16,
+        output: &mut Vec<PersonalAutosuggestSuggestion>,
+    ) {
+        for suggestion in self.items[..self.len as usize].iter().copied() {
+            if output.len() >= limit {
+                break;
+            }
+            if suggestion.count < min_count
+                || output
+                    .iter()
+                    .any(|existing| existing.token_id == suggestion.token_id)
+            {
+                continue;
+            }
+            output.push(suggestion);
+        }
+    }
+
+    fn last(&self) -> Option<PersonalAutosuggestSuggestion> {
+        self.len
+            .checked_sub(1)
+            .map(|index| self.items[index as usize])
+    }
+
+    fn remove_at(&mut self, position: usize) {
+        let len = self.len as usize;
+        if position + 1 < len {
+            self.items.copy_within(position + 1..len, position);
+        }
+        self.len -= 1;
+        self.items[self.len as usize] = EMPTY_PERSONAL_SUGGESTION;
+    }
 }
 
 fn insert_suggestion_bounded(
@@ -660,6 +909,18 @@ fn suggestion_precedes(
         right.count,
         right.last_seen,
         std::cmp::Reverse(right.token_id),
+    )
+}
+
+fn entry_precedes(left: PersonalEntry, right: PersonalEntry) -> bool {
+    entry_strength_key(&left) > entry_strength_key(&right)
+}
+
+fn entry_strength_key(entry: &PersonalEntry) -> (u16, u32, std::cmp::Reverse<u32>) {
+    (
+        entry.count,
+        entry.last_seen,
+        std::cmp::Reverse(entry.target_id),
     )
 }
 
@@ -773,6 +1034,105 @@ mod tests {
                 ("ভাত", AutosuggestSource::Bigram),
                 ("আমি", AutosuggestSource::Personal)
             ]
+        );
+    }
+
+    #[test]
+    fn session_commits_resolved_token_ids_on_hot_path() {
+        let lm = fixture();
+        let ami = lm.token_id("আমি").unwrap();
+        let khai = lm.token_id("খাই").unwrap();
+        let mut session = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 2,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+
+        for _ in 0..2 {
+            session.clear_context();
+            assert!(session.commit_token_id(ami, false).unwrap());
+            assert!(session.commit_token_id(khai, false).unwrap());
+        }
+
+        session.clear_context();
+        assert!(session.commit_token_id(ami, false).unwrap());
+        session.suggest().unwrap();
+
+        assert_eq!(
+            session.candidates().first().map(|candidate| candidate.text),
+            Some("খাই")
+        );
+        assert_eq!(session.context().matched_token_count(), 1);
+    }
+
+    #[test]
+    fn session_rejects_invalid_resolved_token_ids_without_mutating_state() {
+        let lm = fixture();
+        let invalid = lm.vocab_size() as u32;
+        let mut session = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 1,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+
+        assert_eq!(
+            session.commit_token_id(Some(invalid), false).unwrap_err(),
+            AutosuggestArtifactError::InvalidTokenId(invalid)
+        );
+        assert_eq!(session.context().token_count(), 0);
+        assert!(session.personal().is_empty());
+    }
+
+    #[test]
+    fn session_unknown_commit_clears_recent_context_without_learning() {
+        let lm = fixture();
+        let mut session = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 1,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+
+        assert!(session
+            .commit_token_id(lm.token_id("আমি").unwrap(), false)
+            .unwrap());
+        session.commit_unknown(false);
+
+        assert_eq!(session.context().token_count(), 2);
+        assert_eq!(session.context().matched_token_count(), 0);
+        assert_eq!(session.personal().len(), 1);
+    }
+
+    #[test]
+    fn resolved_token_id_commit_learns_then_honors_sentence_boundary() {
+        let lm = fixture();
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 32,
+            min_count: 1,
+        });
+        let mut context = AutosuggestContext::new();
+        context.push_token_id(lm.token_id("আমি").unwrap());
+
+        assert!(personal.observe_resolved_token_id(&mut context, lm.token_id("আজ").unwrap(), true));
+
+        assert_eq!(context.token_count(), 2);
+        assert_eq!(context.matched_token_count(), 0);
+
+        let mut query = AutosuggestContext::new();
+        query.push_token_id(lm.token_id("আমি").unwrap());
+        let mut suggestions = Vec::new();
+        personal.suggest_token_ids_into(query, 3, &mut suggestions);
+        assert_eq!(
+            suggestions.first().map(|suggestion| suggestion.token_id),
+            lm.token_id("আজ").unwrap()
         );
     }
 
@@ -917,6 +1277,61 @@ mod tests {
     }
 
     #[test]
+    fn empty_context_personal_unigram_cache_is_bounded_and_ranked() {
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 64,
+            min_count: 1,
+        });
+        for target_id in 5..30 {
+            personal.observe_context_ids_target(&[], target_id);
+        }
+        personal.observe_context_ids_target(&[], 20);
+        personal.observe_context_ids_target(&[], 20);
+
+        let mut suggestions = Vec::new();
+        personal.suggest_token_ids_into(AutosuggestContext::new(), 5, &mut suggestions);
+
+        assert_eq!(
+            personal.unigram_cache.len as usize,
+            PERSONAL_UNIGRAM_CACHE_LIMIT
+        );
+        assert_eq!(suggestions.len(), 5);
+        assert_eq!(
+            suggestions.first().map(|suggestion| suggestion.token_id),
+            Some(20)
+        );
+        assert_eq!(suggestions, personal.unigram_cache.items[..5].to_vec());
+    }
+
+    #[test]
+    fn empty_context_large_limit_can_scan_beyond_unigram_cache() {
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 64,
+            min_count: 1,
+        });
+        for target_id in 5..30 {
+            personal.observe_context_ids_target(&[], target_id);
+        }
+
+        let mut suggestions = Vec::new();
+        personal.suggest_token_ids_into(AutosuggestContext::new(), 32, &mut suggestions);
+
+        assert_eq!(
+            personal.unigram_cache.len as usize,
+            PERSONAL_UNIGRAM_CACHE_LIMIT
+        );
+        assert_eq!(suggestions.len(), 25);
+        assert_eq!(
+            suggestions
+                .iter()
+                .map(|suggestion| suggestion.token_id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            suggestions.len()
+        );
+    }
+
+    #[test]
     fn minimum_count_blocks_one_off_personal_noise_until_repeated() {
         let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
             max_entries: 16,
@@ -968,6 +1383,62 @@ mod tests {
     }
 
     #[test]
+    fn full_personal_store_rejects_weaker_new_singletons() {
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 2,
+            min_count: 1,
+        });
+
+        for _ in 0..2 {
+            personal.observe_context_ids_target(&[], 5);
+            personal.observe_context_ids_target(&[], 6);
+        }
+        personal.observe_context_ids_target(&[], 7);
+
+        let mut suggestions = Vec::new();
+        personal.suggest_token_ids_into(AutosuggestContext::new(), 4, &mut suggestions);
+
+        assert_eq!(personal.len(), 2);
+        assert_eq!(
+            suggestions
+                .iter()
+                .map(|suggestion| suggestion.token_id)
+                .collect::<Vec<_>>(),
+            vec![6, 5]
+        );
+        assert!(!suggestions
+            .iter()
+            .any(|suggestion| suggestion.token_id == 7));
+    }
+
+    #[test]
+    fn unigram_cache_tracks_evicted_empty_context_entries() {
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 4,
+            min_count: 1,
+        });
+        for target_id in 5..9 {
+            personal.observe_context_ids_target(&[], target_id);
+        }
+        personal.observe_context_ids_target(&[], 5);
+        personal.observe_context_ids_target(&[], 9);
+
+        let mut suggestions = Vec::new();
+        personal.suggest_token_ids_into(AutosuggestContext::new(), 8, &mut suggestions);
+
+        assert_eq!(
+            suggestions.first().map(|suggestion| suggestion.token_id),
+            Some(5)
+        );
+        assert!(!suggestions
+            .iter()
+            .any(|suggestion| suggestion.token_id == 6));
+        assert!(suggestions
+            .iter()
+            .any(|suggestion| suggestion.token_id == 9));
+    }
+
+    #[test]
     fn decay_removes_stale_singletons() {
         let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
             max_entries: 16,
@@ -980,6 +1451,7 @@ mod tests {
         personal.decay_counts();
 
         assert!(personal.is_empty());
+        assert_eq!(personal.unigram_cache.len, 0);
     }
 
     #[test]
@@ -1029,6 +1501,7 @@ mod tests {
         let loaded = PersonalAutosuggest::from_compact_bytes(personal.config(), &bytes).unwrap();
         assert_eq!(loaded.config(), personal.config());
         assert_eq!(loaded.entries, personal.entries);
+        assert_eq!(loaded.unigram_cache.items[0].token_id, 6);
 
         let mut suggestions = Vec::new();
         loaded.suggest_token_ids_into(context, 3, &mut suggestions);
@@ -1036,6 +1509,56 @@ mod tests {
             suggestions.first().map(|suggestion| suggestion.token_id),
             Some(6)
         );
+    }
+
+    #[test]
+    fn compact_snapshot_writer_reuses_caller_buffer() {
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 16,
+            min_count: 1,
+        });
+        let mut context = AutosuggestContext::new();
+        context.push_token_id(Some(3));
+
+        personal.observe_context_target(context, 6);
+        personal.observe_context_target(context, 7);
+
+        let mut bytes = Vec::with_capacity(personal.compact_snapshot_len() + 16);
+        personal.write_compact_bytes_into(&mut bytes);
+        let expected = personal.to_compact_bytes();
+        let ptr = bytes.as_ptr();
+
+        bytes.extend_from_slice(b"stale tail");
+        personal.write_compact_bytes_into(&mut bytes);
+
+        assert_eq!(bytes, expected);
+        assert_eq!(bytes.as_ptr(), ptr);
+    }
+
+    #[test]
+    fn session_writes_personal_snapshot_into_reused_buffer() {
+        let lm = fixture();
+        let mut session = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 1,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+        session.commit_token("আমি").unwrap();
+        session.commit_token("খাই").unwrap();
+
+        let mut bytes = Vec::with_capacity(session.personal_snapshot_len());
+        session.write_personal_snapshot_into(&mut bytes);
+        let ptr = bytes.as_ptr();
+
+        session.write_personal_snapshot_into(&mut bytes);
+        let loaded =
+            PersonalAutosuggest::from_compact_bytes(session.personal().config(), &bytes).unwrap();
+
+        assert_eq!(bytes.as_ptr(), ptr);
+        assert_eq!(loaded.entries, session.personal().entries);
     }
 
     #[test]
@@ -1088,8 +1611,22 @@ mod tests {
     fn default_personal_store_has_explicit_small_memory_bound() {
         let personal = PersonalAutosuggest::default();
         assert_eq!(personal.len(), 0);
-        assert!(personal.estimated_heap_bytes() <= 128 * 1024);
+        assert_eq!(personal.estimated_heap_bytes(), 0);
         assert_eq!(personal.compact_snapshot_len(), PERSONAL_HEADER_LEN);
+    }
+
+    #[test]
+    fn first_personal_learning_reserves_small_block_not_full_cap() {
+        let mut personal = PersonalAutosuggest::default();
+
+        personal.observe_context_ids_target(&[], 5);
+
+        assert_eq!(personal.len(), 1);
+        assert!(personal.entries.capacity() <= PERSONAL_INITIAL_ENTRY_CAPACITY);
+        assert!(
+            personal.estimated_heap_bytes()
+                < DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES * mem::size_of::<PersonalEntry>()
+        );
     }
 
     #[test]

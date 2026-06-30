@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use obadh_engine::{AutosuggestContext, AutosuggestLm, AutosuggestOptions, AutosuggestResult};
+use obadh_engine::{
+    AutosuggestContext, AutosuggestLm, AutosuggestOptions, AutosuggestResult, AutosuggestSession,
+    PersonalAutosuggestConfig,
+};
 use serde::Serialize;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -118,6 +121,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let started = Instant::now();
             let mut candidate_total = 0_usize;
             let mut candidates = Vec::with_capacity(top_k.max(1));
+            let mut personal_heap_bytes = None;
+            let mut personal_snapshot_bytes = None;
             match mode {
                 BenchMode::Text => {
                     for index in 0..iterations {
@@ -149,6 +154,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         candidate_total += black_box(candidates.len());
                     }
                 }
+                BenchMode::Session => {
+                    let mut sessions = context
+                        .iter()
+                        .map(|text| autosuggest_session_from_text(&lm, text, top_k))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    personal_heap_bytes = Some(
+                        sessions
+                            .iter()
+                            .map(|session| session.estimated_heap_bytes())
+                            .sum(),
+                    );
+                    personal_snapshot_bytes = Some(
+                        sessions
+                            .iter()
+                            .map(|session| session.personal_snapshot_len())
+                            .sum(),
+                    );
+                    let session_count = sessions.len();
+                    for index in 0..iterations {
+                        let session = &mut sessions[index % session_count];
+                        session.suggest()?;
+                        candidate_total += black_box(session.candidates().len());
+                    }
+                }
             }
             let elapsed = started.elapsed();
             print_json(
@@ -163,6 +192,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     total_ms: elapsed.as_secs_f64() * 1000.0,
                     mean_us: elapsed.as_secs_f64() * 1_000_000.0 / iterations as f64,
                     candidates_per_query: candidate_total as f64 / iterations as f64,
+                    personal_heap_bytes,
+                    personal_snapshot_bytes,
                 },
                 pretty,
             )?;
@@ -198,11 +229,53 @@ fn autosuggest_context_from_text<D: AsRef<[u8]>>(
     Ok(context)
 }
 
+fn autosuggest_session_from_text<'lm, D: AsRef<[u8]>>(
+    lm: &'lm AutosuggestLm<D>,
+    text: &str,
+    top_k: usize,
+) -> Result<AutosuggestSession<'lm, D>, Box<dyn std::error::Error>> {
+    let options = AutosuggestOptions {
+        max_candidates: top_k,
+    };
+    let mut session =
+        AutosuggestSession::with_personal_config(lm, PersonalAutosuggestConfig::default(), options);
+    let token_ids = autosuggest_token_ids_from_text(lm, text)?;
+
+    if let Some(first_id) = token_ids.first().copied() {
+        for _ in 0..PersonalAutosuggestConfig::default().min_count {
+            session.clear_context();
+            for token_id in token_ids.iter().copied().chain(std::iter::once(first_id)) {
+                session.commit_token_id(Some(token_id), false)?;
+            }
+        }
+    }
+
+    session.clear_context();
+    for token_id in token_ids {
+        session.commit_token_id(Some(token_id), false)?;
+    }
+    Ok(session)
+}
+
+fn autosuggest_token_ids_from_text<D: AsRef<[u8]>>(
+    lm: &AutosuggestLm<D>,
+    text: &str,
+) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+    let mut ids = Vec::new();
+    for token in text.split_whitespace() {
+        if let Some(token_id) = lm.token_id(token)? {
+            ids.push(token_id);
+        }
+    }
+    Ok(ids)
+}
+
 #[derive(Debug, Clone, Copy, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 enum BenchMode {
     Text,
     Context,
+    Session,
 }
 
 #[derive(Debug, Serialize)]
@@ -217,6 +290,10 @@ struct BenchReport {
     total_ms: f64,
     mean_us: f64,
     candidates_per_query: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    personal_heap_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    personal_snapshot_bytes: Option<usize>,
 }
 
 fn print_result(

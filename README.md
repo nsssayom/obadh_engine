@@ -225,6 +225,14 @@ cargo run --release --bin obadh-autosuggest -- bench \
   --mode context \
   --iterations 200000 \
   --pretty
+
+cargo run --release --bin obadh-autosuggest -- bench \
+  --model target/autosuggest-smoke.bin \
+  --context 'আমি আজ' \
+  --context 'বাংলাদেশের মানুষ' \
+  --mode session \
+  --iterations 200000 \
+  --pretty
 ```
 
 Current full-corpus candidate profiles from the 161.6M-token corpus:
@@ -278,9 +286,13 @@ The checked-in runtime artifact is the mobile n-gram profile:
 
 Keyboard integrations should keep an `AutosuggestContext` as words are
 committed and call `suggest_for_context_into` with a reused candidate buffer.
-For personalized suggestions, feed committed token IDs into
-`PersonalAutosuggest::observe_committed_token` and call `suggest_with_lm_into`
-with reused personal/model/output buffers.
+For personalized suggestions, keep an `AutosuggestSession` per editor surface.
+Commit resolved vocabulary IDs through `commit_token_id` on the hot path, use
+`commit_token` only when text still needs lookup, and reuse the session-owned
+personal/model/output buffers through `suggest`. Persist personalization with
+`write_personal_snapshot_into` when the platform can reuse a save buffer. The
+personal store grows lazily, so empty editor sessions do not reserve the full
+history cap.
 The text-based APIs remain useful for tools and tests, but they intentionally
 include token parsing and lookup overhead that a keyboard does not need on each
 suggestion request. Sentence-ending punctuation (`।`, `॥`, `.`, `!`, `?`, and
