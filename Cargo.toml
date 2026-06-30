@@ -39,6 +39,11 @@ name = "obadh-autocorrect"
 path = "src/bin/obadh-autocorrect.rs"
 bench = false
 
+[[bin]]
+name = "obadh-autosuggest"
+path = "src/bin/obadh-autosuggest.rs"
+bench = false
+
 [[bench]]
 name = "hot_path"
 harness = false

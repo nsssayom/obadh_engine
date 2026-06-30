@@ -1,0 +1,16 @@
+{
+  "artifact": "obadh-autosuggest-ngram",
+  "version": 1,
+  "format": "bounded trigram/bigram/unigram binary",
+  "runtime_role": "next-word candidate generation",
+  "profile": "mobile",
+  "asset": "autosuggest-ngram.bin",
+  "vocab_size": 32768,
+  "unigram_count": 4096,
+  "bigram_rows": 32266,
+  "trigram_rows": 338823,
+  "candidate_rows": 732738,
+  "max_candidates_per_prefix": 4,
+  "min_count": 10,
+  "artifact_bytes": 15998954
+}

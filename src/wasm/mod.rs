@@ -5,9 +5,10 @@ use web_sys::Performance;
 
 use crate::{
     roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
-    CandidateFeatures, CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon,
-    FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats,
-    LoanwordLexicon, LoanwordSearchOptions, ObadhEngine, RomanRepairOptions, RomanRepairedOutput,
+    AutosuggestCandidate, AutosuggestLm, AutosuggestOptions, AutosuggestSource, CandidateFeatures,
+    CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon, FstLoanwordMatch,
+    FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats, LoanwordLexicon,
+    LoanwordSearchOptions, ObadhEngine, RomanRepairOptions, RomanRepairedOutput,
     DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 
@@ -130,6 +131,36 @@ pub struct AutocorrectLabResult {
     pub replacement: Option<AutocorrectCandidateInfo>,
     pub candidates: Vec<AutocorrectCandidateInfo>,
     pub lexicon: AutocorrectLexiconStats,
+}
+
+#[derive(Clone, Copy, Serialize)]
+pub struct AutosuggestStats {
+    pub artifact_kind: &'static str,
+    pub backend: &'static str,
+    pub vocab_size: usize,
+    pub unigram_count: usize,
+    pub bigram_rows: usize,
+    pub trigram_rows: usize,
+    pub model_bytes: usize,
+    pub load_elapsed_ms: f64,
+    pub last_elapsed_ms: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct AutosuggestCandidateInfo {
+    pub text: String,
+    pub token_id: u32,
+    pub source: &'static str,
+    pub count: u32,
+    pub score: i32,
+}
+
+#[derive(Serialize)]
+pub struct AutosuggestLabResult {
+    pub context: Vec<String>,
+    pub elapsed_ms: f64,
+    pub model: AutosuggestStats,
+    pub candidates: Vec<AutosuggestCandidateInfo>,
 }
 
 /// ObdahWasm is the main WASM interface to the Obadh engine
@@ -307,6 +338,72 @@ impl ObadhaWasm {
 impl Default for ObadhaWasm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[wasm_bindgen]
+pub struct ObadhAutosuggestWasm {
+    lm: AutosuggestLm<Vec<u8>>,
+    stats: AutosuggestStats,
+}
+
+#[wasm_bindgen]
+impl ObadhAutosuggestWasm {
+    #[wasm_bindgen(js_name = fromNgramArtifact)]
+    pub fn from_ngram_artifact(bytes: &[u8]) -> Result<ObadhAutosuggestWasm, JsValue> {
+        let start = now();
+        let bytes = bytes.to_vec();
+        let model_bytes = bytes.len();
+        let lm = AutosuggestLm::from_bytes(bytes)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let stats = AutosuggestStats {
+            artifact_kind: "ngram",
+            backend: "wasm/rust",
+            vocab_size: lm.vocab_size(),
+            unigram_count: lm.unigram_count(),
+            bigram_rows: lm.bigram_row_count(),
+            trigram_rows: lm.trigram_row_count(),
+            model_bytes,
+            load_elapsed_ms: now() - start,
+            last_elapsed_ms: None,
+        };
+        Ok(Self { lm, stats })
+    }
+
+    #[wasm_bindgen]
+    pub fn stats(&self) -> Result<JsValue, JsValue> {
+        to_value(&self.stats).map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn suggest(&self, context_tokens_js: JsValue, limit: usize) -> Result<JsValue, JsValue> {
+        let start = now();
+        let context_tokens: Vec<String> = from_value(context_tokens_js)
+            .map_err(|error| JsValue::from_str(&format!("invalid context tokens: {error}")))?;
+        let context_refs = context_tokens.iter().map(String::as_str).collect::<Vec<_>>();
+        let result = self
+            .lm
+            .suggest_for_tokens(
+                &context_refs,
+                AutosuggestOptions {
+                    max_candidates: limit.max(1),
+                },
+            )
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let elapsed_ms = now() - start;
+        let mut stats = self.stats;
+        stats.last_elapsed_ms = Some(elapsed_ms);
+        let lab_result = AutosuggestLabResult {
+            context: context_tokens,
+            elapsed_ms,
+            model: stats,
+            candidates: result
+                .candidates
+                .iter()
+                .map(autosuggest_candidate_info)
+                .collect(),
+        };
+        to_value(&lab_result).map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -640,6 +737,24 @@ fn correction_source_name(source: CorrectionSource) -> &'static str {
 
 fn candidate_features_array(features: CandidateFeatures) -> [i16; crate::AUTOCORRECT_FEATURE_DIM] {
     features.as_i16_array()
+}
+
+fn autosuggest_candidate_info(candidate: &AutosuggestCandidate<'_>) -> AutosuggestCandidateInfo {
+    AutosuggestCandidateInfo {
+        text: candidate.text.to_string(),
+        token_id: candidate.token_id,
+        source: autosuggest_source_name(candidate.source),
+        count: candidate.count,
+        score: candidate.score,
+    }
+}
+
+fn autosuggest_source_name(source: AutosuggestSource) -> &'static str {
+    match source {
+        AutosuggestSource::Trigram => "autosuggest_ngram_trigram",
+        AutosuggestSource::Bigram => "autosuggest_ngram_bigram",
+        AutosuggestSource::Unigram => "autosuggest_ngram_unigram",
+    }
 }
 
 fn parse_lexicon_tsv(lexicon_tsv: &str) -> Result<Vec<LexiconEntry>, String> {

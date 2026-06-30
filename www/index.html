@@ -369,11 +369,10 @@
 
         resourceSummaryRows() {
           const resources = this.runtimeResources || {};
-          const neuralPayloadBytes = (resources.autosuggestModelBytes || 0) + (resources.autosuggestVocabBytes || 0);
           return [
             ['WASM', this.formatBytes(resources.wasmLinearMemoryBytes), 'exact'],
             ['Heap', resources.browserHeapAvailable ? this.formatBytes(resources.browserHeapUsedBytes) : 'n/a', resources.browserHeapAvailable ? 'browser' : 'unavailable'],
-            ['Neural', neuralPayloadBytes ? this.formatBytes(neuralPayloadBytes) : '—', 'assets'],
+            ['Next', resources.autosuggestModelBytes ? this.formatBytes(resources.autosuggestModelBytes) : '—', 'asset'],
             ['AI', this.formatDuration(resources.autosuggestLastLatencyMs), 'last'],
           ];
         },
@@ -820,7 +819,7 @@
         },
 
         commitFeedCandidate(candidate) {
-          if (candidate?.kind === 'autosuggest' || candidate?.source === 'autosuggest_neural') {
+          if (candidate?.kind === 'autosuggest') {
             this.commitAutosuggestCandidate(candidate);
             return;
           }
@@ -876,7 +875,7 @@
           if (source === 'fst_roman_repair_exact') {
             return 'roman';
           }
-          if (source === 'autosuggest_neural') {
+          if (String(source || '').startsWith('autosuggest_ngram_')) {
             return 'next';
           }
           return source || '';
@@ -1380,7 +1379,7 @@
                     <span
                       class="rounded-full px-2.5 py-1 text-xs font-semibold"
                       :class="autosuggestLoaded ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'"
-                      x-text="autosuggestLoaded ? 'neural' : 'no neural'"></span>
+                      x-text="autosuggestLoaded ? (autosuggestStats?.artifact_kind || 'next') : 'no next'"></span>
                   </div>
                 </div>
 
@@ -1548,17 +1547,15 @@
     </footer>
   </div>
 
-  <script src="vendor/onnxruntime-web/ort.min.js"></script>
-
   <!-- WASM loader and main JavaScript -->
   <script type="module">
     const OBADH_ASSET_VERSION = String(Date.now());
-    const AUTOSUGGEST_CONTEXT_LENGTH = 16;
     const obadhModule = await import(`./js/obadh_engine.js?v=${OBADH_ASSET_VERSION}`);
     const {
       default: init,
       ObadhaWasm,
       ObadhAutocorrectWasm,
+      ObadhAutosuggestWasm,
       TransliterationOptions,
     } = obadhModule;
 
@@ -1648,162 +1645,37 @@
     }
 
     async function initAutosuggestLab() {
-      if (!window.ort) {
-        throw new Error('ONNX Runtime Web is unavailable');
-      }
-
       window.obadhRuntimeAssets = window.obadhRuntimeAssets || {};
-      window.ort.env.wasm.numThreads = 1;
-      window.ort.env.wasm.wasmPaths = new URL('./vendor/onnxruntime-web/', window.location.href).href;
-
-      const [manifestResponse, vocabResponse, modelResponse] = await Promise.all([
-        fetch(`./assets/autosuggest/manifest.json?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
-        fetch(`./assets/autosuggest/vocab.tsv?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
-        fetch(`./assets/autosuggest/autosuggest.onnx?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
+      const [manifestResponse, modelResponse] = await Promise.all([
+        fetch(`./assets/autosuggest/ngram.manifest.json?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
+        fetch(`./assets/autosuggest/autosuggest-ngram.bin?v=${OBADH_ASSET_VERSION}`, { cache: 'no-store' }),
       ]);
 
       if (!manifestResponse.ok) {
         throw new Error(`Autosuggest manifest fetch failed: ${manifestResponse.status}`);
       }
-      if (!vocabResponse.ok) {
-        throw new Error(`Autosuggest vocab fetch failed: ${vocabResponse.status}`);
-      }
       if (!modelResponse.ok) {
-        throw new Error(`Autosuggest ONNX fetch failed: ${modelResponse.status}`);
+        throw new Error(`Autosuggest n-gram artifact fetch failed: ${modelResponse.status}`);
       }
 
       const manifest = await manifestResponse.json();
-      const vocabText = await vocabResponse.text();
-      const modelBuffer = await modelResponse.arrayBuffer();
-      const vocab = parseAutosuggestVocab(vocabText);
-      const started = performance.now();
-      const session = await window.ort.InferenceSession.create(modelBuffer, {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all',
-      });
-      const loadElapsedMs = performance.now() - started;
+      const bytes = new Uint8Array(await modelResponse.arrayBuffer());
+      const model = ObadhAutosuggestWasm.fromNgramArtifact(bytes);
+      const stats = model.stats();
 
       window.obadhRuntimeAssets.autosuggestManifestBytes = Number(manifestResponse.headers.get('content-length')) || JSON.stringify(manifest).length;
-      window.obadhRuntimeAssets.autosuggestVocabBytes = new TextEncoder().encode(vocabText).byteLength;
-      window.obadhRuntimeAssets.autosuggestModelBytes = modelBuffer.byteLength;
-      window.obadhRuntimeAssets.onnxRuntimeAssetBytes = await fetchedAssetSize('./vendor/onnxruntime-web/ort.min.js')
-        + await fetchedAssetSize('./vendor/onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm');
-
-      const config = manifest.config || {};
-      const stats = {
-        artifact_kind: 'neural',
-        backend: 'onnxruntime-web/wasm',
-        context_length: Number(config.context_length) || AUTOSUGGEST_CONTEXT_LENGTH,
-        vocab_size: vocab.idToToken.length,
-        model_bytes: modelBuffer.byteLength,
-        vocab_bytes: window.obadhRuntimeAssets.autosuggestVocabBytes,
-        load_elapsed_ms: loadElapsedMs,
-        last_elapsed_ms: null,
-      };
+      window.obadhRuntimeAssets.autosuggestModelBytes = bytes.byteLength;
 
       window.obadhAutosuggest = {
         stats,
         suggest: async (contextTokens, limit = 5) => {
-          const elapsedStart = performance.now();
-          const encoded = encodeAutosuggestContext(contextTokens, vocab.tokenToId, stats.context_length);
-          const inputData = new BigInt64Array(encoded.length);
-          for (let index = 0; index < encoded.length; index += 1) {
-            inputData[index] = BigInt(encoded[index]);
-          }
-
-          const inputName = session.inputNames[0];
-          const outputName = session.outputNames[0];
-          const outputs = await session.run({
-            [inputName]: new window.ort.Tensor('int64', inputData, [1, stats.context_length]),
-          });
-          const logits = outputs[outputName].data;
-          const candidates = topAutosuggestCandidates(logits, vocab.idToToken, limit);
-          stats.last_elapsed_ms = performance.now() - elapsedStart;
-          return {
-            context: contextTokens.slice(-stats.context_length),
-            token_ids: encoded,
-            elapsed_ms: stats.last_elapsed_ms,
-            model: { ...stats },
-            candidates,
-          };
+          const result = model.suggest(contextTokens, limit);
+          stats.last_elapsed_ms = result.elapsed_ms;
+          return result;
         },
       };
 
       window.autosuggestStats = stats;
-    }
-
-    function parseAutosuggestVocab(tsv) {
-      const idToToken = [];
-      const tokenToId = new Map();
-      const lines = tsv.split(/\r?\n/);
-      for (let index = 1; index < lines.length; index += 1) {
-        const line = lines[index];
-        if (!line) {
-          continue;
-        }
-        const [rawId, token] = line.split('\t');
-        const id = Number(rawId);
-        if (!Number.isInteger(id) || !token) {
-          continue;
-        }
-        idToToken[id] = token;
-        tokenToId.set(token, id);
-      }
-      return { idToToken, tokenToId };
-    }
-
-    function encodeAutosuggestContext(tokens, tokenToId, contextLength) {
-      const encoded = [1];
-      for (const token of tokens) {
-        encoded.push(tokenToId.get(token) || 2);
-      }
-      const clipped = encoded.slice(-contextLength);
-      while (clipped.length < contextLength) {
-        clipped.unshift(0);
-      }
-      return clipped;
-    }
-
-    function topAutosuggestCandidates(logits, idToToken, limit) {
-      const rows = [];
-      for (let id = 3; id < logits.length; id += 1) {
-        const token = idToToken[id];
-        if (!token) {
-          continue;
-        }
-        const score = Number(logits[id]);
-        if (rows.length < limit) {
-          rows.push({ id, token, score });
-          rows.sort((a, b) => b.score - a.score);
-          continue;
-        }
-        if (score > rows[rows.length - 1].score) {
-          rows[rows.length - 1] = { id, token, score };
-          rows.sort((a, b) => b.score - a.score);
-        }
-      }
-
-      return rows.map((row) => ({
-        text: row.token,
-        token_id: row.id,
-        score: Number(row.score.toFixed(4)),
-        source: 'autosuggest_neural',
-      }));
-    }
-
-    async function fetchedAssetSize(url) {
-      try {
-        const response = await fetch(`${url}?v=${OBADH_ASSET_VERSION}`, { method: 'HEAD', cache: 'no-store' });
-        if (response.ok) {
-          const length = Number(response.headers.get('content-length'));
-          if (Number.isFinite(length) && length > 0) {
-            return length;
-          }
-        }
-      } catch (_) {
-        // Fall back to zero; this metric is only for display.
-      }
-      return 0;
     }
 
     window.collectObadhRuntimeResources = () => {
@@ -1819,8 +1691,6 @@
         browserHeapLimitBytes: heap?.jsHeapSizeLimit ?? null,
         autocorrectAssetBytes: (assets.autocorrectFstBytes || 0) + (assets.loanwordFstBytes || 0),
         autosuggestModelBytes: assets.autosuggestModelBytes || null,
-        autosuggestVocabBytes: assets.autosuggestVocabBytes || null,
-        onnxRuntimeAssetBytes: assets.onnxRuntimeAssetBytes || null,
         autosuggestLastLatencyMs: window.autosuggestStats?.last_elapsed_ms ?? null,
         autosuggestLoadLatencyMs: window.autosuggestStats?.load_elapsed_ms ?? null,
       };

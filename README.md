@@ -54,7 +54,7 @@ flowchart LR
   O --> B[Bengali baseline]
   B --> C[Active-word autocorrect FST]
   C --> W[Correction candidates]
-  T[Committed Bengali text] --> N[Next-word ONNX autosuggest]
+  T[Committed Bengali text] --> N[Next-word ngram autosuggest]
   N --> S[Suggestion candidates]
 ```
 
@@ -144,23 +144,107 @@ Autosuggest is the next-word layer above committed Bengali text. It does not
 run while a Roman token is active, does not transliterate Roman input, and does
 not replace active-word autocorrect.
 
-The playground loads `obadh-autosuggest-next-word` v1:
+The production path starts with a compact n-gram candidate generator that
+retrieves likely next Bengali words through trigram -> bigram -> unigram
+backoff. A future neural layer can rerank this bounded candidate set, but the
+current shipped runtime is the n-gram artifact.
+
+The n-gram artifact is a fixed-width binary file designed for mmap/native and
+byte-buffer/WASM loading. It stores vocabulary text, sorted token lookup rows,
+bounded context rows, and candidate records in one portable blob.
+Native integrations should use `suggest_for_text_into` or
+`suggest_for_tokens_into` with a reused candidate buffer on the typing hot path.
+
+Build a local smoke artifact from the current corpus:
+
+```bash
+python3 -m tools.autosuggest.build_ngram_lm \
+  --backend memory \
+  --max-sentences 20000 \
+  --output target/autosuggest-smoke.bin
+
+cargo run --release --bin obadh-autosuggest -- inspect \
+  --input target/autosuggest-smoke.bin \
+  --pretty
+
+cargo run --release --bin obadh-autosuggest -- suggest \
+  --model target/autosuggest-smoke.bin \
+  --context 'আমি আজ' \
+  --top-k 5 \
+  --pretty
+```
+
+For full corpus artifact generation, use the SQLite backend. It is slower than
+the in-memory smoke path, but it keeps counting disk-backed, streams the final
+artifact sections, and preserves exact counts:
+
+```bash
+python3 -m tools.autosuggest.build_ngram_lm \
+  --backend sqlite \
+  --min-count 10 \
+  --max-candidates-per-prefix 4 \
+  --unigram-size 4096 \
+  --log-every-sentences 250000 \
+  --output data/autosuggest/models/ngram/autosuggest-ngram.bin
+```
+
+When tuning profile parameters, keep the SQLite count DB and re-export without
+recounting the corpus:
+
+```bash
+python3 -m tools.autosuggest.build_ngram_lm \
+  --backend sqlite \
+  --reuse-sqlite \
+  --sqlite-path data/autosuggest/models/ngram/autosuggest-ngram.sqlite \
+  --min-count 5 \
+  --max-candidates-per-prefix 4 \
+  --unigram-size 4096 \
+  --output target/autosuggest-profile.bin
+```
+
+Evaluate and benchmark an artifact:
+
+```bash
+python3 -m tools.autosuggest.eval_ngram_lm \
+  --model target/autosuggest-smoke.bin \
+  --source epub --source news --source wiki \
+  --max-sentences-per-source 5000 \
+  --top-k 10
+
+cargo run --release --bin obadh-autosuggest -- bench \
+  --model target/autosuggest-smoke.bin \
+  --context 'আমি আজ' \
+  --context 'বাংলাদেশের মানুষ' \
+  --iterations 200000 \
+  --pretty
+```
+
+Current full-corpus candidate profiles from the 161.6M-token corpus:
+
+| Profile | Artifact | Context rows | Replay top-5 | Native mean lookup |
+| --- | ---: | ---: | ---: | ---: |
+| mobile candidate layer | `15.99 MB` | `371,089` | `23.65%` | `~0.27 us` |
+| wider candidate layer | `31.94 MB` | `782,978` | `24.83%` | not sampled |
+| research/wide layer | `65.22 MB` | `1,519,688` | `27.27%` | not resampled |
+
+The replay metric is measured on corpus rows also used for counting, so it is a
+profile-comparison signal rather than a held-out product accuracy claim.
+
+The checked-in v0.4 runtime artifact is the mobile n-gram profile:
 
 | Item | Value |
 | --- | --- |
-| model family | compact fixed-context Transformer |
+| model family | bounded n-gram LM |
 | task | next Bengali word prediction |
-| context | newest `16` committed Bengali tokens |
-| short context behavior | left-pad with `<pad>` and include `<bos>` |
+| context | newest `2` committed Bengali tokens |
+| short context behavior | back off to bigram/unigram |
 | vocabulary | `32,768` tokens |
-| embedding dim | `192` |
-| layers / heads | `2` / `4` |
-| FFN dim | `512` |
-| export | ONNX opset `17` |
-| playground runtime | ONNX Runtime Web WASM |
-
-If the user has typed fewer than 16 committed words, missing slots are padded.
-If the user has typed more, only the newest 16 tokens are used.
+| unigram fallback | top `4,096` tokens |
+| bigram rows | `32,266` |
+| trigram rows | `338,823` |
+| candidate rows | `732,738` |
+| artifact bytes | `15,998,954` |
+| playground runtime | Obadh WASM parser over a binary artifact |
 
 Corpus snapshot:
 
@@ -174,34 +258,19 @@ Corpus snapshot:
 The vocabulary is built with `min_frequency = 3`, covers `148,611,832` corpus
 tokens, and reaches `91.94%` token coverage.
 
-Baseline evaluation snapshot:
+Mobile artifact replay snapshot:
 
 | Metric | Value |
 | --- | ---: |
-| loss | `6.1471` |
-| perplexity | `467.38` |
-| top-1 | `15.39%` |
-| top-3 | `24.79%` |
-| top-5 | `29.68%` |
+| top-1 | `12.04%` |
+| top-3 | `20.48%` |
+| top-5 | `23.65%` |
+| top-10 | `25.42%` |
+| MRR | `16.71%` |
 
-These numbers are for reproducibility and regression checks only. The current
-ONNX artifact validates the integration path, not product-quality autosuggest
-accuracy.
-
-Run a local ONNX sanity check:
-
-```bash
-python3 -m pip install -r tools/autosuggest/requirements.txt
-
-python3 -m tools.autosuggest.neural.predict \
-  --onnx data/autosuggest/models/neural/autosuggest.onnx \
-  --vocab data/autosuggest/models/neural/vocab.tsv \
-  --context 'আমি আজ' \
-  --top-k 5
-```
-
-Expected candidates currently include `সকালে`, `বৃহস্পতিবার`, `মঙ্গলবার`,
-`সোমবার`, and `শনিবার`.
+These numbers are for reproducibility and regression checks only. Replay is
+measured against corpus rows used for counting, so it is not a held-out product
+accuracy claim.
 
 ## Data Policy
 
@@ -214,7 +283,7 @@ data/autocorrect   -> obadh_autocorrect_dataset
 data/autosuggest   -> obadh_autosuggest_dataset
 ```
 
-Those dataset repos may use Git LFS for corpora, TSVs, FSTs, and ONNX model
+Those dataset repos may use Git LFS for corpora, TSVs, FSTs, and binary model
 artifacts. They must not contain training/runtime code. GitHub Pages runtime
 files under `docs/` are real bytes, not LFS pointers, because Pages branch
 deploys do not serve LFS objects as ordinary static assets.
@@ -277,9 +346,9 @@ engine.tokenize_phonetic_into("praNer", &mut units);
 | English loanword keys | `1,776` |
 | English loanword FST bytes | `89,427` |
 | optimized WASM | about `280 KB` |
-| autosuggest ONNX | `28,148,266` bytes |
+| autosuggest ngram artifact | `15,998,954` bytes |
 | autosuggest vocab | `1,058,854` bytes |
-| autosuggest browser latency sample | about `1.8-3.3 ms` |
+| autosuggest native lookup sample | `~0.27 us` |
 
 Autocorrect CLI process timings are not reported as keyboard latency because
 process startup dominates those measurements. Keyboard-time performance should
@@ -295,9 +364,9 @@ src/wasm/                   WebAssembly bindings
 src/bin/                    CLI binaries
 data/rules/                 documented deterministic rule sources
 data/autocorrect/           direct data submodule: lexicon TSVs and FSTs
-data/autosuggest/           direct data submodule: corpus, vocab, ONNX model
+data/autosuggest/           direct data submodule: corpus, vocab, ngram model
 tools/autocorrect/          corpus and loanword data utilities
-tools/autosuggest/          sentence corpus and neural model utilities
+tools/autosuggest/          sentence corpus, vocab, and ngram model utilities
 www/                        playground source
 docs/                       generated GitHub Pages distribution
 tests/                      regression suite

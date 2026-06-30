@@ -4,6 +4,7 @@
 //! to Bengali script, focusing on accuracy and linguistic correctness.
 
 pub mod autocorrect;
+pub mod autosuggest;
 pub mod definitions;
 pub mod engine;
 pub mod wasm;
@@ -20,6 +21,10 @@ pub use autocorrect::{
     RomanRepairKind, RomanRepairOptions, RomanRepairedOutput, AUTOCORRECT_FEATURE_DIM,
     DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES, DEFAULT_LOANWORD_FUZZY_CANDIDATES,
     DEFAULT_ROMAN_REPAIR_BEAM_SIZE, FST_MAX_LEVENSHTEIN_DISTANCE, LOANWORD_FUZZY_MAX_DISTANCE,
+};
+pub use autosuggest::{
+    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestLm, AutosuggestMetadata,
+    AutosuggestOptions, AutosuggestResult, AutosuggestSource, DEFAULT_AUTOSUGGEST_CANDIDATES,
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};

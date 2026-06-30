@@ -218,7 +218,7 @@ build_dist() {
         cp -r www/assets/* docs/assets/ || error "Failed to copy assets directory"
     fi
 
-    if [ -d "www/vendor" ]; then
+    if [ -d "www/vendor" ] && find "www/vendor" -mindepth 1 -print -quit | grep -q .; then
         mkdir -p docs/vendor
         cp -r www/vendor/* docs/vendor/ || error "Failed to copy vendor directory"
     fi
