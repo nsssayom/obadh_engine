@@ -1,6 +1,6 @@
 use super::lm::{
-    analyze_context_token, AutosuggestCandidate, AutosuggestContext, AutosuggestLm,
-    AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSource,
+    analyze_context_token, AutosuggestCandidate, AutosuggestCandidateId, AutosuggestContext,
+    AutosuggestLm, AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSource,
     MAX_AUTOSUGGEST_CONTEXT_TOKENS,
 };
 use crate::autosuggest::AutosuggestArtifactError;
@@ -59,7 +59,9 @@ pub struct AutosuggestSession<'lm, D: AsRef<[u8]>> {
     options: AutosuggestOptions,
     personal_scratch: Vec<PersonalAutosuggestSuggestion>,
     model_scratch: Vec<AutosuggestCandidate<'lm>>,
+    model_id_scratch: Vec<AutosuggestCandidateId>,
     candidates: Vec<AutosuggestCandidate<'lm>>,
+    id_candidates: Vec<AutosuggestCandidateId>,
 }
 
 impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
@@ -76,7 +78,9 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
             options,
             personal_scratch: Vec::with_capacity(capacity),
             model_scratch: Vec::with_capacity(capacity),
+            model_id_scratch: Vec::with_capacity(capacity),
             candidates: Vec::with_capacity(capacity),
+            id_candidates: Vec::with_capacity(capacity),
         }
     }
 
@@ -94,12 +98,12 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
 
     pub fn clear_context(&mut self) {
         self.context.clear();
-        self.candidates.clear();
+        self.clear_cached_suggestions();
     }
 
     pub fn push_boundary(&mut self) {
         self.context.push_boundary();
-        self.candidates.clear();
+        self.clear_cached_suggestions();
     }
 
     pub fn personal(&self) -> &PersonalAutosuggest {
@@ -112,7 +116,7 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
 
     pub fn replace_personal(&mut self, personal: PersonalAutosuggest) {
         self.personal = personal;
-        self.candidates.clear();
+        self.clear_cached_suggestions();
     }
 
     pub fn try_replace_personal(
@@ -132,17 +136,22 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
     pub fn set_options(&mut self, options: AutosuggestOptions) {
         self.options = options;
         self.ensure_candidate_capacity();
+        self.clear_cached_suggestions();
     }
 
     pub fn candidates(&self) -> &[AutosuggestCandidate<'lm>] {
         &self.candidates
     }
 
+    pub fn candidate_ids(&self) -> &[AutosuggestCandidateId] {
+        &self.id_candidates
+    }
+
     pub fn commit_token(&mut self, raw_token: &str) -> Result<bool, AutosuggestArtifactError> {
         let learned =
             self.personal
                 .observe_committed_token(self.lm, &mut self.context, raw_token)?;
-        self.candidates.clear();
+        self.clear_cached_suggestions();
         Ok(learned)
     }
 
@@ -162,7 +171,7 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
         let learned =
             self.personal
                 .observe_resolved_token_id(&mut self.context, token_id, boundary_after);
-        self.candidates.clear();
+        self.clear_cached_suggestions();
         Ok(learned)
     }
 
@@ -170,7 +179,7 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
     pub fn commit_unknown(&mut self, boundary_after: bool) {
         self.personal
             .observe_resolved_token_id(&mut self.context, None, boundary_after);
-        self.candidates.clear();
+        self.clear_cached_suggestions();
     }
 
     pub fn suggest(&mut self) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
@@ -182,6 +191,18 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
             &mut self.personal_scratch,
             &mut self.model_scratch,
             &mut self.candidates,
+        )
+    }
+
+    pub fn suggest_ids(&mut self) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
+        self.ensure_candidate_capacity();
+        self.personal.suggest_ids_with_lm_into(
+            self.lm,
+            self.context,
+            self.options,
+            &mut self.personal_scratch,
+            &mut self.model_id_scratch,
+            &mut self.id_candidates,
         )
     }
 
@@ -199,9 +220,19 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
                     .saturating_mul(mem::size_of::<AutosuggestCandidate<'lm>>()),
             )
             .saturating_add(
+                self.model_id_scratch
+                    .capacity()
+                    .saturating_mul(mem::size_of::<AutosuggestCandidateId>()),
+            )
+            .saturating_add(
                 self.candidates
                     .capacity()
                     .saturating_mul(mem::size_of::<AutosuggestCandidate<'lm>>()),
+            )
+            .saturating_add(
+                self.id_candidates
+                    .capacity()
+                    .saturating_mul(mem::size_of::<AutosuggestCandidateId>()),
             )
     }
 
@@ -218,7 +249,9 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
         let capacity = self.options.max_candidates.max(1);
         reserve_to(&mut self.personal_scratch, capacity);
         reserve_to(&mut self.model_scratch, capacity);
+        reserve_to(&mut self.model_id_scratch, capacity);
         reserve_to(&mut self.candidates, capacity);
+        reserve_to(&mut self.id_candidates, capacity);
     }
 
     fn validate_token_id(&self, token_id: u32) -> Result<(), AutosuggestArtifactError> {
@@ -226,6 +259,11 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
             return Err(AutosuggestArtifactError::InvalidTokenId(token_id));
         }
         Ok(())
+    }
+
+    fn clear_cached_suggestions(&mut self) {
+        self.candidates.clear();
+        self.id_candidates.clear();
     }
 }
 
@@ -633,6 +671,73 @@ impl PersonalAutosuggest {
                 }
                 output.push(AutosuggestCandidate {
                     text: lm.token_text(suggestion.token_id)?,
+                    token_id: suggestion.token_id,
+                    source: AutosuggestSource::Personal,
+                    count: u32::from(suggestion.count),
+                    score: suggestion.score,
+                });
+            }
+        }
+
+        Ok(metadata)
+    }
+
+    pub fn suggest_ids_with_lm_into<D: AsRef<[u8]>>(
+        &self,
+        lm: &AutosuggestLm<D>,
+        context: AutosuggestContext,
+        options: AutosuggestOptions,
+        personal_scratch: &mut Vec<PersonalAutosuggestSuggestion>,
+        model_scratch: &mut Vec<AutosuggestCandidateId>,
+        output: &mut Vec<AutosuggestCandidateId>,
+    ) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
+        output.clear();
+        let limit = options.max_candidates.max(1);
+        self.suggest_token_ids_into(context, limit, personal_scratch);
+        let has_context = !context.recent_token_ids().is_empty();
+
+        for suggestion in personal_scratch.iter() {
+            if output.len() >= limit {
+                break;
+            }
+            if has_context && suggestion.context_len == 0 {
+                continue;
+            }
+            output.push(AutosuggestCandidateId {
+                token_id: suggestion.token_id,
+                source: AutosuggestSource::Personal,
+                count: u32::from(suggestion.count),
+                score: suggestion.score,
+            });
+        }
+
+        let metadata = lm.suggest_ids_for_context_into(context, options, model_scratch)?;
+        for candidate in model_scratch.iter().copied() {
+            if output.len() >= limit {
+                break;
+            }
+            if output
+                .iter()
+                .any(|existing| existing.token_id == candidate.token_id)
+            {
+                continue;
+            }
+            output.push(candidate);
+        }
+
+        if has_context {
+            for suggestion in personal_scratch.iter() {
+                if output.len() >= limit {
+                    break;
+                }
+                if suggestion.context_len > 0
+                    || output
+                        .iter()
+                        .any(|existing| existing.token_id == suggestion.token_id)
+                {
+                    continue;
+                }
+                output.push(AutosuggestCandidateId {
                     token_id: suggestion.token_id,
                     source: AutosuggestSource::Personal,
                     count: u32::from(suggestion.count),
@@ -1147,6 +1252,66 @@ mod tests {
                 ("ভাত", AutosuggestSource::Bigram),
                 ("আমি", AutosuggestSource::Personal)
             ]
+        );
+    }
+
+    #[test]
+    fn session_candidate_id_api_matches_text_suggestions() {
+        let lm = fixture();
+        let mut session = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 2,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+
+        for _ in 0..2 {
+            session.clear_context();
+            assert!(session.commit_token("আমি").unwrap());
+            assert!(session.commit_token("খাই").unwrap());
+        }
+
+        session.clear_context();
+        assert!(session.commit_token("আমি").unwrap());
+        let text_metadata = session.suggest().unwrap();
+        let text_candidates = session
+            .candidates()
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.token_id,
+                    candidate.source,
+                    candidate.count,
+                    candidate.score,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let id_metadata = session.suggest_ids().unwrap();
+
+        assert_eq!(id_metadata, text_metadata);
+        assert_eq!(
+            session
+                .candidate_ids()
+                .iter()
+                .map(|candidate| (
+                    candidate.token_id,
+                    candidate.source,
+                    candidate.count,
+                    candidate.score
+                ))
+                .collect::<Vec<_>>(),
+            text_candidates
+        );
+        assert_eq!(
+            session
+                .candidate_ids()
+                .iter()
+                .map(|candidate| lm.materialize_candidate(*candidate).unwrap().text)
+                .collect::<Vec<_>>(),
+            vec!["খাই", "যাই", "ভাত", "আমি"]
         );
     }
 

@@ -93,14 +93,7 @@ class NgramLm:
         return self.token_to_id.get(token, UNK_ID)
 
     def suggest_ids(self, context_ids: list[int], limit: int) -> list[int]:
-        recent: list[int] = []
-        for token_id in context_ids:
-            if token_id > UNK_ID:
-                if len(recent) == 2:
-                    recent.pop(0)
-                recent.append(token_id)
-            elif token_id in (PAD_ID, BOS_ID, UNK_ID):
-                recent.clear()
+        recent = model_recent_context(context_ids, max_context=2)
 
         if self.score_mode == "backoff":
             return self._suggest_ids_backoff(recent, limit)
@@ -265,6 +258,27 @@ class NgramLm:
         return self.bytes[start : start + length].decode("utf-8")
 
 
+def model_recent_context(context_ids: list[int], max_context: int) -> list[int]:
+    recent: list[int] = []
+    at_sentence_start = True
+    for token_id in context_ids:
+        if token_id == BOS_ID:
+            recent.clear()
+            at_sentence_start = True
+        elif token_id > UNK_ID:
+            at_sentence_start = False
+            recent.append(token_id)
+            if len(recent) > max_context:
+                recent.pop(0)
+        elif token_id in (PAD_ID, UNK_ID):
+            recent.clear()
+            at_sentence_start = False
+
+    if at_sentence_start and not recent:
+        return [BOS_ID]
+    return recent
+
+
 def evaluate(
     model: Path,
     corpus_dir: Path,
@@ -361,6 +375,7 @@ def report(
             "trigram_rows": lm.trigram_row_count,
             "candidate_rows": lm.candidate_count,
         },
+        "context_semantics": "bos_sentence_start_unknown_fallback",
         "eligible_targets": total,
         "skipped_unknown_targets": skipped_unknown_target,
         "top1": ratio(hits[1]),

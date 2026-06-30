@@ -105,6 +105,7 @@ fn bench_autosuggest(c: &mut Criterion) {
     let context = autosuggest_context(&lm, AUTOSUGGEST_CONTEXT_TEXT);
     let token_cycle = autosuggest_token_cycle(&lm);
     let mut candidates = Vec::with_capacity(options.max_candidates);
+    let mut candidate_ids = Vec::with_capacity(options.max_candidates);
     let mut session = autosuggest_session(&lm, options, &token_cycle);
     let mut full_personal = full_personal_autosuggest();
     let mut cycle_index = 0_usize;
@@ -137,6 +138,17 @@ fn bench_autosuggest(c: &mut Criterion) {
         b.iter(|| {
             lm.suggest_for_context_into(black_box(context), black_box(options), &mut candidates)
                 .expect("shipped autosuggest context suggestion should succeed")
+        });
+    });
+
+    group.bench_function("suggest_ids_for_context_ngram", |b| {
+        b.iter(|| {
+            lm.suggest_ids_for_context_into(
+                black_box(context),
+                black_box(options),
+                &mut candidate_ids,
+            )
+            .expect("shipped autosuggest ID suggestion should succeed")
         });
     });
 

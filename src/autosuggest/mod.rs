@@ -18,7 +18,7 @@ pub use adaptive::{
 };
 pub use artifact::AutosuggestArtifactError;
 pub use lm::{
-    AutosuggestCandidate, AutosuggestContext, AutosuggestLm, AutosuggestMetadata,
-    AutosuggestOptions, AutosuggestResult, AutosuggestSource, DEFAULT_AUTOSUGGEST_CANDIDATES,
-    MAX_AUTOSUGGEST_CONTEXT_TOKENS,
+    AutosuggestCandidate, AutosuggestCandidateId, AutosuggestContext, AutosuggestLm,
+    AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSource,
+    DEFAULT_AUTOSUGGEST_CANDIDATES, MAX_AUTOSUGGEST_CONTEXT_TOKENS,
 };

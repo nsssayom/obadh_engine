@@ -23,8 +23,8 @@ pub use autocorrect::{
     DEFAULT_ROMAN_REPAIR_BEAM_SIZE, FST_MAX_LEVENSHTEIN_DISTANCE, LOANWORD_FUZZY_MAX_DISTANCE,
 };
 pub use autosuggest::{
-    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestContext, AutosuggestLm,
-    AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSession,
+    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestCandidateId, AutosuggestContext,
+    AutosuggestLm, AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSession,
     AutosuggestSource, PersonalAutosuggest, PersonalAutosuggestConfig, PersonalAutosuggestError,
     PersonalAutosuggestSuggestion, DEFAULT_AUTOSUGGEST_CANDIDATES,
     DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES, DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT,

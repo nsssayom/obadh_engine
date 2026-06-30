@@ -157,9 +157,14 @@ through a compact binary snapshot for local persistence.
 
 The n-gram artifact is a fixed-width binary file designed for mmap/native and
 byte-buffer/WASM loading. It stores vocabulary text, sorted token lookup rows,
-bounded context rows, and candidate records in one portable blob.
-Native integrations should use `suggest_for_text_into` or
-`suggest_for_tokens_into` with a reused candidate buffer on the typing hot path.
+bounded context rows, and candidate records in one portable blob. Native
+integrations should keep resolved token IDs on the typing hot path and use
+`suggest_ids_for_context_into`; materialize candidate text only for the few
+words that will actually be shown. The text APIs remain available for tools,
+tests, and slower integration points.
+Sentence starts and explicit sentence/editor boundaries use the artifact's
+learned `<bos>` row; unknown in-sentence tokens deliberately fall back without
+pretending to be a boundary.
 
 Build a local smoke artifact from the current corpus:
 
@@ -273,7 +278,7 @@ The checked-in runtime artifact is the mobile n-gram profile:
 | model family | bounded n-gram LM |
 | task | next Bengali word prediction |
 | context | newest `2` committed Bengali tokens |
-| short context behavior | back off to bigram/unigram |
+| short context behavior | `<bos>` at sentence start, then bigram/unigram backoff |
 | vocabulary | `32,768` tokens |
 | unigram fallback | top `4,096` tokens |
 | bigram rows | `32,266` |
@@ -285,11 +290,12 @@ The checked-in runtime artifact is the mobile n-gram profile:
 | playground runtime | Obadh WASM parser over a binary artifact |
 
 Keyboard integrations should keep an `AutosuggestContext` as words are
-committed and call `suggest_for_context_into` with a reused candidate buffer.
-For personalized suggestions, keep an `AutosuggestSession` per editor surface.
+committed and call `suggest_ids_for_context_into` with a reused candidate-ID
+buffer. For personalized suggestions, keep an `AutosuggestSession` per editor
+surface and call `suggest_ids` when the platform can stay token-ID-first.
 Commit resolved vocabulary IDs through `commit_token_id` on the hot path, use
 `commit_token` only when text still needs lookup, and reuse the session-owned
-personal/model/output buffers through `suggest`. Persist personalization with
+personal/model/output buffers. Persist personalization with
 `write_personal_snapshot_into` when the platform can reuse a save buffer. The
 personal store grows lazily, so empty editor sessions do not reserve the full
 history cap.
@@ -403,7 +409,8 @@ engine.tokenize_phonetic_into("praNer", &mut units);
 | optimized WASM | about `280 KB` |
 | autosuggest ngram artifact | `16,792,106` bytes |
 | autosuggest vocab | `1,058,854` bytes |
-| autosuggest native context lookup sample | `~0.10 us` |
+| autosuggest native ID context lookup sample | `~0.060 us` |
+| autosuggest native text context lookup sample | `~0.134 us` |
 
 Autocorrect CLI process timings are not reported as keyboard latency because
 process startup dominates those measurements. Keyboard-time performance should
