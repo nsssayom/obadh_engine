@@ -26,6 +26,7 @@ impl Default for AutosuggestOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutosuggestSource {
+    Personal,
     Trigram,
     Bigram,
     Unigram,
@@ -34,6 +35,7 @@ pub enum AutosuggestSource {
 impl AutosuggestSource {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Personal => "personal",
             Self::Trigram => "trigram",
             Self::Bigram => "bigram",
             Self::Unigram => "unigram",
@@ -701,6 +703,7 @@ fn candidate_precedes(
 
 fn source_priority(source: AutosuggestSource) -> u8 {
     match source {
+        AutosuggestSource::Personal => 4,
         AutosuggestSource::Trigram => 3,
         AutosuggestSource::Bigram => 2,
         AutosuggestSource::Unigram => 1,
@@ -722,12 +725,12 @@ fn push_recent_context_id(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ContextToken<'a> {
-    text: Option<&'a str>,
-    boundary_after: bool,
+pub(crate) struct ContextToken<'a> {
+    pub(crate) text: Option<&'a str>,
+    pub(crate) boundary_after: bool,
 }
 
-fn analyze_context_token(raw: &str) -> ContextToken<'_> {
+pub(crate) fn analyze_context_token(raw: &str) -> ContextToken<'_> {
     let token = raw.trim_matches(is_context_punctuation);
     ContextToken {
         text: if token.is_empty() { None } else { Some(token) },

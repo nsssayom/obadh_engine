@@ -149,6 +149,12 @@ retrieves likely next Bengali words through trigram -> bigram -> unigram
 backoff. A future neural layer can rerank this bounded candidate set, but the
 current shipped runtime is the n-gram artifact.
 
+Runtime integrations can layer `PersonalAutosuggest` above the static artifact
+for on-device learning. It stores only bounded token-id transitions, keeps the
+static corpus artifact unchanged, and can merge personal candidates with the
+model using caller-owned scratch buffers. The personal layer can also round-trip
+through a compact binary snapshot for local persistence.
+
 The n-gram artifact is a fixed-width binary file designed for mmap/native and
 byte-buffer/WASM loading. It stores vocabulary text, sorted token lookup rows,
 bounded context rows, and candidate records in one portable blob.
@@ -272,6 +278,9 @@ The checked-in runtime artifact is the mobile n-gram profile:
 
 Keyboard integrations should keep an `AutosuggestContext` as words are
 committed and call `suggest_for_context_into` with a reused candidate buffer.
+For personalized suggestions, feed committed token IDs into
+`PersonalAutosuggest::observe_committed_token` and call `suggest_with_lm_into`
+with reused personal/model/output buffers.
 The text-based APIs remain useful for tools and tests, but they intentionally
 include token parsing and lookup overhead that a keyboard does not need on each
 suggestion request. Sentence-ending punctuation (`।`, `॥`, `.`, `!`, `?`, and
@@ -394,6 +403,7 @@ be measured inside loaded runtimes.
 src/engine/                 deterministic tokenizer/transliterator
 src/definitions/            compiled rule tables
 src/autocorrect/            FST candidate generation and ranking primitives
+src/autosuggest/            static ngram runtime and bounded personal overlay
 src/wasm/                   WebAssembly bindings
 src/bin/                    CLI binaries
 data/rules/                 documented deterministic rule sources

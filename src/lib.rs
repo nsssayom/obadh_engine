@@ -24,8 +24,11 @@ pub use autocorrect::{
 };
 pub use autosuggest::{
     AutosuggestArtifactError, AutosuggestCandidate, AutosuggestContext, AutosuggestLm,
-    AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSource,
-    DEFAULT_AUTOSUGGEST_CANDIDATES, MAX_AUTOSUGGEST_CONTEXT_TOKENS,
+    AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSession,
+    AutosuggestSource, PersonalAutosuggest, PersonalAutosuggestConfig, PersonalAutosuggestError,
+    PersonalAutosuggestSuggestion, DEFAULT_AUTOSUGGEST_CANDIDATES,
+    DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES, DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT,
+    MAX_AUTOSUGGEST_CONTEXT_TOKENS,
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};

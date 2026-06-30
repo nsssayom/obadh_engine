@@ -758,6 +758,7 @@ fn autosuggest_candidate_info(candidate: &AutosuggestCandidate<'_>) -> Autosugge
 
 fn autosuggest_source_name(source: AutosuggestSource) -> &'static str {
     match source {
+        AutosuggestSource::Personal => "autosuggest_personal",
         AutosuggestSource::Trigram => "autosuggest_ngram_trigram",
         AutosuggestSource::Bigram => "autosuggest_ngram_bigram",
         AutosuggestSource::Unigram => "autosuggest_ngram_unigram",
