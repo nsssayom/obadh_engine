@@ -7,8 +7,7 @@ use super::artifact::{
 };
 
 pub const DEFAULT_AUTOSUGGEST_CANDIDATES: usize = 5;
-const PAD_ID: u32 = 0;
-const BOS_ID: u32 = 1;
+pub const MAX_AUTOSUGGEST_CONTEXT_TOKENS: usize = 2;
 const UNK_ID: u32 = 2;
 
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +50,73 @@ pub struct AutosuggestCandidate<'a> {
     pub score: i32,
 }
 
+/// Incremental next-word context for keyboard integrations.
+///
+/// The autosuggest model only consumes the newest two known Bengali token IDs.
+/// Keeping this state outside the LM avoids rescanning the committed text on
+/// every keystroke. Unknown or special token IDs clear the recent context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct AutosuggestContext {
+    token_count: usize,
+    ids: [u32; MAX_AUTOSUGGEST_CONTEXT_TOKENS],
+    id_len: usize,
+}
+
+impl AutosuggestContext {
+    pub fn new() -> Self {
+        Self {
+            token_count: 0,
+            ids: [0; MAX_AUTOSUGGEST_CONTEXT_TOKENS],
+            id_len: 0,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.token_count = 0;
+        self.id_len = 0;
+    }
+
+    pub fn clear_recent(&mut self) {
+        self.id_len = 0;
+    }
+
+    pub fn push_boundary(&mut self) {
+        self.clear_recent();
+    }
+
+    pub fn token_count(self) -> usize {
+        self.token_count
+    }
+
+    pub fn matched_token_count(self) -> usize {
+        self.id_len
+    }
+
+    pub fn recent_token_ids(&self) -> &[u32] {
+        &self.ids[..self.id_len]
+    }
+
+    pub fn push_token_id(&mut self, token_id: Option<u32>) {
+        self.token_count += 1;
+        match token_id {
+            Some(id) if id > UNK_ID => {
+                push_recent_context_id(&mut self.ids, &mut self.id_len, id);
+            }
+            _ => self.id_len = 0,
+        }
+    }
+
+    pub fn push_unknown(&mut self) {
+        self.push_token_id(None);
+    }
+}
+
+impl Default for AutosuggestContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AutosuggestResult<'a> {
     pub context_token_count: usize,
@@ -68,12 +134,18 @@ pub struct AutosuggestMetadata {
 pub struct AutosuggestLm<D: AsRef<[u8]> = Vec<u8>> {
     bytes: D,
     layout: Layout,
+    score_mode: ScoreMode,
 }
 
 impl<D: AsRef<[u8]>> AutosuggestLm<D> {
     pub fn from_bytes(bytes: D) -> Result<Self, AutosuggestArtifactError> {
         let layout = parse_layout(bytes.as_ref())?;
-        Ok(Self { bytes, layout })
+        let score_mode = detect_score_mode(bytes.as_ref(), layout)?;
+        Ok(Self {
+            bytes,
+            layout,
+            score_mode,
+        })
     }
 
     pub fn vocab_size(&self) -> usize {
@@ -149,26 +221,10 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
         options: AutosuggestOptions,
         output: &mut Vec<AutosuggestCandidate<'a>>,
     ) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
-        let mut token_count = 0_usize;
-        let mut ids = [0_u32; 2];
-        let mut id_len = 0_usize;
-        output.clear();
+        let mut autosuggest_context = AutosuggestContext::new();
+        self.push_context_text(&mut autosuggest_context, context)?;
 
-        for raw_token in context.split_whitespace() {
-            let Some(token) = clean_context_token(raw_token) else {
-                continue;
-            };
-            token_count += 1;
-            match self.token_id(token)? {
-                Some(id) if id > UNK_ID => {
-                    push_recent_context_id(&mut ids, &mut id_len, id);
-                }
-                Some(BOS_ID) | Some(PAD_ID) | Some(UNK_ID) | None => id_len = 0,
-                Some(_) => id_len = 0,
-            }
-        }
-
-        self.suggest_for_token_ids_into(token_count, &ids[..id_len], options, output)
+        self.suggest_for_context_into(autosuggest_context, options, output)
     }
 
     pub fn suggest_for_tokens(
@@ -191,20 +247,88 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
         options: AutosuggestOptions,
         output: &mut Vec<AutosuggestCandidate<'a>>,
     ) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
-        let mut ids = [0_u32; 2];
-        let mut id_len = 0_usize;
-        output.clear();
+        let mut context = AutosuggestContext::new();
 
         for token in context_tokens {
-            match self.token_id(token)? {
-                Some(id) if id > UNK_ID => {
-                    push_recent_context_id(&mut ids, &mut id_len, id);
+            self.push_context_token(&mut context, token)?;
+        }
+        self.suggest_for_context_into(context, options, output)
+    }
+
+    pub fn push_context_token(
+        &self,
+        context: &mut AutosuggestContext,
+        raw_token: &str,
+    ) -> Result<(), AutosuggestArtifactError> {
+        let token = analyze_context_token(raw_token);
+        if let Some(token) = token.text {
+            context.push_token_id(self.token_id(token)?);
+        }
+        if token.boundary_after {
+            context.push_boundary();
+        }
+        Ok(())
+    }
+
+    pub fn push_context_text(
+        &self,
+        context: &mut AutosuggestContext,
+        text: &str,
+    ) -> Result<(), AutosuggestArtifactError> {
+        let mut token_start = None;
+
+        for (index, ch) in text.char_indices() {
+            if ch.is_whitespace() {
+                if let Some(start) = token_start.take() {
+                    self.push_context_token(context, &text[start..index])?;
                 }
-                Some(BOS_ID) | Some(PAD_ID) | Some(UNK_ID) | None => id_len = 0,
-                Some(_) => id_len = 0,
+                if is_editor_boundary(ch) {
+                    context.push_boundary();
+                }
+            } else if token_start.is_none() {
+                token_start = Some(index);
             }
         }
-        self.suggest_for_token_ids_into(context_tokens.len(), &ids[..id_len], options, output)
+
+        if let Some(start) = token_start {
+            self.push_context_token(context, &text[start..])?;
+        }
+
+        Ok(())
+    }
+
+    pub fn suggest_for_context(
+        &self,
+        context: AutosuggestContext,
+        options: AutosuggestOptions,
+    ) -> Result<AutosuggestResult<'_>, AutosuggestArtifactError> {
+        let mut candidates = Vec::with_capacity(options.max_candidates.max(1));
+        let metadata = self.suggest_for_context_into(context, options, &mut candidates)?;
+        Ok(AutosuggestResult {
+            context_token_count: metadata.context_token_count,
+            matched_context_token_count: metadata.matched_context_token_count,
+            candidates,
+        })
+    }
+
+    pub fn suggest_for_context_into<'a>(
+        &'a self,
+        context: AutosuggestContext,
+        options: AutosuggestOptions,
+        output: &mut Vec<AutosuggestCandidate<'a>>,
+    ) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
+        output.clear();
+        for token_id in context.recent_token_ids() {
+            if *token_id >= self.layout.header.vocab_size {
+                return Err(AutosuggestArtifactError::InvalidTokenId(*token_id));
+            }
+        }
+        self.suggest_for_token_ids_into(
+            context.token_count(),
+            context.recent_token_ids(),
+            options,
+            output,
+        )
     }
 
     fn suggest_for_token_ids_into<'a>(
@@ -215,10 +339,45 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
         candidates: &mut Vec<AutosuggestCandidate<'a>>,
     ) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
         let limit = options.max_candidates.max(1);
+        if self.score_mode == ScoreMode::BackoffOrder {
+            return self.suggest_for_token_ids_backoff_into(
+                context_token_count,
+                context_ids,
+                limit,
+                candidates,
+            );
+        }
 
         if let [prefix1, prefix2] = context_ids {
             if let Some(row) = self.find_trigram_row(*prefix1, *prefix2)? {
-                self.collect_candidates(
+                self.merge_candidates(row.0, row.1, AutosuggestSource::Trigram, limit, candidates)?;
+            }
+        }
+
+        if let Some(prefix) = context_ids.last().copied() {
+            if let Some(row) = self.find_bigram_row(prefix)? {
+                self.merge_candidates(row.0, row.1, AutosuggestSource::Bigram, limit, candidates)?;
+            }
+        }
+
+        self.merge_unigrams(limit, candidates)?;
+
+        Ok(AutosuggestMetadata {
+            context_token_count,
+            matched_context_token_count: context_ids.len(),
+        })
+    }
+
+    fn suggest_for_token_ids_backoff_into<'a>(
+        &'a self,
+        context_token_count: usize,
+        context_ids: &[u32],
+        limit: usize,
+        candidates: &mut Vec<AutosuggestCandidate<'a>>,
+    ) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
+        if let [prefix1, prefix2] = context_ids {
+            if let Some(row) = self.find_trigram_row(*prefix1, *prefix2)? {
+                self.append_candidates(
                     row.0,
                     row.1,
                     AutosuggestSource::Trigram,
@@ -231,7 +390,7 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
         if candidates.len() < limit {
             if let Some(prefix) = context_ids.last().copied() {
                 if let Some(row) = self.find_bigram_row(prefix)? {
-                    self.collect_candidates(
+                    self.append_candidates(
                         row.0,
                         row.1,
                         AutosuggestSource::Bigram,
@@ -243,7 +402,7 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
         }
 
         if candidates.len() < limit {
-            self.collect_unigrams(limit, candidates)?;
+            self.append_unigrams(limit, candidates)?;
         }
 
         Ok(AutosuggestMetadata {
@@ -303,7 +462,24 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
         Ok(None)
     }
 
-    fn collect_unigrams<'a>(
+    fn merge_unigrams<'a>(
+        &'a self,
+        limit: usize,
+        output: &mut Vec<AutosuggestCandidate<'a>>,
+    ) -> Result<(), AutosuggestArtifactError> {
+        let len = self.layout.header.unigram_count as usize;
+        for index in 0..len {
+            let offset = self.layout.sections.unigrams + index * CANDIDATE_RECORD_LEN;
+            if self.merge_candidate_at(offset, AutosuggestSource::Unigram, limit, output)?
+                == MergeStatus::Stop
+            {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn append_unigrams<'a>(
         &'a self,
         limit: usize,
         output: &mut Vec<AutosuggestCandidate<'a>>,
@@ -314,12 +490,39 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
                 break;
             }
             let offset = self.layout.sections.unigrams + index * CANDIDATE_RECORD_LEN;
-            self.collect_candidate_at(offset, AutosuggestSource::Unigram, output)?;
+            self.append_candidate_at(offset, AutosuggestSource::Unigram, output)?;
         }
         Ok(())
     }
 
-    fn collect_candidates<'a>(
+    fn merge_candidates<'a>(
+        &'a self,
+        start: u32,
+        len: u32,
+        source: AutosuggestSource,
+        limit: usize,
+        output: &mut Vec<AutosuggestCandidate<'a>>,
+    ) -> Result<(), AutosuggestArtifactError> {
+        let start = start as usize;
+        let len = len as usize;
+        let end = start
+            .checked_add(len)
+            .ok_or(AutosuggestArtifactError::InvalidSectionLayout)?;
+        if end > self.layout.header.candidate_count as usize {
+            return Err(AutosuggestArtifactError::InvalidSectionLayout);
+        }
+
+        for index in start..end {
+            let offset = self.layout.sections.candidates + index * CANDIDATE_RECORD_LEN;
+            if self.merge_candidate_at(offset, source, limit, output)? == MergeStatus::Stop {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn append_candidates<'a>(
         &'a self,
         start: u32,
         len: u32,
@@ -341,13 +544,13 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
                 break;
             }
             let offset = self.layout.sections.candidates + index * CANDIDATE_RECORD_LEN;
-            self.collect_candidate_at(offset, source, output)?;
+            self.append_candidate_at(offset, source, output)?;
         }
 
         Ok(())
     }
 
-    fn collect_candidate_at<'a>(
+    fn append_candidate_at<'a>(
         &'a self,
         offset: usize,
         source: AutosuggestSource,
@@ -375,6 +578,62 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
         Ok(())
     }
 
+    fn merge_candidate_at<'a>(
+        &'a self,
+        offset: usize,
+        source: AutosuggestSource,
+        limit: usize,
+        output: &mut Vec<AutosuggestCandidate<'a>>,
+    ) -> Result<MergeStatus, AutosuggestArtifactError> {
+        let bytes = self.bytes.as_ref();
+        let token_id = read_u32(bytes, offset)?;
+        if token_id <= UNK_ID {
+            return Ok(MergeStatus::Continue);
+        }
+        let count = read_u32(bytes, offset + 4)?;
+        let score = read_i32(bytes, offset + 8)?;
+
+        if let Some(position) = output
+            .iter()
+            .position(|candidate| candidate.token_id == token_id)
+        {
+            if candidate_precedes(score, source, count, token_id, &output[position]) {
+                output.remove(position);
+            } else if output.len() >= limit
+                && output
+                    .last()
+                    .is_some_and(|last| !candidate_precedes(score, source, count, token_id, last))
+            {
+                return Ok(MergeStatus::Stop);
+            } else {
+                return Ok(MergeStatus::Continue);
+            }
+        } else if output.len() >= limit
+            && output
+                .last()
+                .is_some_and(|last| !candidate_precedes(score, source, count, token_id, last))
+        {
+            return Ok(MergeStatus::Stop);
+        } else if output.len() >= limit {
+            output.pop();
+        }
+
+        let text = self.token_text(token_id)?;
+        let candidate = AutosuggestCandidate {
+            text,
+            token_id,
+            source,
+            count,
+            score,
+        };
+        let insert_at = output
+            .iter()
+            .position(|existing| candidate_precedes(score, source, count, token_id, existing))
+            .unwrap_or(output.len());
+        output.insert(insert_at, candidate);
+        Ok(MergeStatus::Accepted)
+    }
+
     fn token_bytes(&self, offset: u32, len: u32) -> Result<&[u8], AutosuggestArtifactError> {
         let start = self
             .layout
@@ -392,7 +651,67 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
     }
 }
 
-fn push_recent_context_id(ids: &mut [u32; 2], len: &mut usize, id: u32) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScoreMode {
+    BackoffOrder,
+    InterpolatedScore,
+}
+
+fn detect_score_mode(bytes: &[u8], layout: Layout) -> Result<ScoreMode, AutosuggestArtifactError> {
+    let sample_len = (layout.header.unigram_count as usize).min(8);
+    if sample_len == 0 {
+        return Ok(ScoreMode::InterpolatedScore);
+    }
+
+    for index in 0..sample_len {
+        let offset = layout.sections.unigrams + index * CANDIDATE_RECORD_LEN;
+        let count = read_u32(bytes, offset + 4)?;
+        let score = read_i32(bytes, offset + 8)?;
+        if score < 0 || score as u32 != count {
+            return Ok(ScoreMode::InterpolatedScore);
+        }
+    }
+
+    Ok(ScoreMode::BackoffOrder)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MergeStatus {
+    Accepted,
+    Continue,
+    Stop,
+}
+
+fn candidate_precedes(
+    score: i32,
+    source: AutosuggestSource,
+    count: u32,
+    token_id: u32,
+    other: &AutosuggestCandidate<'_>,
+) -> bool {
+    score > other.score
+        || (score == other.score
+            && (source_priority(source), count, std::cmp::Reverse(token_id))
+                > (
+                    source_priority(other.source),
+                    other.count,
+                    std::cmp::Reverse(other.token_id),
+                ))
+}
+
+fn source_priority(source: AutosuggestSource) -> u8 {
+    match source {
+        AutosuggestSource::Trigram => 3,
+        AutosuggestSource::Bigram => 2,
+        AutosuggestSource::Unigram => 1,
+    }
+}
+
+fn push_recent_context_id(
+    ids: &mut [u32; MAX_AUTOSUGGEST_CONTEXT_TOKENS],
+    len: &mut usize,
+    id: u32,
+) {
     if *len < 2 {
         ids[*len] = id;
         *len += 1;
@@ -402,19 +721,42 @@ fn push_recent_context_id(ids: &mut [u32; 2], len: &mut usize, id: u32) {
     }
 }
 
-fn clean_context_token(raw: &str) -> Option<&str> {
-    let token = raw.trim_matches(|ch: char| {
-        ch.is_ascii_punctuation()
-            || matches!(
-                ch,
-                '।' | '॥' | ',' | ';' | ':' | '!' | '?' | '"' | '\'' | '(' | ')' | '[' | ']'
-            )
-    });
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContextToken<'a> {
+    text: Option<&'a str>,
+    boundary_after: bool,
+}
+
+fn analyze_context_token(raw: &str) -> ContextToken<'_> {
+    let token = raw.trim_matches(is_context_punctuation);
+    ContextToken {
+        text: if token.is_empty() { None } else { Some(token) },
+        boundary_after: has_trailing_sentence_boundary(raw),
     }
+}
+
+fn has_trailing_sentence_boundary(raw: &str) -> bool {
+    let mut found_boundary = false;
+    for ch in raw.chars().rev() {
+        if is_context_punctuation(ch) {
+            found_boundary |= is_sentence_boundary(ch);
+            continue;
+        }
+        return found_boundary;
+    }
+    found_boundary
+}
+
+fn is_context_punctuation(ch: char) -> bool {
+    ch.is_ascii_punctuation() || matches!(ch, '।' | '॥' | '…' | '“' | '”' | '‘' | '’' | '—' | '–')
+}
+
+fn is_sentence_boundary(ch: char) -> bool {
+    matches!(ch, '।' | '॥' | '.' | '!' | '?' | '…')
+}
+
+fn is_editor_boundary(ch: char) -> bool {
+    matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
 #[cfg(test)]
@@ -436,15 +778,15 @@ mod tests {
         ];
         AutosuggestLm::from_bytes(build_fixture(
             &tokens,
-            &[(5, 100), (7, 90), (8, 80)],
+            &[(5, 100, -800), (7, 90, -900), (8, 80, -950)],
             &[
                 Row {
                     context: vec![4],
-                    candidates: vec![(5, 40), (7, 12)],
+                    candidates: vec![(5, 40, -700), (7, 12, -850)],
                 },
                 Row {
                     context: vec![3, 4],
-                    candidates: vec![(7, 9), (5, 7)],
+                    candidates: vec![(7, 9, -500), (5, 7, -600)],
                 },
             ],
         ))
@@ -482,6 +824,72 @@ mod tests {
     }
 
     #[test]
+    fn lower_order_candidates_can_outrank_weak_specific_context_by_score() {
+        let tokens = ["<pad>", "<bos>", "<unk>", "আমি", "আজ", "সকালে", "যাব", "না"];
+        let lm = AutosuggestLm::from_bytes(build_fixture(
+            &tokens,
+            &[(5, 1000, -400), (6, 900, -450), (7, 800, -500)],
+            &[
+                Row {
+                    context: vec![4],
+                    candidates: vec![(6, 20, -300), (7, 10, -700)],
+                },
+                Row {
+                    context: vec![3, 4],
+                    candidates: vec![(7, 3, -900)],
+                },
+            ],
+        ))
+        .unwrap();
+
+        let result = lm
+            .suggest_for_text("আমি আজ", AutosuggestOptions { max_candidates: 3 })
+            .unwrap();
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| (candidate.text, candidate.source))
+                .collect::<Vec<_>>(),
+            vec![
+                ("যাব", AutosuggestSource::Bigram),
+                ("সকালে", AutosuggestSource::Unigram),
+                ("না", AutosuggestSource::Unigram)
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_count_scored_artifacts_keep_backoff_order() {
+        let tokens = ["<pad>", "<bos>", "<unk>", "আমি", "আজ", "সকালে", "যাব", "খাব"];
+        let lm = AutosuggestLm::from_bytes(build_fixture(
+            &tokens,
+            &[(5, 100, 100), (6, 90, 90), (7, 80, 80)],
+            &[Row {
+                context: vec![3, 4],
+                candidates: vec![(6, 9, 9), (5, 7, 7)],
+            }],
+        ))
+        .unwrap();
+
+        let result = lm
+            .suggest_for_text("আমি আজ", AutosuggestOptions { max_candidates: 3 })
+            .unwrap();
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| (candidate.text, candidate.source))
+                .collect::<Vec<_>>(),
+            vec![
+                ("যাব", AutosuggestSource::Trigram),
+                ("সকালে", AutosuggestSource::Trigram),
+                ("খাব", AutosuggestSource::Unigram)
+            ]
+        );
+    }
+
+    #[test]
     fn unknown_context_falls_back_to_unigram() {
         let lm = fixture();
         let result = lm
@@ -496,6 +904,182 @@ mod tests {
             vec!["সকালে", "যাব"]
         );
         assert_eq!(result.matched_context_token_count, 0);
+    }
+
+    #[test]
+    fn incremental_context_api_matches_text_api() {
+        let lm = fixture();
+        let mut context = AutosuggestContext::new();
+        lm.push_context_token(&mut context, "আমি").unwrap();
+        lm.push_context_token(&mut context, "“আজ,”").unwrap();
+
+        assert_eq!(context.token_count(), 2);
+        assert_eq!(context.matched_token_count(), 2);
+        assert_eq!(context.recent_token_ids(), &[3, 4]);
+
+        let from_context = lm
+            .suggest_for_context(context, AutosuggestOptions { max_candidates: 4 })
+            .unwrap();
+        let from_text = lm
+            .suggest_for_text("আমি আজ", AutosuggestOptions { max_candidates: 4 })
+            .unwrap();
+        assert_eq!(
+            from_context
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text)
+                .collect::<Vec<_>>(),
+            from_text
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn sentence_boundary_resets_recent_context_after_committed_word() {
+        let lm = fixture();
+        let mut context = AutosuggestContext::new();
+        lm.push_context_token(&mut context, "আমি").unwrap();
+        lm.push_context_token(&mut context, "আজ।").unwrap();
+
+        assert_eq!(context.token_count(), 2);
+        assert_eq!(context.matched_token_count(), 0);
+        assert!(context.recent_token_ids().is_empty());
+
+        let result = lm
+            .suggest_for_context(context, AutosuggestOptions { max_candidates: 2 })
+            .unwrap();
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text)
+                .collect::<Vec<_>>(),
+            vec!["সকালে", "যাব"]
+        );
+    }
+
+    #[test]
+    fn punctuation_only_sentence_boundary_resets_recent_context_without_counting_word() {
+        let lm = fixture();
+        let mut context = AutosuggestContext::new();
+        lm.push_context_token(&mut context, "আমি").unwrap();
+        lm.push_context_token(&mut context, "আজ").unwrap();
+        lm.push_context_token(&mut context, "।").unwrap();
+
+        assert_eq!(context.token_count(), 2);
+        assert_eq!(context.matched_token_count(), 0);
+        assert!(context.recent_token_ids().is_empty());
+    }
+
+    #[test]
+    fn text_api_resets_context_after_sentence_boundary() {
+        let lm = fixture();
+        let result = lm
+            .suggest_for_text("আমি আজ।", AutosuggestOptions { max_candidates: 2 })
+            .unwrap();
+        assert_eq!(result.context_token_count, 2);
+        assert_eq!(result.matched_context_token_count, 0);
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text)
+                .collect::<Vec<_>>(),
+            vec!["সকালে", "যাব"]
+        );
+    }
+
+    #[test]
+    fn text_api_keeps_context_across_regular_spaces() {
+        let lm = fixture();
+        let result = lm
+            .suggest_for_text("আমি   আজ", AutosuggestOptions { max_candidates: 4 })
+            .unwrap();
+        assert_eq!(result.context_token_count, 2);
+        assert_eq!(result.matched_context_token_count, 2);
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text)
+                .collect::<Vec<_>>(),
+            vec!["যাব", "সকালে", "খাব"]
+        );
+    }
+
+    #[test]
+    fn text_api_resets_context_after_editor_boundary() {
+        let lm = fixture();
+        let result = lm
+            .suggest_for_text("আমি আজ\n", AutosuggestOptions { max_candidates: 2 })
+            .unwrap();
+        assert_eq!(result.context_token_count, 2);
+        assert_eq!(result.matched_context_token_count, 0);
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text)
+                .collect::<Vec<_>>(),
+            vec!["সকালে", "যাব"]
+        );
+    }
+
+    #[test]
+    fn explicit_context_boundary_resets_recent_ids_without_counting_word() {
+        let lm = fixture();
+        let mut context = AutosuggestContext::new();
+        lm.push_context_token(&mut context, "আমি").unwrap();
+        lm.push_context_token(&mut context, "আজ").unwrap();
+        context.push_boundary();
+
+        assert_eq!(context.token_count(), 2);
+        assert_eq!(context.matched_token_count(), 0);
+        assert!(context.recent_token_ids().is_empty());
+    }
+
+    #[test]
+    fn incremental_context_resets_on_unknown_token_ids() {
+        let lm = fixture();
+        let mut context = AutosuggestContext::new();
+        context.push_token_id(lm.token_id("আমি").unwrap());
+        context.push_token_id(lm.token_id("অচেনা").unwrap());
+
+        assert_eq!(context.token_count(), 2);
+        assert_eq!(context.matched_token_count(), 0);
+
+        let result = lm
+            .suggest_for_context(context, AutosuggestOptions { max_candidates: 2 })
+            .unwrap();
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text)
+                .collect::<Vec<_>>(),
+            vec!["সকালে", "যাব"]
+        );
+    }
+
+    #[test]
+    fn incremental_context_rejects_invalid_token_ids() {
+        let lm = fixture();
+        let mut context = AutosuggestContext::new();
+        context.push_token_id(Some(99));
+        let mut candidates = Vec::with_capacity(4);
+
+        let error = lm
+            .suggest_for_context_into(
+                context,
+                AutosuggestOptions { max_candidates: 4 },
+                &mut candidates,
+            )
+            .unwrap_err();
+        assert_eq!(error, AutosuggestArtifactError::InvalidTokenId(99));
+        assert!(candidates.is_empty());
     }
 
     #[test]

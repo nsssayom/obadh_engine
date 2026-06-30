@@ -23,8 +23,9 @@ pub use autocorrect::{
     DEFAULT_ROMAN_REPAIR_BEAM_SIZE, FST_MAX_LEVENSHTEIN_DISTANCE, LOANWORD_FUZZY_MAX_DISTANCE,
 };
 pub use autosuggest::{
-    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestLm, AutosuggestMetadata,
-    AutosuggestOptions, AutosuggestResult, AutosuggestSource, DEFAULT_AUTOSUGGEST_CANDIDATES,
+    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestContext, AutosuggestLm,
+    AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSource,
+    DEFAULT_AUTOSUGGEST_CANDIDATES, MAX_AUTOSUGGEST_CONTEXT_TOKENS,
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};

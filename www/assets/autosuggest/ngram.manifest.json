@@ -9,8 +9,9 @@
   "unigram_count": 4096,
   "bigram_rows": 32266,
   "trigram_rows": 338823,
-  "candidate_rows": 732738,
-  "max_candidates_per_prefix": 4,
+  "candidate_rows": 798834,
+  "max_candidates_per_prefix": 5,
   "min_count": 10,
-  "artifact_bytes": 15998954
+  "score": "raw_count_backoff",
+  "artifact_bytes": 16792106
 }

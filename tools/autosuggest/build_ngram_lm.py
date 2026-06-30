@@ -7,6 +7,7 @@ import argparse
 import csv
 import gzip
 import json
+import math
 import sqlite3
 import struct
 import sys
@@ -23,6 +24,8 @@ MAGIC = b"OBAUTOSUGLM_V1\0\0"
 VERSION = 1
 U32 = struct.Struct("<I")
 I32 = struct.Struct("<i")
+SCORE_SCALE = 1_000_000.0
+MIN_PROBABILITY = 1e-12
 
 
 class MemoryCounts:
@@ -52,17 +55,30 @@ class MemoryCounts:
         self,
         max_candidates_per_prefix: int,
         min_count: int,
-    ) -> tuple[list[tuple[int, int]], list[tuple[int, int, list[tuple[int, int]]]], list[tuple[int, int, int, list[tuple[int, int]]]]]:
+        scorer: "NgramScorer",
+    ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, list[tuple[int, int, int]]]], list[tuple[int, int, int, list[tuple[int, int, int]]]]]:
         unigrams = sorted(
-            self.unigrams.items(),
-            key=lambda item: (-item[1], item[0]),
+            (
+                (token_id, count, scorer.score(token_id, count, None, order=1))
+                for token_id, count in self.unigrams.items()
+            ),
+            key=candidate_sort_key,
         )
         bigrams = [
-            (prefix, 0, top_candidates(counter, max_candidates_per_prefix, min_count))
+            (
+                prefix,
+                0,
+                top_candidates(counter, max_candidates_per_prefix, min_count, scorer, order=2),
+            )
             for prefix, counter in sorted(self.bigrams.items())
         ]
         trigrams = [
-            (prefix1, prefix2, 0, top_candidates(counter, max_candidates_per_prefix, min_count))
+            (
+                prefix1,
+                prefix2,
+                0,
+                top_candidates(counter, max_candidates_per_prefix, min_count, scorer, order=3),
+            )
             for (prefix1, prefix2), counter in sorted(self.trigrams.items())
         ]
         return (
@@ -196,55 +212,6 @@ class SqliteCounts:
         )
         self.connection.commit()
 
-    def rows(
-        self,
-        max_candidates_per_prefix: int,
-        min_count: int,
-    ) -> tuple[list[tuple[int, int]], list[tuple[int, int, list[tuple[int, int]]]], list[tuple[int, int, int, list[tuple[int, int]]]]]:
-        unigrams = list(
-            self.connection.execute(
-                "SELECT token, count FROM unigrams ORDER BY count DESC, token ASC"
-            )
-        )
-        bigrams = grouped_bigram_rows(
-            self.connection.execute(
-                """
-                SELECT prefix, token, count
-                FROM (
-                  SELECT prefix, token, count,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY prefix ORDER BY count DESC, token ASC
-                         ) AS rank
-                  FROM bigrams
-                  WHERE count >= ?
-                )
-                WHERE rank <= ?
-                ORDER BY prefix ASC, rank ASC
-                """,
-                (min_count, max_candidates_per_prefix),
-            )
-        )
-        trigrams = grouped_trigram_rows(
-            self.connection.execute(
-                """
-                SELECT prefix1, prefix2, token, count
-                FROM (
-                  SELECT prefix1, prefix2, token, count,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY prefix1, prefix2 ORDER BY count DESC, token ASC
-                         ) AS rank
-                  FROM trigrams
-                  WHERE count >= ?
-                )
-                WHERE rank <= ?
-                ORDER BY prefix1 ASC, prefix2 ASC, rank ASC
-                """,
-                (min_count, max_candidates_per_prefix),
-            )
-        )
-        return unigrams, bigrams, trigrams
-
-
 def build_ngram_lm(
     corpus_dir: Path,
     vocab_path: Path,
@@ -253,6 +220,7 @@ def build_ngram_lm(
     sqlite_path: Path,
     sources: set[str] | None,
     max_sentences: int | None,
+    skip_sentences_per_source: int,
     max_sentences_per_source: int | None,
     reuse_sqlite: bool,
     log_every_sentences: int,
@@ -260,6 +228,9 @@ def build_ngram_lm(
     unigram_size: int,
     min_count: int,
     batch_size: int,
+    smoothing: float,
+    backoff_alpha: float,
+    score_mode: str,
 ) -> dict:
     if reuse_sqlite and backend != "sqlite":
         raise ValueError("--reuse-sqlite requires --backend sqlite")
@@ -279,6 +250,7 @@ def build_ngram_lm(
             corpus_dir,
             sources=sources,
             max_sentences=max_sentences,
+            skip_sentences_per_source=skip_sentences_per_source,
             max_sentences_per_source=max_sentences_per_source,
         ):
             encoded = encode_tokens(tokens, vocab)
@@ -306,6 +278,11 @@ def build_ngram_lm(
                 )
 
     counts.finalize()
+    scorer = (
+        sqlite_scorer(counts.connection, smoothing, backoff_alpha, score_mode)
+        if isinstance(counts, SqliteCounts)
+        else NgramScorer(counts.unigrams, smoothing, backoff_alpha, score_mode)
+    )
 
     output.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(counts, SqliteCounts):
@@ -316,9 +293,10 @@ def build_ngram_lm(
             max_candidates_per_prefix=max_candidates_per_prefix,
             min_count=min_count,
             unigram_size=unigram_size,
+            scorer=scorer,
         )
     else:
-        unigrams, bigrams, trigrams = counts.rows(max_candidates_per_prefix, min_count)
+        unigrams, bigrams, trigrams = counts.rows(max_candidates_per_prefix, min_count, scorer)
         unigrams = unigrams[:unigram_size]
         artifact = encode_artifact(words, unigrams, bigrams, trigrams)
         output.write_bytes(artifact)
@@ -343,6 +321,7 @@ def build_ngram_lm(
         "reuse_sqlite": reuse_sqlite,
         "sources": sorted(sources) if sources else None,
         "max_sentences": max_sentences,
+        "skip_sentences_per_source": skip_sentences_per_source,
         "max_sentences_per_source": max_sentences_per_source,
         "observed_sentences": observed_sentences,
         "observed_tokens": observed_tokens,
@@ -354,6 +333,9 @@ def build_ngram_lm(
         "candidate_rows": export_report["candidate_rows"],
         "max_candidates_per_prefix": max_candidates_per_prefix,
         "min_count": min_count,
+        "smoothing": smoothing,
+        "backoff_alpha": backoff_alpha,
+        "score": scorer.score_name,
         "artifact_bytes": export_report["artifact_bytes"],
     }
     manifest_path(output).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -364,10 +346,12 @@ def iter_limited_sentence_tokens(
     corpus_dir: Path,
     sources: set[str] | None,
     max_sentences: int | None,
+    skip_sentences_per_source: int,
     max_sentences_per_source: int | None,
 ) -> Iterator[tuple[str, list[str]]]:
     emitted_total = 0
     emitted_by_source: Counter[str] = Counter()
+    seen_by_source: Counter[str] = Counter()
     pending_sources = set(sources) if sources else None
 
     for path in sentence_paths(corpus_dir):
@@ -385,6 +369,9 @@ def iter_limited_sentence_tokens(
             for row in reader:
                 source = row["source"]
                 if sources is not None and source not in sources:
+                    continue
+                seen_by_source[source] += 1
+                if seen_by_source[source] <= skip_sentences_per_source:
                     continue
                 if (
                     max_sentences_per_source is not None
@@ -427,52 +414,96 @@ def is_context_id(token_id: int) -> bool:
     return token_id != PAD_ID and token_id != UNK_ID
 
 
-def top_candidates(counter: Counter[int], limit: int, min_count: int) -> list[tuple[int, int]]:
-    return [
-        (token, count)
-        for token, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+class NgramScorer:
+    def __init__(
+        self,
+        unigram_counts: Counter[int] | dict[int, int],
+        smoothing: float,
+        backoff_alpha: float,
+        score_mode: str,
+    ) -> None:
+        self.unigram_counts = dict(unigram_counts)
+        self.unigram_total = sum(self.unigram_counts.values())
+        self.smoothing = max(0.0, smoothing)
+        self.backoff_alpha = max(0.0, min(1.0, backoff_alpha))
+        self.score_mode = score_mode
+        self.score_name = {
+            "count": "raw_count_backoff",
+            "smoothed-log": "smoothed_log_probability_x1e6",
+            "stupid-backoff": "stupid_backoff_log_probability_x1e6",
+        }[score_mode]
+
+    def score(self, token_id: int, count: int, context_total: int | None, order: int) -> int:
+        if self.score_mode == "count":
+            return min(count, 2_147_483_647)
+        if self.unigram_total <= 0:
+            return 0
+
+        unigram_probability = self.unigram_counts.get(token_id, 0) / self.unigram_total
+        if self.score_mode == "stupid-backoff":
+            if context_total is None or context_total <= 0:
+                probability = unigram_probability
+            else:
+                probability = count / context_total
+            backoff_power = max(0, 3 - max(1, min(3, order)))
+            probability *= self.backoff_alpha ** backoff_power
+            return score_from_probability(probability)
+
+        if context_total is None or context_total <= 0 or self.smoothing == 0.0:
+            probability = count / self.unigram_total if context_total is None else count / max(context_total, 1)
+        else:
+            probability = (count + self.smoothing * unigram_probability) / (
+                context_total + self.smoothing
+            )
+        return score_from_probability(probability)
+
+
+def sqlite_scorer(
+    connection: sqlite3.Connection,
+    smoothing: float,
+    backoff_alpha: float,
+    score_mode: str,
+) -> NgramScorer:
+    return NgramScorer(
+        dict(connection.execute("SELECT token, count FROM unigrams")),
+        smoothing,
+        backoff_alpha,
+        score_mode,
+    )
+
+
+def score_from_probability(probability: float) -> int:
+    probability = max(MIN_PROBABILITY, min(1.0, probability))
+    return int(round(math.log(probability) * SCORE_SCALE))
+
+
+def candidate_sort_key(candidate: tuple[int, int, int]) -> tuple[int, int, int]:
+    token_id, count, score = candidate
+    return (-score, -count, token_id)
+
+
+def top_candidates(
+    counter: Counter[int],
+    limit: int,
+    min_count: int,
+    scorer: NgramScorer,
+    order: int,
+) -> list[tuple[int, int, int]]:
+    context_total = sum(counter.values())
+    candidates = [
+        (token, count, scorer.score(token, count, context_total, order=order))
+        for token, count in counter.items()
         if count >= min_count
-    ][:limit]
-
-
-def grouped_bigram_rows(rows: Iterable[tuple[int, int, int]]) -> list[tuple[int, int, list[tuple[int, int]]]]:
-    grouped: list[tuple[int, int, list[tuple[int, int]]]] = []
-    current_prefix: int | None = None
-    candidates: list[tuple[int, int]] = []
-    for prefix, token, count in rows:
-        if current_prefix is not None and prefix != current_prefix:
-            grouped.append((current_prefix, 0, candidates))
-            candidates = []
-        current_prefix = prefix
-        candidates.append((token, count))
-    if current_prefix is not None:
-        grouped.append((current_prefix, 0, candidates))
-    return grouped
-
-
-def grouped_trigram_rows(
-    rows: Iterable[tuple[int, int, int, int]]
-) -> list[tuple[int, int, int, list[tuple[int, int]]]]:
-    grouped: list[tuple[int, int, int, list[tuple[int, int]]]] = []
-    current_prefix: tuple[int, int] | None = None
-    candidates: list[tuple[int, int]] = []
-    for prefix1, prefix2, token, count in rows:
-        prefix = (prefix1, prefix2)
-        if current_prefix is not None and prefix != current_prefix:
-            grouped.append((current_prefix[0], current_prefix[1], 0, candidates))
-            candidates = []
-        current_prefix = prefix
-        candidates.append((token, count))
-    if current_prefix is not None:
-        grouped.append((current_prefix[0], current_prefix[1], 0, candidates))
-    return grouped
+    ]
+    candidates.sort(key=candidate_sort_key)
+    return candidates[:limit]
 
 
 def encode_artifact(
     words: list[str],
-    unigrams: list[tuple[int, int]],
-    bigrams: list[tuple[int, int, list[tuple[int, int]]]],
-    trigrams: list[tuple[int, int, int, list[tuple[int, int]]]],
+    unigrams: list[tuple[int, int, int]],
+    bigrams: list[tuple[int, int, list[tuple[int, int, int]]]],
+    trigrams: list[tuple[int, int, int, list[tuple[int, int, int]]]],
 ) -> bytes:
     token_bytes = bytearray()
     id_records: list[tuple[int, int]] = []
@@ -491,15 +522,15 @@ def encode_artifact(
     bigram_rows: list[tuple[int, int, int]] = []
     for prefix, _, candidates in bigrams:
         start = len(candidate_records)
-        for token_id, count in candidates:
-            candidate_records.append((token_id, count, score_from_count(count)))
+        for token_id, count, score in candidates:
+            candidate_records.append((token_id, count, score))
         bigram_rows.append((prefix, start, len(candidates)))
 
     trigram_rows: list[tuple[int, int, int, int]] = []
     for prefix1, prefix2, _, candidates in trigrams:
         start = len(candidate_records)
-        for token_id, count in candidates:
-            candidate_records.append((token_id, count, score_from_count(count)))
+        for token_id, count, score in candidates:
+            candidate_records.append((token_id, count, score))
         trigram_rows.append((prefix1, prefix2, start, len(candidates)))
 
     artifact = bytearray()
@@ -521,10 +552,10 @@ def encode_artifact(
         write_u32(artifact, offset)
         write_u32(artifact, length)
         write_u32(artifact, token_id)
-    for token_id, count in unigrams:
+    for token_id, count, score in unigrams:
         write_u32(artifact, token_id)
         write_u32(artifact, count)
-        write_i32(artifact, score_from_count(count))
+        write_i32(artifact, score)
     for prefix, start, length in bigram_rows:
         write_u32(artifact, prefix)
         write_u32(artifact, start)
@@ -549,6 +580,7 @@ def encode_sqlite_artifact(
     max_candidates_per_prefix: int,
     min_count: int,
     unigram_size: int,
+    scorer: NgramScorer,
 ) -> dict:
     with tempfile.TemporaryDirectory(prefix=f"{output.name}.", dir=output.parent) as temp_dir:
         temp_path = Path(temp_dir)
@@ -570,6 +602,7 @@ def encode_sqlite_artifact(
             counts.connection,
             unigrams_path,
             unigram_size,
+            scorer,
         )
         candidate_count = 0
         bigram_rows, candidate_count = write_bigram_sections(
@@ -578,6 +611,7 @@ def encode_sqlite_artifact(
             candidates_path,
             max_candidates_per_prefix,
             min_count,
+            scorer,
             candidate_count,
         )
         trigram_rows, candidate_count = write_trigram_sections(
@@ -586,6 +620,7 @@ def encode_sqlite_artifact(
             candidates_path,
             max_candidates_per_prefix,
             min_count,
+            scorer,
             candidate_count,
         )
 
@@ -656,6 +691,7 @@ def write_unigram_section(
     connection: sqlite3.Connection,
     output: Path,
     unigram_size: int,
+    scorer: NgramScorer,
 ) -> int:
     count = 0
     with output.open("wb") as handle:
@@ -663,7 +699,12 @@ def write_unigram_section(
             "SELECT token, count FROM unigrams ORDER BY count DESC, token ASC LIMIT ?",
             (unigram_size,),
         ):
-            write_candidate_record(handle, token_id, frequency)
+            write_candidate_record(
+                handle,
+                token_id,
+                frequency,
+                scorer.score(token_id, frequency, None, order=1),
+            )
             count += 1
     return count
 
@@ -674,24 +715,30 @@ def write_bigram_sections(
     candidate_output: Path,
     max_candidates_per_prefix: int,
     min_count: int,
+    scorer: NgramScorer,
     candidate_start: int,
 ) -> tuple[int, int]:
     query = """
-        SELECT prefix, token, count
-        FROM (
-          SELECT prefix, token, count,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY prefix ORDER BY count DESC, token ASC
-                 ) AS rank
+        SELECT prefix, token, count, total
+        FROM bigrams
+        JOIN (
+          SELECT prefix, SUM(count) AS total
           FROM bigrams
-          WHERE count >= ?
-        )
-        WHERE rank <= ?
-        ORDER BY prefix ASC, rank ASC
+          GROUP BY prefix
+        ) USING(prefix)
+        WHERE count >= ?
+        ORDER BY prefix ASC, count DESC, token ASC
     """
-    rows = connection.execute(query, (min_count, max_candidates_per_prefix))
+    rows = connection.execute(query, (min_count,))
     with row_output.open("wb") as row_handle, candidate_output.open("ab") as candidate_handle:
-        return write_grouped_bigram_stream(rows, row_handle, candidate_handle, candidate_start)
+        return write_grouped_bigram_stream(
+            rows,
+            row_handle,
+            candidate_handle,
+            scorer,
+            max_candidates_per_prefix,
+            candidate_start,
+        )
 
 
 def write_trigram_sections(
@@ -700,49 +747,59 @@ def write_trigram_sections(
     candidate_output: Path,
     max_candidates_per_prefix: int,
     min_count: int,
+    scorer: NgramScorer,
     candidate_start: int,
 ) -> tuple[int, int]:
     query = """
-        SELECT prefix1, prefix2, token, count
-        FROM (
-          SELECT prefix1, prefix2, token, count,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY prefix1, prefix2 ORDER BY count DESC, token ASC
-                 ) AS rank
+        SELECT prefix1, prefix2, token, count, total
+        FROM trigrams
+        JOIN (
+          SELECT prefix1, prefix2, SUM(count) AS total
           FROM trigrams
-          WHERE count >= ?
-        )
-        WHERE rank <= ?
-        ORDER BY prefix1 ASC, prefix2 ASC, rank ASC
+          GROUP BY prefix1, prefix2
+        ) USING(prefix1, prefix2)
+        WHERE count >= ?
+        ORDER BY prefix1 ASC, prefix2 ASC, count DESC, token ASC
     """
-    rows = connection.execute(query, (min_count, max_candidates_per_prefix))
+    rows = connection.execute(query, (min_count,))
     with row_output.open("wb") as row_handle, candidate_output.open("ab") as candidate_handle:
-        return write_grouped_trigram_stream(rows, row_handle, candidate_handle, candidate_start)
+        return write_grouped_trigram_stream(
+            rows,
+            row_handle,
+            candidate_handle,
+            scorer,
+            max_candidates_per_prefix,
+            candidate_start,
+        )
 
 
 def write_grouped_bigram_stream(
-    rows: Iterable[tuple[int, int, int]],
+    rows: Iterable[tuple[int, int, int, int]],
     row_handle,
     candidate_handle,
+    scorer: NgramScorer,
+    limit: int,
     candidate_count: int,
 ) -> tuple[int, int]:
     row_count = 0
     current_prefix: int | None = None
     row_start = candidate_count
-    row_len = 0
+    candidates: list[tuple[int, int, int]] = []
 
-    for prefix, token_id, count in rows:
+    for prefix, token_id, count, total in rows:
         if current_prefix is not None and prefix != current_prefix:
+            row_len = write_candidate_group(candidate_handle, candidates, limit)
+            candidate_count += row_len
             write_bigram_row(row_handle, current_prefix, row_start, row_len)
             row_count += 1
             row_start = candidate_count
-            row_len = 0
+            candidates = []
         current_prefix = prefix
-        write_candidate_record(candidate_handle, token_id, count)
-        candidate_count += 1
-        row_len += 1
+        candidates.append((token_id, count, scorer.score(token_id, count, total, order=2)))
 
     if current_prefix is not None:
+        row_len = write_candidate_group(candidate_handle, candidates, limit)
+        candidate_count += row_len
         write_bigram_row(row_handle, current_prefix, row_start, row_len)
         row_count += 1
 
@@ -750,33 +807,45 @@ def write_grouped_bigram_stream(
 
 
 def write_grouped_trigram_stream(
-    rows: Iterable[tuple[int, int, int, int]],
+    rows: Iterable[tuple[int, int, int, int, int]],
     row_handle,
     candidate_handle,
+    scorer: NgramScorer,
+    limit: int,
     candidate_count: int,
 ) -> tuple[int, int]:
     row_count = 0
     current_prefix: tuple[int, int] | None = None
     row_start = candidate_count
-    row_len = 0
+    candidates: list[tuple[int, int, int]] = []
 
-    for prefix1, prefix2, token_id, count in rows:
+    for prefix1, prefix2, token_id, count, total in rows:
         prefix = (prefix1, prefix2)
         if current_prefix is not None and prefix != current_prefix:
+            row_len = write_candidate_group(candidate_handle, candidates, limit)
+            candidate_count += row_len
             write_trigram_row(row_handle, current_prefix[0], current_prefix[1], row_start, row_len)
             row_count += 1
             row_start = candidate_count
-            row_len = 0
+            candidates = []
         current_prefix = prefix
-        write_candidate_record(candidate_handle, token_id, count)
-        candidate_count += 1
-        row_len += 1
+        candidates.append((token_id, count, scorer.score(token_id, count, total, order=3)))
 
     if current_prefix is not None:
+        row_len = write_candidate_group(candidate_handle, candidates, limit)
+        candidate_count += row_len
         write_trigram_row(row_handle, current_prefix[0], current_prefix[1], row_start, row_len)
         row_count += 1
 
     return row_count, candidate_count
+
+
+def write_candidate_group(handle, candidates: list[tuple[int, int, int]], limit: int) -> int:
+    candidates.sort(key=candidate_sort_key)
+    candidates = candidates[:limit]
+    for token_id, count, score in candidates:
+        write_candidate_record(handle, token_id, count, score)
+    return len(candidates)
 
 
 def write_header(
@@ -814,20 +883,16 @@ def write_trigram_row(handle, prefix1: int, prefix2: int, start: int, length: in
     write_u32_to_file(handle, length)
 
 
-def write_candidate_record(handle, token_id: int, count: int) -> None:
+def write_candidate_record(handle, token_id: int, count: int, score: int) -> None:
     write_u32_to_file(handle, token_id)
     write_u32_to_file(handle, count)
-    write_i32_to_file(handle, score_from_count(count))
+    write_i32_to_file(handle, score)
 
 
 def append_file(output_handle, path: Path) -> None:
     with path.open("rb") as input_handle:
         while chunk := input_handle.read(1024 * 1024):
             output_handle.write(chunk)
-
-
-def score_from_count(count: int) -> int:
-    return min(count, 2_147_483_647)
 
 
 def write_u32(output: bytearray, value: int) -> None:
@@ -860,12 +925,20 @@ def main() -> None:
     parser.add_argument("--reuse-sqlite", action="store_true")
     parser.add_argument("--source", action="append", dest="sources")
     parser.add_argument("--max-sentences", type=int)
+    parser.add_argument("--skip-sentences-per-source", type=int, default=0)
     parser.add_argument("--max-sentences-per-source", type=int)
     parser.add_argument("--log-every-sentences", type=int, default=250_000)
     parser.add_argument("--max-candidates-per-prefix", type=int, default=8)
     parser.add_argument("--unigram-size", type=int, default=2048)
     parser.add_argument("--min-count", type=int, default=2)
     parser.add_argument("--batch-size", type=int, default=500_000)
+    parser.add_argument("--smoothing", type=float, default=64.0)
+    parser.add_argument("--backoff-alpha", type=float, default=0.4)
+    parser.add_argument(
+        "--score-mode",
+        choices=("count", "smoothed-log", "stupid-backoff"),
+        default="count",
+    )
     args = parser.parse_args()
 
     report = build_ngram_lm(
@@ -876,6 +949,7 @@ def main() -> None:
         sqlite_path=args.sqlite_path,
         sources=set(args.sources) if args.sources else None,
         max_sentences=args.max_sentences,
+        skip_sentences_per_source=args.skip_sentences_per_source,
         max_sentences_per_source=args.max_sentences_per_source,
         reuse_sqlite=args.reuse_sqlite,
         log_every_sentences=args.log_every_sentences,
@@ -883,6 +957,9 @@ def main() -> None:
         unigram_size=args.unigram_size,
         min_count=args.min_count,
         batch_size=args.batch_size,
+        smoothing=args.smoothing,
+        backoff_alpha=args.backoff_alpha,
+        score_mode=args.score_mode,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

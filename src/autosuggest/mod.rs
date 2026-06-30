@@ -10,6 +10,7 @@ mod lm;
 
 pub use artifact::AutosuggestArtifactError;
 pub use lm::{
-    AutosuggestCandidate, AutosuggestLm, AutosuggestMetadata, AutosuggestOptions,
-    AutosuggestResult, AutosuggestSource, DEFAULT_AUTOSUGGEST_CANDIDATES,
+    AutosuggestCandidate, AutosuggestContext, AutosuggestLm, AutosuggestMetadata,
+    AutosuggestOptions, AutosuggestResult, AutosuggestSource, DEFAULT_AUTOSUGGEST_CANDIDATES,
+    MAX_AUTOSUGGEST_CONTEXT_TOKENS,
 };

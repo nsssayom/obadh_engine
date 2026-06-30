@@ -6,8 +6,8 @@ use std::hint::black_box;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use clap::{Parser, Subcommand};
-use obadh_engine::{AutosuggestLm, AutosuggestOptions, AutosuggestResult};
+use clap::{Parser, Subcommand, ValueEnum};
+use obadh_engine::{AutosuggestContext, AutosuggestLm, AutosuggestOptions, AutosuggestResult};
 use serde::Serialize;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,6 +48,8 @@ enum Command {
         model: PathBuf,
         #[arg(long, required = true)]
         context: Vec<String>,
+        #[arg(long, value_enum, default_value_t = BenchMode::Text)]
+        mode: BenchMode,
         #[arg(long, default_value_t = 5)]
         top_k: usize,
         #[arg(long, default_value_t = 100_000)]
@@ -104,6 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Bench {
             model,
             context,
+            mode,
             top_k,
             iterations,
             pretty,
@@ -115,16 +118,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let started = Instant::now();
             let mut candidate_total = 0_usize;
             let mut candidates = Vec::with_capacity(top_k.max(1));
-            for index in 0..iterations {
-                let context = &context[index % context.len()];
-                lm.suggest_for_text_into(
-                    black_box(context),
-                    AutosuggestOptions {
-                        max_candidates: top_k,
-                    },
-                    &mut candidates,
-                )?;
-                candidate_total += black_box(candidates.len());
+            match mode {
+                BenchMode::Text => {
+                    for index in 0..iterations {
+                        let context = &context[index % context.len()];
+                        lm.suggest_for_text_into(
+                            black_box(context),
+                            AutosuggestOptions {
+                                max_candidates: top_k,
+                            },
+                            &mut candidates,
+                        )?;
+                        candidate_total += black_box(candidates.len());
+                    }
+                }
+                BenchMode::Context => {
+                    let contexts = context
+                        .iter()
+                        .map(|text| autosuggest_context_from_text(&lm, text))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    for index in 0..iterations {
+                        let context = contexts[index % contexts.len()];
+                        lm.suggest_for_context_into(
+                            black_box(context),
+                            AutosuggestOptions {
+                                max_candidates: top_k,
+                            },
+                            &mut candidates,
+                        )?;
+                        candidate_total += black_box(candidates.len());
+                    }
+                }
             }
             let elapsed = started.elapsed();
             print_json(
@@ -132,6 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     artifact_bytes: lm.artifact_bytes(),
                     vocab_size: lm.vocab_size(),
                     contexts: context.len(),
+                    mode,
                     iterations,
                     top_k,
                     load_ms: load_elapsed.as_secs_f64() * 1000.0,
@@ -164,11 +189,28 @@ fn read_autosuggest_lm(
     Ok(AutosuggestLm::from_bytes(fs::read(input)?)?)
 }
 
+fn autosuggest_context_from_text<D: AsRef<[u8]>>(
+    lm: &AutosuggestLm<D>,
+    text: &str,
+) -> Result<AutosuggestContext, Box<dyn std::error::Error>> {
+    let mut context = AutosuggestContext::new();
+    lm.push_context_text(&mut context, text)?;
+    Ok(context)
+}
+
+#[derive(Debug, Clone, Copy, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+enum BenchMode {
+    Text,
+    Context,
+}
+
 #[derive(Debug, Serialize)]
 struct BenchReport {
     artifact_bytes: usize,
     vocab_size: usize,
     contexts: usize,
+    mode: BenchMode,
     iterations: usize,
     top_k: usize,
     load_ms: f64,

@@ -222,10 +222,14 @@ pub(crate) mod test_support {
     #[derive(Debug, Clone)]
     pub(crate) struct Row {
         pub(crate) context: Vec<u32>,
-        pub(crate) candidates: Vec<(u32, u32)>,
+        pub(crate) candidates: Vec<(u32, u32, i32)>,
     }
 
-    pub(crate) fn build_fixture(tokens: &[&str], unigrams: &[(u32, u32)], rows: &[Row]) -> Vec<u8> {
+    pub(crate) fn build_fixture(
+        tokens: &[&str],
+        unigrams: &[(u32, u32, i32)],
+        rows: &[Row],
+    ) -> Vec<u8> {
         let mut token_bytes = Vec::new();
         let mut id_records = Vec::new();
         for token in tokens {
@@ -252,8 +256,8 @@ pub(crate) mod test_support {
 
         for row in rows {
             let start = candidates.len() as u32;
-            for (token_id, count) in &row.candidates {
-                candidates.push((*token_id, *count, *count as i32));
+            for (token_id, count, score) in &row.candidates {
+                candidates.push((*token_id, *count, *score));
             }
             match row.context.as_slice() {
                 [prefix] => bigram_rows.push((*prefix, start, row.candidates.len() as u32)),
@@ -287,10 +291,10 @@ pub(crate) mod test_support {
             write_u32(&mut bytes, *len);
             write_u32(&mut bytes, *id);
         }
-        for (token_id, count) in unigrams {
+        for (token_id, count, score) in unigrams {
             write_u32(&mut bytes, *token_id);
             write_u32(&mut bytes, *count);
-            write_i32(&mut bytes, *count as i32);
+            write_i32(&mut bytes, *score);
         }
         for (prefix, start, len) in &bigram_rows {
             write_u32(&mut bytes, *prefix);

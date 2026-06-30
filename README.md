@@ -182,7 +182,7 @@ artifact sections, and preserves exact counts:
 python3 -m tools.autosuggest.build_ngram_lm \
   --backend sqlite \
   --min-count 10 \
-  --max-candidates-per-prefix 4 \
+  --max-candidates-per-prefix 5 \
   --unigram-size 4096 \
   --log-every-sentences 250000 \
   --output data/autosuggest/models/ngram/autosuggest-ngram.bin
@@ -197,7 +197,7 @@ python3 -m tools.autosuggest.build_ngram_lm \
   --reuse-sqlite \
   --sqlite-path data/autosuggest/models/ngram/autosuggest-ngram.sqlite \
   --min-count 5 \
-  --max-candidates-per-prefix 4 \
+  --max-candidates-per-prefix 5 \
   --unigram-size 4096 \
   --output target/autosuggest-profile.bin
 ```
@@ -208,6 +208,7 @@ Evaluate and benchmark an artifact:
 python3 -m tools.autosuggest.eval_ngram_lm \
   --model target/autosuggest-smoke.bin \
   --source epub --source news --source wiki \
+  --skip-sentences-per-source 100000 \
   --max-sentences-per-source 5000 \
   --top-k 10
 
@@ -215,22 +216,43 @@ cargo run --release --bin obadh-autosuggest -- bench \
   --model target/autosuggest-smoke.bin \
   --context 'আমি আজ' \
   --context 'বাংলাদেশের মানুষ' \
+  --mode context \
   --iterations 200000 \
   --pretty
 ```
 
 Current full-corpus candidate profiles from the 161.6M-token corpus:
 
-| Profile | Artifact | Context rows | Replay top-5 | Native mean lookup |
+| Profile | Artifact | Context rows | Replay top-5 | Native context lookup |
 | --- | ---: | ---: | ---: | ---: |
-| mobile candidate layer | `15.99 MB` | `371,089` | `23.65%` | `~0.27 us` |
+| mobile candidate layer | `16.79 MB` | `371,089` | `24.84%` | `~0.10 us` |
+| compact c4 baseline | `15.99 MB` | `371,089` | `23.65%` | not resampled |
 | wider candidate layer | `31.94 MB` | `782,978` | `24.83%` | not sampled |
 | research/wide layer | `65.22 MB` | `1,519,688` | `27.27%` | not resampled |
 
 The replay metric is measured on corpus rows also used for counting, so it is a
 profile-comparison signal rather than a held-out product accuracy claim.
 
-The checked-in v0.4 runtime artifact is the mobile n-gram profile:
+Held-out profile probe, trained on the first `100,000` sentences per source and
+evaluated on the next `25,000` sentences per source:
+
+| Profile | Split artifact | Held-out top-5 | Held-out top-10 | MRR |
+| --- | ---: | ---: | ---: | ---: |
+| c4 count/backoff | `1.78 MB` | `16.46%` | `18.75%` | `11.83%` |
+| c5 count/backoff | `1.79 MB` | `17.23%` | `19.57%` | `12.00%` |
+| c6 count/backoff | `1.81 MB` | `17.23%` | `20.28%` | `12.11%` |
+| c8 count/backoff | `1.83 MB` | `17.23%` | `21.30%` | `12.25%` |
+| c5 smoothed score | `1.79 MB` | `17.14%` | `19.56%` | `11.90%` |
+| c5 stupid-backoff score | `1.79 MB` | `17.22%` | `19.57%` | `12.00%` |
+| c5 count/backoff, min-count 20 | `1.57 MB` | `15.01%` | `17.41%` | `10.50%` |
+
+The five-slot UI currently uses the c5 count/backoff profile. c6/c8 improve
+only deeper top-10 recall in this probe, while smoothed score merging regresses
+the visible top-5 candidate band. Stupid-backoff scoring tied the visible band
+without improving it, and raising `min-count` removed too much useful context
+even though it reduced artifact size.
+
+The checked-in runtime artifact is the mobile n-gram profile:
 
 | Item | Value |
 | --- | --- |
@@ -242,9 +264,21 @@ The checked-in v0.4 runtime artifact is the mobile n-gram profile:
 | unigram fallback | top `4,096` tokens |
 | bigram rows | `32,266` |
 | trigram rows | `338,823` |
-| candidate rows | `732,738` |
-| artifact bytes | `15,998,954` |
+| candidate rows | `798,834` |
+| max candidates per context | `5` |
+| artifact bytes | `16,792,106` |
+| native runtime | mmap binary artifact plus `AutosuggestContext` |
 | playground runtime | Obadh WASM parser over a binary artifact |
+
+Keyboard integrations should keep an `AutosuggestContext` as words are
+committed and call `suggest_for_context_into` with a reused candidate buffer.
+The text-based APIs remain useful for tools and tests, but they intentionally
+include token parsing and lookup overhead that a keyboard does not need on each
+suggestion request. Sentence-ending punctuation (`।`, `॥`, `.`, `!`, `?`, and
+ellipsis) clears the recent context so the next sentence backs off cleanly
+instead of inheriting the previous sentence's last words. Native editor
+integrations can also call `AutosuggestContext::push_boundary()` on explicit
+line or paragraph breaks.
 
 Corpus snapshot:
 
@@ -264,9 +298,9 @@ Mobile artifact replay snapshot:
 | --- | ---: |
 | top-1 | `12.04%` |
 | top-3 | `20.48%` |
-| top-5 | `23.65%` |
-| top-10 | `25.42%` |
-| MRR | `16.71%` |
+| top-5 | `24.84%` |
+| top-10 | `26.96%` |
+| MRR | `17.00%` |
 
 These numbers are for reproducibility and regression checks only. Replay is
 measured against corpus rows used for counting, so it is not a held-out product
@@ -346,9 +380,9 @@ engine.tokenize_phonetic_into("praNer", &mut units);
 | English loanword keys | `1,776` |
 | English loanword FST bytes | `89,427` |
 | optimized WASM | about `280 KB` |
-| autosuggest ngram artifact | `15,998,954` bytes |
+| autosuggest ngram artifact | `16,792,106` bytes |
 | autosuggest vocab | `1,058,854` bytes |
-| autosuggest native lookup sample | `~0.27 us` |
+| autosuggest native context lookup sample | `~0.10 us` |
 
 Autocorrect CLI process timings are not reported as keyboard latency because
 process startup dominates those measurements. Keyboard-time performance should

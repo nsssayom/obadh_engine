@@ -5,10 +5,10 @@ use web_sys::Performance;
 
 use crate::{
     roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
-    AutosuggestCandidate, AutosuggestLm, AutosuggestOptions, AutosuggestSource, CandidateFeatures,
-    CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon, FstLoanwordMatch,
-    FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats, LoanwordLexicon,
-    LoanwordSearchOptions, ObadhEngine, RomanRepairOptions, RomanRepairedOutput,
+    AutosuggestCandidate, AutosuggestContext, AutosuggestLm, AutosuggestOptions, AutosuggestSource,
+    CandidateFeatures, CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon,
+    FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats,
+    LoanwordLexicon, LoanwordSearchOptions, ObadhEngine, RomanRepairOptions, RomanRepairedOutput,
     DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 
@@ -158,6 +158,8 @@ pub struct AutosuggestCandidateInfo {
 #[derive(Serialize)]
 pub struct AutosuggestLabResult {
     pub context: Vec<String>,
+    pub context_token_count: usize,
+    pub matched_context_token_count: usize,
     pub elapsed_ms: f64,
     pub model: AutosuggestStats,
     pub candidates: Vec<AutosuggestCandidateInfo>,
@@ -380,14 +382,21 @@ impl ObadhAutosuggestWasm {
         let start = now();
         let context_tokens: Vec<String> = from_value(context_tokens_js)
             .map_err(|error| JsValue::from_str(&format!("invalid context tokens: {error}")))?;
-        let context_refs = context_tokens.iter().map(String::as_str).collect::<Vec<_>>();
-        let result = self
+        let mut context = AutosuggestContext::new();
+        for token in &context_tokens {
+            self.lm
+                .push_context_token(&mut context, token)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        }
+        let mut candidates = Vec::with_capacity(limit.max(1));
+        let metadata = self
             .lm
-            .suggest_for_tokens(
-                &context_refs,
+            .suggest_for_context_into(
+                context,
                 AutosuggestOptions {
                     max_candidates: limit.max(1),
                 },
+                &mut candidates,
             )
             .map_err(|error| JsValue::from_str(&error.to_string()))?;
         let elapsed_ms = now() - start;
@@ -395,13 +404,11 @@ impl ObadhAutosuggestWasm {
         stats.last_elapsed_ms = Some(elapsed_ms);
         let lab_result = AutosuggestLabResult {
             context: context_tokens,
+            context_token_count: metadata.context_token_count,
+            matched_context_token_count: metadata.matched_context_token_count,
             elapsed_ms,
             model: stats,
-            candidates: result
-                .candidates
-                .iter()
-                .map(autosuggest_candidate_info)
-                .collect(),
+            candidates: candidates.iter().map(autosuggest_candidate_info).collect(),
         };
         to_value(&lab_result).map_err(|error| JsValue::from_str(&error.to_string()))
     }

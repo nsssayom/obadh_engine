@@ -34,6 +34,10 @@ class Candidate:
     score: int
 
 
+def candidate_sort_key(candidate: Candidate) -> tuple[int, int, int]:
+    return (-candidate.score, -candidate.count, candidate.token_id)
+
+
 class NgramLm:
     def __init__(self, path: Path) -> None:
         self.bytes = path.read_bytes()
@@ -73,6 +77,7 @@ class NgramLm:
             raise ValueError("artifact section sizes do not match file length")
 
         self.token_to_id = self._load_token_lookup()
+        self.score_mode = self._detect_score_mode()
 
     def _load_token_lookup(self) -> dict[str, int]:
         lookup: dict[str, int] = {}
@@ -97,17 +102,37 @@ class NgramLm:
             elif token_id in (PAD_ID, BOS_ID, UNK_ID):
                 recent.clear()
 
+        if self.score_mode == "backoff":
+            return self._suggest_ids_backoff(recent, limit)
+
+        output: list[Candidate] = []
+
+        if len(recent) == 2:
+            row = self._find_trigram_row(recent[0], recent[1])
+            if row:
+                self._merge(row[0], row[1], limit, output)
+        if recent:
+            row = self._find_bigram_row(recent[-1])
+            if row:
+                self._merge(row[0], row[1], limit, output)
+        for index in range(self.unigram_count):
+            offset = self.unigrams_offset + index * CANDIDATE_RECORD_LEN
+            if self._merge_candidate(self._candidate_at(offset), limit, output):
+                break
+        return [candidate.token_id for candidate in output]
+
+    def _suggest_ids_backoff(self, recent: list[int], limit: int) -> list[int]:
         output: list[int] = []
         seen: set[int] = set()
 
         if len(recent) == 2:
             row = self._find_trigram_row(recent[0], recent[1])
             if row:
-                self._collect(row[0], row[1], limit, seen, output)
+                self._append(row[0], row[1], limit, seen, output)
         if len(output) < limit and recent:
             row = self._find_bigram_row(recent[-1])
             if row:
-                self._collect(row[0], row[1], limit, seen, output)
+                self._append(row[0], row[1], limit, seen, output)
         if len(output) < limit:
             for index in range(self.unigram_count):
                 if len(output) >= limit:
@@ -150,7 +175,19 @@ class NgramLm:
                 return read_u32(self.bytes, offset + 8), read_u32(self.bytes, offset + 12)
         return None
 
-    def _collect(
+    def _merge(
+        self,
+        start: int,
+        length: int,
+        limit: int,
+        output: list[Candidate],
+    ) -> None:
+        for index in range(start, start + length):
+            offset = self.candidates_offset + index * CANDIDATE_RECORD_LEN
+            if self._merge_candidate(self._candidate_at(offset), limit, output):
+                break
+
+    def _append(
         self,
         start: int,
         length: int,
@@ -166,6 +203,62 @@ class NgramLm:
             if token_id > UNK_ID and token_id not in seen:
                 seen.add(token_id)
                 output.append(token_id)
+
+    def _merge_candidate(
+        self,
+        candidate: Candidate,
+        limit: int,
+        output: list[Candidate],
+    ) -> bool:
+        if candidate.token_id <= UNK_ID:
+            return False
+
+        existing_index = next(
+            (
+                index
+                for index, item in enumerate(output)
+                if item.token_id == candidate.token_id
+            ),
+            None,
+        )
+        if existing_index is not None:
+            if candidate_sort_key(candidate) < candidate_sort_key(output[existing_index]):
+                output.pop(existing_index)
+            elif len(output) >= limit and candidate_sort_key(candidate) >= candidate_sort_key(output[-1]):
+                return True
+            else:
+                return False
+        elif len(output) >= limit and candidate_sort_key(candidate) >= candidate_sort_key(output[-1]):
+            return True
+        elif len(output) >= limit:
+            output.pop()
+
+        insert_at = len(output)
+        for index, item in enumerate(output):
+            if candidate_sort_key(candidate) < candidate_sort_key(item):
+                insert_at = index
+                break
+        output.insert(insert_at, candidate)
+        return False
+
+    def _candidate_at(self, offset: int) -> Candidate:
+        return Candidate(
+            token_id=read_u32(self.bytes, offset),
+            count=read_u32(self.bytes, offset + 4),
+            score=read_i32(self.bytes, offset + 8),
+        )
+
+    def _detect_score_mode(self) -> str:
+        sample_len = min(self.unigram_count, 8)
+        if sample_len == 0:
+            return "interpolated"
+        for index in range(sample_len):
+            offset = self.unigrams_offset + index * CANDIDATE_RECORD_LEN
+            count = read_u32(self.bytes, offset + 4)
+            score = read_i32(self.bytes, offset + 8)
+            if score < 0 or score != count:
+                return "interpolated"
+        return "backoff"
 
     def _token_text(self, offset: int, length: int) -> str:
         start = self.token_bytes_offset + offset
