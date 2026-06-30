@@ -6,6 +6,7 @@
   "profile": "mobile",
   "asset": "autosuggest-ngram.bin",
   "vocab_size": 32768,
+  "vocab_fingerprint": 2607434018,
   "unigram_count": 4096,
   "bigram_rows": 32266,
   "trigram_rows": 338823,

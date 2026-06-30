@@ -51,7 +51,7 @@ class NgramLm:
             self.trigram_row_count,
             self.candidate_count,
             self.token_bytes_len,
-            _reserved,
+            self.vocab_fingerprint,
         ) = HEADER.unpack_from(self.bytes, 0)
         if magic != MAGIC:
             raise ValueError(f"invalid artifact magic in {path}")
@@ -304,7 +304,7 @@ def evaluate(
                 rank = 0
             if rank:
                 reciprocal_rank_sum += 1.0 / rank
-            for k in (1, 3, 5, top_k):
+            for k in sorted({1, 3, 5, top_k}):
                 if rank and rank <= min(k, top_k):
                     hits[k] += 1
             if rank == 1:
@@ -355,6 +355,7 @@ def report(
         "artifact": {
             "bytes": len(lm.bytes),
             "vocab_size": lm.vocab_size,
+            "vocab_fingerprint": lm.vocab_fingerprint,
             "unigram_count": lm.unigram_count,
             "bigram_rows": lm.bigram_row_count,
             "trigram_rows": lm.trigram_row_count,

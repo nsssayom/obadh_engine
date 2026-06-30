@@ -21,6 +21,7 @@ pub(crate) struct Header {
     pub(crate) trigram_row_count: u32,
     pub(crate) candidate_count: u32,
     pub(crate) token_bytes_len: u32,
+    pub(crate) vocab_fingerprint: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +49,7 @@ pub enum AutosuggestArtifactError {
     UnsupportedVersion(u32),
     InvalidSectionLayout,
     InvalidTokenId(u32),
+    ModelFingerprintMismatch { expected: u32, actual: u32 },
     InvalidUtf8,
 }
 
@@ -64,6 +66,12 @@ impl fmt::Display for AutosuggestArtifactError {
             }
             Self::InvalidTokenId(id) => {
                 write!(f, "autosuggest artifact references invalid token id {id}")
+            }
+            Self::ModelFingerprintMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "autosuggest model fingerprint {actual:08x} does not match expected fingerprint {expected:08x}"
+                )
             }
             Self::InvalidUtf8 => {
                 f.write_str("autosuggest artifact contains invalid UTF-8 token bytes")
@@ -95,6 +103,7 @@ pub(crate) fn parse_layout(bytes: &[u8]) -> Result<Layout, AutosuggestArtifactEr
         trigram_row_count: read_u32(bytes, 36)?,
         candidate_count: read_u32(bytes, 40)?,
         token_bytes_len: read_u32(bytes, 44)?,
+        vocab_fingerprint: read_u32(bytes, 48)?,
     };
 
     if header.vocab_size == 0 || header.token_index_count != header.vocab_size {

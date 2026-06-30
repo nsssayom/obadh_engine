@@ -26,6 +26,8 @@ U32 = struct.Struct("<I")
 I32 = struct.Struct("<i")
 SCORE_SCALE = 1_000_000.0
 MIN_PROBABILITY = 1e-12
+FNV32_OFFSET = 0x811C9DC5
+FNV32_PRIME = 0x01000193
 
 
 class MemoryCounts:
@@ -298,7 +300,8 @@ def build_ngram_lm(
     else:
         unigrams, bigrams, trigrams = counts.rows(max_candidates_per_prefix, min_count, scorer)
         unigrams = unigrams[:unigram_size]
-        artifact = encode_artifact(words, unigrams, bigrams, trigrams)
+        fingerprint = vocab_fingerprint(words)
+        artifact = encode_artifact(words, unigrams, bigrams, trigrams, fingerprint)
         output.write_bytes(artifact)
         export_report = {
             "unigram_count": len(unigrams),
@@ -307,6 +310,7 @@ def build_ngram_lm(
             "candidate_rows": sum(len(row[2]) for row in bigrams)
             + sum(len(row[3]) for row in trigrams),
             "artifact_bytes": len(artifact),
+            "vocab_fingerprint": fingerprint,
         }
 
     report = {
@@ -327,6 +331,7 @@ def build_ngram_lm(
         "observed_tokens": observed_tokens,
         "source_sentences": dict(source_sentences),
         "vocab_size": len(words),
+        "vocab_fingerprint": export_report["vocab_fingerprint"],
         "unigram_count": export_report["unigram_count"],
         "bigram_rows": export_report["bigram_rows"],
         "trigram_rows": export_report["trigram_rows"],
@@ -412,6 +417,35 @@ def is_target_id(token_id: int) -> bool:
 
 def is_context_id(token_id: int) -> bool:
     return token_id != PAD_ID and token_id != UNK_ID
+
+
+def vocab_fingerprint(words: list[str]) -> int:
+    token_bytes = bytearray()
+    id_records: list[tuple[int, int]] = []
+    for word in words:
+        encoded = word.encode("utf-8")
+        id_records.append((len(token_bytes), len(encoded)))
+        token_bytes.extend(encoded)
+
+    fingerprint = FNV32_OFFSET
+    fingerprint = fnv32_update_u32(fingerprint, len(words))
+    fingerprint = fnv32_update_u32(fingerprint, len(words))
+    fingerprint = fnv32_update_u32(fingerprint, len(token_bytes))
+    for offset, length in id_records:
+        fingerprint = fnv32_update_u32(fingerprint, offset)
+        fingerprint = fnv32_update_u32(fingerprint, length)
+    fingerprint = fnv32_update(fingerprint, token_bytes)
+    return fingerprint or 1
+
+
+def fnv32_update_u32(fingerprint: int, value: int) -> int:
+    return fnv32_update(fingerprint, U32.pack(value))
+
+
+def fnv32_update(fingerprint: int, data: bytes | bytearray) -> int:
+    for byte in data:
+        fingerprint = ((fingerprint ^ byte) * FNV32_PRIME) & 0xFFFFFFFF
+    return fingerprint
 
 
 class NgramScorer:
@@ -504,6 +538,7 @@ def encode_artifact(
     unigrams: list[tuple[int, int, int]],
     bigrams: list[tuple[int, int, list[tuple[int, int, int]]]],
     trigrams: list[tuple[int, int, int, list[tuple[int, int, int]]]],
+    fingerprint: int,
 ) -> bytes:
     token_bytes = bytearray()
     id_records: list[tuple[int, int]] = []
@@ -543,7 +578,7 @@ def encode_artifact(
     write_u32(artifact, len(trigram_rows))
     write_u32(artifact, len(candidate_records))
     write_u32(artifact, len(token_bytes))
-    write_u32(artifact, 0)
+    write_u32(artifact, fingerprint)
 
     for offset, length in id_records:
         write_u32(artifact, offset)
@@ -623,6 +658,7 @@ def encode_sqlite_artifact(
             scorer,
             candidate_count,
         )
+        fingerprint = vocab_fingerprint(words)
 
         with output.open("wb") as handle:
             write_header(
@@ -634,6 +670,7 @@ def encode_sqlite_artifact(
                 trigram_rows=trigram_rows,
                 candidate_count=candidate_count,
                 token_bytes_len=token_bytes_len,
+                vocab_fingerprint=fingerprint,
             )
             append_file(handle, id_tokens_path)
             append_file(handle, token_index_path)
@@ -649,6 +686,7 @@ def encode_sqlite_artifact(
         "trigram_rows": trigram_rows,
         "candidate_rows": candidate_count,
         "artifact_bytes": output.stat().st_size,
+        "vocab_fingerprint": fingerprint,
     }
 
 
@@ -857,6 +895,7 @@ def write_header(
     trigram_rows: int,
     candidate_count: int,
     token_bytes_len: int,
+    vocab_fingerprint: int,
 ) -> None:
     handle.write(MAGIC)
     write_u32_to_file(handle, VERSION)
@@ -867,7 +906,7 @@ def write_header(
     write_u32_to_file(handle, trigram_rows)
     write_u32_to_file(handle, candidate_count)
     write_u32_to_file(handle, token_bytes_len)
-    write_u32_to_file(handle, 0)
+    write_u32_to_file(handle, vocab_fingerprint)
 
 
 def write_bigram_row(handle, prefix: int, start: int, length: int) -> None:

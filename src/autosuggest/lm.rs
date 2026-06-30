@@ -137,16 +137,28 @@ pub struct AutosuggestLm<D: AsRef<[u8]> = Vec<u8>> {
     bytes: D,
     layout: Layout,
     score_mode: ScoreMode,
+    vocab_fingerprint: u32,
 }
 
 impl<D: AsRef<[u8]>> AutosuggestLm<D> {
     pub fn from_bytes(bytes: D) -> Result<Self, AutosuggestArtifactError> {
         let layout = parse_layout(bytes.as_ref())?;
         let score_mode = detect_score_mode(bytes.as_ref(), layout)?;
+        let computed_fingerprint = compute_vocab_fingerprint(bytes.as_ref(), layout);
+        if layout.header.vocab_fingerprint != 0
+            && layout.header.vocab_fingerprint != computed_fingerprint
+        {
+            return Err(AutosuggestArtifactError::ModelFingerprintMismatch {
+                expected: layout.header.vocab_fingerprint,
+                actual: computed_fingerprint,
+            });
+        }
+        let vocab_fingerprint = layout.header.vocab_fingerprint.max(computed_fingerprint);
         Ok(Self {
             bytes,
             layout,
             score_mode,
+            vocab_fingerprint,
         })
     }
 
@@ -168,6 +180,10 @@ impl<D: AsRef<[u8]>> AutosuggestLm<D> {
 
     pub fn artifact_bytes(&self) -> usize {
         self.layout.sections.end
+    }
+
+    pub fn vocab_fingerprint(&self) -> u32 {
+        self.vocab_fingerprint
     }
 
     pub fn token_id(&self, token: &str) -> Result<Option<u32>, AutosuggestArtifactError> {
@@ -677,6 +693,35 @@ fn detect_score_mode(bytes: &[u8], layout: Layout) -> Result<ScoreMode, Autosugg
     Ok(ScoreMode::BackoffOrder)
 }
 
+fn compute_vocab_fingerprint(bytes: &[u8], layout: Layout) -> u32 {
+    const OFFSET: u32 = 0x811c_9dc5;
+    const PRIME: u32 = 0x0100_0193;
+
+    let mut hash = OFFSET;
+    for value in [
+        layout.header.vocab_size,
+        layout.header.token_index_count,
+        layout.header.token_bytes_len,
+    ] {
+        for byte in value.to_le_bytes() {
+            hash = (hash ^ u32::from(byte)).wrapping_mul(PRIME);
+        }
+    }
+
+    for byte in &bytes[layout.sections.id_tokens..layout.sections.token_index] {
+        hash = (hash ^ u32::from(*byte)).wrapping_mul(PRIME);
+    }
+    for byte in &bytes[layout.sections.token_bytes..layout.sections.end] {
+        hash = (hash ^ u32::from(*byte)).wrapping_mul(PRIME);
+    }
+
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MergeStatus {
     Accepted,
@@ -802,6 +847,36 @@ mod tests {
         assert_eq!(lm.token_id("আজ").unwrap(), Some(4));
         assert_eq!(lm.token_id("নেই").unwrap(), None);
         assert_eq!(lm.token_text(7).unwrap(), "যাব");
+        assert_ne!(lm.vocab_fingerprint(), 0);
+    }
+
+    #[test]
+    fn zero_header_fingerprint_uses_computed_vocab_fingerprint() {
+        let tokens = ["<pad>", "<bos>", "<unk>", "আমি"];
+        let bytes = build_fixture(&tokens, &[(3, 10, 10)], &[]);
+        assert_eq!(u32::from_le_bytes(bytes[48..52].try_into().unwrap()), 0);
+
+        let lm = AutosuggestLm::from_bytes(bytes).unwrap();
+
+        assert_ne!(lm.vocab_fingerprint(), 0);
+    }
+
+    #[test]
+    fn nonzero_header_fingerprint_must_match_computed_vocab_fingerprint() {
+        let tokens = ["<pad>", "<bos>", "<unk>", "আমি"];
+        let mut bytes = build_fixture(&tokens, &[(3, 10, 10)], &[]);
+        let wrong = 0x1234_5678_u32;
+        bytes[48..52].copy_from_slice(&wrong.to_le_bytes());
+
+        let error = AutosuggestLm::from_bytes(bytes).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AutosuggestArtifactError::ModelFingerprintMismatch {
+                expected: 0x1234_5678,
+                actual
+            } if actual != 0x1234_5678
+        ));
     }
 
     #[test]

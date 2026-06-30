@@ -140,6 +140,7 @@ pub struct AutosuggestStats {
     pub artifact_kind: &'static str,
     pub backend: &'static str,
     pub vocab_size: usize,
+    pub vocab_fingerprint: u32,
     pub unigram_count: usize,
     pub bigram_rows: usize,
     pub trigram_rows: usize,
@@ -367,6 +368,7 @@ impl ObadhAutosuggestWasm {
             artifact_kind: "ngram",
             backend: "wasm/rust",
             vocab_size: lm.vocab_size(),
+            vocab_fingerprint: lm.vocab_fingerprint(),
             unigram_count: lm.unigram_count(),
             bigram_rows: lm.bigram_row_count(),
             trigram_rows: lm.trigram_row_count(),
@@ -441,16 +443,24 @@ impl ObadhAutosuggestWasm {
 
     #[wasm_bindgen(js_name = exportPersonalSnapshot)]
     pub fn export_personal_snapshot(&self) -> Vec<u8> {
-        self.personal.to_compact_bytes()
+        let mut bytes = Vec::with_capacity(self.personal.compact_snapshot_len());
+        self.personal
+            .write_compact_bytes_with_model_fingerprint_into(
+                &mut bytes,
+                self.lm.vocab_fingerprint(),
+            );
+        bytes
     }
 
     #[wasm_bindgen(js_name = importPersonalSnapshot)]
     pub fn import_personal_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
-        let personal = PersonalAutosuggest::from_compact_bytes(
-            PersonalAutosuggestConfig::default(),
-            bytes,
-        )
-        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let mut personal =
+            PersonalAutosuggest::from_compact_bytes(PersonalAutosuggestConfig::default(), bytes)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        personal
+            .validate_for_model(self.lm.vocab_size(), self.lm.vocab_fingerprint())
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        personal.stamp_model_fingerprint(self.lm.vocab_fingerprint());
         self.personal = personal;
         Ok(())
     }
@@ -472,7 +482,11 @@ impl ObadhAutosuggestWasm {
     }
 
     #[wasm_bindgen(js_name = commitTokenId)]
-    pub fn commit_token_id(&mut self, token_id: i32, boundary_after: bool) -> Result<bool, JsValue> {
+    pub fn commit_token_id(
+        &mut self,
+        token_id: i32,
+        boundary_after: bool,
+    ) -> Result<bool, JsValue> {
         let resolved = if token_id < 0 {
             None
         } else {
@@ -484,11 +498,9 @@ impl ObadhAutosuggestWasm {
             }
             Some(token_id)
         };
-        Ok(self.personal.observe_resolved_token_id(
-            &mut self.context,
-            resolved,
-            boundary_after,
-        ))
+        Ok(self
+            .personal
+            .observe_resolved_token_id(&mut self.context, resolved, boundary_after))
     }
 
     #[wasm_bindgen(js_name = commitUnknown)]

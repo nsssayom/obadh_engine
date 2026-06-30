@@ -115,6 +115,16 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
         self.candidates.clear();
     }
 
+    pub fn try_replace_personal(
+        &mut self,
+        mut personal: PersonalAutosuggest,
+    ) -> Result<(), AutosuggestArtifactError> {
+        personal.validate_for_model(self.lm.vocab_size(), self.lm.vocab_fingerprint())?;
+        personal.stamp_model_fingerprint(self.lm.vocab_fingerprint());
+        self.replace_personal(personal);
+        Ok(())
+    }
+
     pub fn options(&self) -> AutosuggestOptions {
         self.options
     }
@@ -200,7 +210,8 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
     }
 
     pub fn write_personal_snapshot_into(&self, output: &mut Vec<u8>) {
-        self.personal.write_compact_bytes_into(output);
+        self.personal
+            .write_compact_bytes_with_model_fingerprint_into(output, self.lm.vocab_fingerprint());
     }
 
     fn ensure_candidate_capacity(&mut self) {
@@ -250,6 +261,7 @@ pub struct PersonalAutosuggest {
     entries: Vec<PersonalEntry>,
     unigram_cache: PersonalUnigramCache,
     weakest_index: Option<usize>,
+    model_fingerprint: u32,
     tick: u32,
 }
 
@@ -260,12 +272,17 @@ impl PersonalAutosuggest {
             entries: Vec::new(),
             unigram_cache: PersonalUnigramCache::empty(),
             weakest_index: None,
+            model_fingerprint: 0,
             tick: 0,
         }
     }
 
     pub fn config(&self) -> PersonalAutosuggestConfig {
         self.config
+    }
+
+    pub fn model_fingerprint(&self) -> u32 {
+        self.model_fingerprint
     }
 
     pub fn len(&self) -> usize {
@@ -284,6 +301,25 @@ impl PersonalAutosuggest {
 
     pub fn compact_snapshot_len(&self) -> usize {
         PERSONAL_HEADER_LEN + self.entries.len() * PERSONAL_ENTRY_LEN
+    }
+
+    pub fn validate_token_ids(&self, vocab_size: usize) -> Result<(), AutosuggestArtifactError> {
+        for entry in &self.entries {
+            for token_id in entry.context.ids() {
+                validate_personal_token_id(*token_id, vocab_size)?;
+            }
+            validate_personal_token_id(entry.target_id, vocab_size)?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_model(
+        &self,
+        vocab_size: usize,
+        model_fingerprint: u32,
+    ) -> Result<(), AutosuggestArtifactError> {
+        self.validate_token_ids(vocab_size)?;
+        validate_personal_model_fingerprint(self.model_fingerprint, model_fingerprint)
     }
 
     pub fn clear(&mut self) {
@@ -318,6 +354,7 @@ impl PersonalAutosuggest {
         }
         let tick = read_snapshot_u32(bytes, 20)?;
         let entry_count = read_snapshot_u32(bytes, 24)? as usize;
+        let model_fingerprint = read_snapshot_u32(bytes, 28)?;
         let expected_len = PERSONAL_HEADER_LEN
             .checked_add(
                 entry_count
@@ -376,6 +413,7 @@ impl PersonalAutosuggest {
             entries,
             unigram_cache: PersonalUnigramCache::empty(),
             weakest_index: None,
+            model_fingerprint,
             tick: max_seen,
         };
         personal.rebuild_unigram_cache();
@@ -389,13 +427,21 @@ impl PersonalAutosuggest {
     }
 
     pub fn write_compact_bytes_into(&self, bytes: &mut Vec<u8>) {
+        self.write_compact_bytes_with_model_fingerprint_into(bytes, self.model_fingerprint);
+    }
+
+    pub fn write_compact_bytes_with_model_fingerprint_into(
+        &self,
+        bytes: &mut Vec<u8>,
+        model_fingerprint: u32,
+    ) {
         bytes.clear();
         reserve_to(bytes, self.compact_snapshot_len());
         bytes.extend_from_slice(PERSONAL_MAGIC);
         write_snapshot_u32(bytes, PERSONAL_VERSION);
         write_snapshot_u32(bytes, self.tick);
         write_snapshot_u32(bytes, self.entries.len() as u32);
-        write_snapshot_u32(bytes, 0);
+        write_snapshot_u32(bytes, model_fingerprint);
         for entry in &self.entries {
             write_snapshot_u32(bytes, u32::from(entry.context.len));
             write_snapshot_u32(bytes, entry.context.ids[0]);
@@ -404,6 +450,10 @@ impl PersonalAutosuggest {
             write_snapshot_u32(bytes, u32::from(entry.count));
             write_snapshot_u32(bytes, entry.last_seen);
         }
+    }
+
+    pub(crate) fn stamp_model_fingerprint(&mut self, model_fingerprint: u32) {
+        self.model_fingerprint = model_fingerprint;
     }
 
     pub fn observe_context_target(&mut self, context: AutosuggestContext, target_id: u32) {
@@ -704,7 +754,10 @@ impl PersonalAutosuggest {
     }
 
     fn weakest_entry_index(&mut self) -> Option<usize> {
-        if let Some(index) = self.weakest_index.filter(|index| *index < self.entries.len()) {
+        if let Some(index) = self
+            .weakest_index
+            .filter(|index| *index < self.entries.len())
+        {
             return Some(index);
         }
 
@@ -795,6 +848,10 @@ impl PersonalContext {
 
     fn is_empty(self) -> bool {
         self.len == 0
+    }
+
+    fn ids(&self) -> &[u32] {
+        &self.ids[..self.len as usize]
     }
 }
 
@@ -961,6 +1018,32 @@ fn reserve_to<T>(values: &mut Vec<T>, capacity: usize) {
     }
 }
 
+fn validate_personal_token_id(
+    token_id: u32,
+    vocab_size: usize,
+) -> Result<(), AutosuggestArtifactError> {
+    if token_id <= UNK_ID || token_id as usize >= vocab_size {
+        return Err(AutosuggestArtifactError::InvalidTokenId(token_id));
+    }
+    Ok(())
+}
+
+fn validate_personal_model_fingerprint(
+    snapshot_fingerprint: u32,
+    model_fingerprint: u32,
+) -> Result<(), AutosuggestArtifactError> {
+    if snapshot_fingerprint != 0
+        && model_fingerprint != 0
+        && snapshot_fingerprint != model_fingerprint
+    {
+        return Err(AutosuggestArtifactError::ModelFingerprintMismatch {
+            expected: model_fingerprint,
+            actual: snapshot_fingerprint,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -983,6 +1066,19 @@ mod tests {
             ],
         ))
         .expect("fixture should parse")
+    }
+
+    fn alternate_fixture() -> AutosuggestLm<Vec<u8>> {
+        let tokens = ["<pad>", "<bos>", "<unk>", "আমি", "আজ", "দই", "খাই", "যাই"];
+        AutosuggestLm::from_bytes(build_fixture(
+            &tokens,
+            &[(5, 100, 100), (6, 90, 90), (7, 80, 80)],
+            &[Row {
+                context: vec![3],
+                candidates: vec![(7, 20, 20), (5, 10, 10)],
+            }],
+        ))
+        .expect("alternate fixture should parse")
     }
 
     #[test]
@@ -1204,7 +1300,7 @@ mod tests {
             AutosuggestOptions { max_candidates: 4 },
         );
         session.commit_token("আমি").unwrap();
-        session.replace_personal(loaded);
+        session.try_replace_personal(loaded).unwrap();
         session.suggest().unwrap();
 
         assert_eq!(
@@ -1212,6 +1308,106 @@ mod tests {
             Some("খাই")
         );
         assert_eq!(session.context().matched_token_count(), 1);
+    }
+
+    #[test]
+    fn session_rejects_foreign_personal_snapshot_without_mutating_state() {
+        let lm = fixture();
+        let mut session = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 1,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+        session.commit_token("আমি").unwrap();
+        session.suggest().unwrap();
+        let original_context = session.context();
+        let original_personal_len = session.personal().len();
+        let original_candidates = session.candidates().to_vec();
+
+        let invalid_token_id = lm.vocab_size() as u32;
+        let mut foreign = PersonalAutosuggest::new(session.personal().config());
+        foreign.observe_context_ids_target(&[], invalid_token_id);
+
+        assert_eq!(
+            session.try_replace_personal(foreign).unwrap_err(),
+            AutosuggestArtifactError::InvalidTokenId(invalid_token_id)
+        );
+        assert_eq!(session.context(), original_context);
+        assert_eq!(session.personal().len(), original_personal_len);
+        assert_eq!(session.candidates(), original_candidates.as_slice());
+    }
+
+    #[test]
+    fn session_rejects_snapshot_from_different_model_fingerprint() {
+        let lm = fixture();
+        let alternate = alternate_fixture();
+        assert_eq!(lm.vocab_size(), alternate.vocab_size());
+        assert_ne!(lm.vocab_fingerprint(), alternate.vocab_fingerprint());
+
+        let mut trainer = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 1,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+        trainer.commit_token("আমি").unwrap();
+        trainer.commit_token("খাই").unwrap();
+        let mut bytes = Vec::new();
+        trainer.write_personal_snapshot_into(&mut bytes);
+        let loaded =
+            PersonalAutosuggest::from_compact_bytes(trainer.personal().config(), &bytes).unwrap();
+
+        let mut session = AutosuggestSession::with_personal_config(
+            &alternate,
+            trainer.personal().config(),
+            AutosuggestOptions { max_candidates: 4 },
+        );
+
+        assert_eq!(
+            session.try_replace_personal(loaded).unwrap_err(),
+            AutosuggestArtifactError::ModelFingerprintMismatch {
+                expected: alternate.vocab_fingerprint(),
+                actual: lm.vocab_fingerprint(),
+            }
+        );
+        assert!(session.personal().is_empty());
+    }
+
+    #[test]
+    fn session_accepts_legacy_zero_fingerprint_snapshot_and_stamps_model() {
+        let lm = fixture();
+        let mut trainer = AutosuggestSession::with_personal_config(
+            &lm,
+            PersonalAutosuggestConfig {
+                max_entries: 32,
+                min_count: 1,
+            },
+            AutosuggestOptions { max_candidates: 4 },
+        );
+        trainer.commit_token("আমি").unwrap();
+        trainer.commit_token("খাই").unwrap();
+        let mut bytes = Vec::new();
+        trainer.write_personal_snapshot_into(&mut bytes);
+        bytes[28..32].copy_from_slice(&0_u32.to_le_bytes());
+        let loaded =
+            PersonalAutosuggest::from_compact_bytes(trainer.personal().config(), &bytes).unwrap();
+
+        let mut session = AutosuggestSession::with_personal_config(
+            &lm,
+            trainer.personal().config(),
+            AutosuggestOptions { max_candidates: 4 },
+        );
+        session.try_replace_personal(loaded).unwrap();
+
+        assert_eq!(
+            session.personal().model_fingerprint(),
+            lm.vocab_fingerprint()
+        );
     }
 
     #[test]
@@ -1559,6 +1755,7 @@ mod tests {
 
         let loaded = PersonalAutosuggest::from_compact_bytes(personal.config(), &bytes).unwrap();
         assert_eq!(loaded.config(), personal.config());
+        assert_eq!(loaded.model_fingerprint(), 0);
         assert_eq!(loaded.entries, personal.entries);
         assert_eq!(loaded.unigram_cache.items[0].token_id, 6);
 
@@ -1567,6 +1764,41 @@ mod tests {
         assert_eq!(
             suggestions.first().map(|suggestion| suggestion.token_id),
             Some(6)
+        );
+    }
+
+    #[test]
+    fn compact_snapshot_layout_can_be_rejected_against_current_vocab() {
+        let lm = fixture();
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 16,
+            min_count: 1,
+        });
+        personal.observe_context_ids_target(&[], 6);
+        let mut bytes = personal.to_compact_bytes();
+        let invalid_token_id = lm.vocab_size() as u32;
+        bytes[PERSONAL_HEADER_LEN + 12..PERSONAL_HEADER_LEN + 16]
+            .copy_from_slice(&invalid_token_id.to_le_bytes());
+
+        let loaded = PersonalAutosuggest::from_compact_bytes(personal.config(), &bytes).unwrap();
+        assert_eq!(
+            loaded.validate_token_ids(lm.vocab_size()).unwrap_err(),
+            AutosuggestArtifactError::InvalidTokenId(invalid_token_id)
+        );
+    }
+
+    #[test]
+    fn compact_snapshot_rejects_foreign_context_token_against_current_vocab() {
+        let lm = fixture();
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 16,
+            min_count: 1,
+        });
+        personal.observe_context_ids_target(&[lm.vocab_size() as u32], 6);
+
+        assert_eq!(
+            personal.validate_token_ids(lm.vocab_size()).unwrap_err(),
+            AutosuggestArtifactError::InvalidTokenId(lm.vocab_size() as u32)
         );
     }
 
@@ -1617,6 +1849,7 @@ mod tests {
             PersonalAutosuggest::from_compact_bytes(session.personal().config(), &bytes).unwrap();
 
         assert_eq!(bytes.as_ptr(), ptr);
+        assert_eq!(loaded.model_fingerprint(), lm.vocab_fingerprint());
         assert_eq!(loaded.entries, session.personal().entries);
     }
 
