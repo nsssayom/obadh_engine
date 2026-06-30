@@ -169,6 +169,75 @@ export class ObadhAutosuggestWasm {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_obadhautosuggestwasm_free(ptr, 0);
     }
+    clearPersonal() {
+        wasm.obadhautosuggestwasm_clearPersonal(this.__wbg_ptr);
+    }
+    clearSession() {
+        wasm.obadhautosuggestwasm_clearSession(this.__wbg_ptr);
+    }
+    /**
+     * @param {string} raw_token
+     * @returns {boolean}
+     */
+    commitToken(raw_token) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(raw_token, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.obadhautosuggestwasm_commitToken(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return r0 !== 0;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {number} token_id
+     * @param {boolean} boundary_after
+     * @returns {boolean}
+     */
+    commitTokenId(token_id, boundary_after) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.obadhautosuggestwasm_commitTokenId(retptr, this.__wbg_ptr, token_id, boundary_after);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return r0 !== 0;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {boolean} boundary_after
+     */
+    commitUnknown(boundary_after) {
+        wasm.obadhautosuggestwasm_commitUnknown(this.__wbg_ptr, boundary_after);
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    exportPersonalSnapshot() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.obadhautosuggestwasm_exportPersonalSnapshot(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
     /**
      * @param {Uint8Array} bytes
      * @returns {ObadhAutosuggestWasm}
@@ -186,6 +255,52 @@ export class ObadhAutosuggestWasm {
                 throw takeObject(r1);
             }
             return ObadhAutosuggestWasm.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {Uint8Array} bytes
+     */
+    importPersonalSnapshot(bytes) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.obadhautosuggestwasm_importPersonalSnapshot(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    personalSnapshotLen() {
+        const ret = wasm.obadhautosuggestwasm_personalSnapshotLen(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {string} token
+     * @returns {number}
+     */
+    resolveTokenId(token) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(token, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.obadhautosuggestwasm_resolveTokenId(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return r0;
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -217,6 +332,44 @@ export class ObadhAutosuggestWasm {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
             wasm.obadhautosuggestwasm_suggest(retptr, this.__wbg_ptr, addHeapObject(context_tokens_js), limit);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {number} limit
+     * @returns {any}
+     */
+    suggestSession(limit) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.obadhautosuggestwasm_suggestSession(retptr, this.__wbg_ptr, limit);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {number} limit
+     * @returns {any}
+     */
+    suggestSessionCandidates(limit) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.obadhautosuggestwasm_suggestSessionCandidates(retptr, this.__wbg_ptr, limit);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);

@@ -249,6 +249,7 @@ pub struct PersonalAutosuggest {
     config: PersonalAutosuggestConfig,
     entries: Vec<PersonalEntry>,
     unigram_cache: PersonalUnigramCache,
+    weakest_index: Option<usize>,
     tick: u32,
 }
 
@@ -258,6 +259,7 @@ impl PersonalAutosuggest {
             config,
             entries: Vec::new(),
             unigram_cache: PersonalUnigramCache::empty(),
+            weakest_index: None,
             tick: 0,
         }
     }
@@ -287,6 +289,7 @@ impl PersonalAutosuggest {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.unigram_cache.clear();
+        self.weakest_index = None;
         self.tick = 0;
     }
 
@@ -296,6 +299,7 @@ impl PersonalAutosuggest {
         }
         self.entries.retain(|entry| entry.count > 0);
         self.rebuild_unigram_cache();
+        self.weakest_index = None;
     }
 
     pub fn from_compact_bytes(
@@ -371,6 +375,7 @@ impl PersonalAutosuggest {
             config,
             entries,
             unigram_cache: PersonalUnigramCache::empty(),
+            weakest_index: None,
             tick: max_seen,
         };
         personal.rebuild_unigram_cache();
@@ -601,6 +606,9 @@ impl PersonalAutosuggest {
                 if entry.context.is_empty() {
                     changed_unigram = Some(*entry);
                 }
+                if self.weakest_index == Some(index) {
+                    self.weakest_index = None;
+                }
             }
             Err(index) => {
                 let entry = PersonalEntry {
@@ -612,6 +620,7 @@ impl PersonalAutosuggest {
                 if self.entries.len() < self.config.max_entries {
                     self.ensure_entry_capacity_for_insert();
                     self.entries.insert(index, entry);
+                    self.weakest_index = None;
                     if context.is_empty() {
                         changed_unigram = Some(entry);
                     }
@@ -622,6 +631,7 @@ impl PersonalAutosuggest {
                             removed_unigram = Some(removed.target_id);
                         }
                         self.insert_entry_sorted(entry);
+                        self.weakest_index = None;
                         if context.is_empty() {
                             changed_unigram = Some(entry);
                         }
@@ -693,12 +703,19 @@ impl PersonalAutosuggest {
         self.entries.insert(index, entry);
     }
 
-    fn weakest_entry_index(&self) -> Option<usize> {
-        self.entries
+    fn weakest_entry_index(&mut self) -> Option<usize> {
+        if let Some(index) = self.weakest_index.filter(|index| *index < self.entries.len()) {
+            return Some(index);
+        }
+
+        let index = self
+            .entries
             .iter()
             .enumerate()
             .min_by_key(|(_, entry)| entry_strength_key(entry))
-            .map(|(index, _)| index)
+            .map(|(index, _)| index);
+        self.weakest_index = index;
+        index
     }
 
     fn ensure_entry_capacity_for_insert(&mut self) {
@@ -1409,6 +1426,48 @@ mod tests {
         assert!(!suggestions
             .iter()
             .any(|suggestion| suggestion.token_id == 7));
+    }
+
+    #[test]
+    fn full_personal_store_caches_weakest_entry_after_rejecting_noise() {
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 2,
+            min_count: 1,
+        });
+
+        for _ in 0..2 {
+            personal.observe_context_ids_target(&[], 5);
+            personal.observe_context_ids_target(&[], 6);
+        }
+        assert_eq!(personal.weakest_index, None);
+
+        personal.observe_context_ids_target(&[], 7);
+        let cached = personal.weakest_index;
+
+        personal.observe_context_ids_target(&[], 8);
+
+        assert_eq!(personal.len(), 2);
+        assert!(cached.is_some());
+        assert_eq!(personal.weakest_index, cached);
+    }
+
+    #[test]
+    fn full_personal_store_invalidates_weakest_cache_after_replacement() {
+        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
+            max_entries: 2,
+            min_count: 1,
+        });
+
+        personal.observe_context_ids_target(&[], 5);
+        personal.observe_context_ids_target(&[], 6);
+        assert_eq!(personal.weakest_entry_index(), Some(0));
+
+        personal.observe_context_ids_target(&[], 7);
+
+        assert_eq!(personal.len(), 2);
+        assert_eq!(personal.weakest_index, None);
+        assert!(!personal.entries.iter().any(|entry| entry.target_id == 5));
+        assert!(personal.entries.iter().any(|entry| entry.target_id == 7));
     }
 
     #[test]

@@ -5,11 +5,13 @@ use web_sys::Performance;
 
 use crate::{
     roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
-    AutosuggestCandidate, AutosuggestContext, AutosuggestLm, AutosuggestOptions, AutosuggestSource,
-    CandidateFeatures, CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon,
-    FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats,
-    LoanwordLexicon, LoanwordSearchOptions, ObadhEngine, RomanRepairOptions, RomanRepairedOutput,
-    DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
+    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestContext, AutosuggestLm,
+    AutosuggestMetadata, AutosuggestOptions, AutosuggestSource, CandidateFeatures,
+    CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon, FstLoanwordMatch,
+    FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats, LoanwordLexicon,
+    LoanwordSearchOptions, ObadhEngine, PersonalAutosuggest, PersonalAutosuggestConfig,
+    PersonalAutosuggestSuggestion, RomanRepairOptions, RomanRepairedOutput,
+    DEFAULT_AUTOSUGGEST_CANDIDATES, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 
 const AUTOCORRECT_RERANK_POOL_SIZE: usize = 512;
@@ -346,6 +348,9 @@ impl Default for ObadhaWasm {
 #[wasm_bindgen]
 pub struct ObadhAutosuggestWasm {
     lm: AutosuggestLm<Vec<u8>>,
+    personal: PersonalAutosuggest,
+    context: AutosuggestContext,
+    personal_scratch: Vec<PersonalAutosuggestSuggestion>,
     stats: AutosuggestStats,
 }
 
@@ -369,7 +374,13 @@ impl ObadhAutosuggestWasm {
             load_elapsed_ms: now() - start,
             last_elapsed_ms: None,
         };
-        Ok(Self { lm, stats })
+        Ok(Self {
+            lm,
+            personal: PersonalAutosuggest::new(PersonalAutosuggestConfig::default()),
+            context: AutosuggestContext::new(),
+            personal_scratch: Vec::with_capacity(DEFAULT_AUTOSUGGEST_CANDIDATES),
+            stats,
+        })
     }
 
     #[wasm_bindgen]
@@ -411,6 +422,130 @@ impl ObadhAutosuggestWasm {
             candidates: candidates.iter().map(autosuggest_candidate_info).collect(),
         };
         to_value(&lab_result).map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = clearSession)]
+    pub fn clear_session(&mut self) {
+        self.context.clear();
+    }
+
+    #[wasm_bindgen(js_name = clearPersonal)]
+    pub fn clear_personal(&mut self) {
+        self.personal.clear();
+    }
+
+    #[wasm_bindgen(js_name = personalSnapshotLen)]
+    pub fn personal_snapshot_len(&self) -> usize {
+        self.personal.compact_snapshot_len()
+    }
+
+    #[wasm_bindgen(js_name = exportPersonalSnapshot)]
+    pub fn export_personal_snapshot(&self) -> Vec<u8> {
+        self.personal.to_compact_bytes()
+    }
+
+    #[wasm_bindgen(js_name = importPersonalSnapshot)]
+    pub fn import_personal_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        let personal = PersonalAutosuggest::from_compact_bytes(
+            PersonalAutosuggestConfig::default(),
+            bytes,
+        )
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        self.personal = personal;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = resolveTokenId)]
+    pub fn resolve_token_id(&self, token: &str) -> Result<i32, JsValue> {
+        let token_id = self
+            .lm
+            .token_id(token)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        Ok(token_id.map_or(-1, |id| id as i32))
+    }
+
+    #[wasm_bindgen(js_name = commitToken)]
+    pub fn commit_token(&mut self, raw_token: &str) -> Result<bool, JsValue> {
+        self.personal
+            .observe_committed_token(&self.lm, &mut self.context, raw_token)
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = commitTokenId)]
+    pub fn commit_token_id(&mut self, token_id: i32, boundary_after: bool) -> Result<bool, JsValue> {
+        let resolved = if token_id < 0 {
+            None
+        } else {
+            let token_id = token_id as u32;
+            if token_id >= self.lm.vocab_size() as u32 {
+                return Err(JsValue::from_str(&format!(
+                    "autosuggest artifact references invalid token id {token_id}"
+                )));
+            }
+            Some(token_id)
+        };
+        Ok(self.personal.observe_resolved_token_id(
+            &mut self.context,
+            resolved,
+            boundary_after,
+        ))
+    }
+
+    #[wasm_bindgen(js_name = commitUnknown)]
+    pub fn commit_unknown(&mut self, boundary_after: bool) {
+        self.personal
+            .observe_resolved_token_id(&mut self.context, None, boundary_after);
+    }
+
+    #[wasm_bindgen(js_name = suggestSession)]
+    pub fn suggest_session(&mut self, limit: usize) -> Result<JsValue, JsValue> {
+        let start = now();
+        let mut model = Vec::with_capacity(limit.max(1));
+        let mut candidates = Vec::with_capacity(limit.max(1));
+        let metadata = autosuggest_session_candidates_into(
+            &self.lm,
+            &self.personal,
+            self.context,
+            &mut self.personal_scratch,
+            limit,
+            &mut model,
+            &mut candidates,
+        )
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let elapsed_ms = now() - start;
+        let mut stats = self.stats;
+        stats.last_elapsed_ms = Some(elapsed_ms);
+        let lab_result = AutosuggestLabResult {
+            context: autosuggest_context_labels(&self.lm, self.context)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?,
+            context_token_count: metadata.context_token_count,
+            matched_context_token_count: metadata.matched_context_token_count,
+            elapsed_ms,
+            model: stats,
+            candidates: candidates.iter().map(autosuggest_candidate_info).collect(),
+        };
+        to_value(&lab_result).map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = suggestSessionCandidates)]
+    pub fn suggest_session_candidates(&mut self, limit: usize) -> Result<JsValue, JsValue> {
+        let mut model = Vec::with_capacity(limit.max(1));
+        let mut candidates = Vec::with_capacity(limit.max(1));
+        autosuggest_session_candidates_into(
+            &self.lm,
+            &self.personal,
+            self.context,
+            &mut self.personal_scratch,
+            limit,
+            &mut model,
+            &mut candidates,
+        )
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let candidate_infos = candidates
+            .iter()
+            .map(autosuggest_candidate_info)
+            .collect::<Vec<_>>();
+        to_value(&candidate_infos).map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -718,6 +853,31 @@ fn fst_autocorrect_candidate_info(candidate: FstCandidate) -> AutocorrectCandida
     }
 }
 
+fn autosuggest_session_candidates_into<'a>(
+    lm: &'a AutosuggestLm<Vec<u8>>,
+    personal: &PersonalAutosuggest,
+    context: AutosuggestContext,
+    personal_scratch: &mut Vec<PersonalAutosuggestSuggestion>,
+    limit: usize,
+    model_scratch: &mut Vec<AutosuggestCandidate<'a>>,
+    output: &mut Vec<AutosuggestCandidate<'a>>,
+) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
+    let limit = limit.max(1);
+    if personal_scratch.capacity() < limit {
+        personal_scratch.reserve_exact(limit - personal_scratch.capacity());
+    }
+    personal.suggest_with_lm_into(
+        lm,
+        context,
+        AutosuggestOptions {
+            max_candidates: limit,
+        },
+        personal_scratch,
+        model_scratch,
+        output,
+    )
+}
+
 fn fst_roman_repairs(
     input: &str,
     obadh: &ObadhEngine,
@@ -754,6 +914,17 @@ fn autosuggest_candidate_info(candidate: &AutosuggestCandidate<'_>) -> Autosugge
         count: candidate.count,
         score: candidate.score,
     }
+}
+
+fn autosuggest_context_labels(
+    lm: &AutosuggestLm<Vec<u8>>,
+    context: AutosuggestContext,
+) -> Result<Vec<String>, crate::AutosuggestArtifactError> {
+    context
+        .recent_token_ids()
+        .iter()
+        .map(|token_id| lm.token_text(*token_id).map(str::to_string))
+        .collect()
 }
 
 fn autosuggest_source_name(source: AutosuggestSource) -> &'static str {

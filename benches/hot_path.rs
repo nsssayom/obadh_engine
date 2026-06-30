@@ -1,7 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use obadh_engine::{
-    AutocorrectEngine, CorrectionRequest, FstLexicon, FstSuggestOptions, LexiconEntry,
-    ObadhEngine, Tokenizer,
+    AutocorrectEngine, AutosuggestContext, AutosuggestLm, AutosuggestOptions, AutosuggestSession,
+    CorrectionRequest, FstLexicon, FstSuggestOptions, LexiconEntry, ObadhEngine,
+    PersonalAutosuggest, PersonalAutosuggestConfig, Tokenizer,
 };
 use std::time::Duration;
 
@@ -13,6 +14,9 @@ const MIXED_RULE_TEXT: &str =
 const LENIENT_MIXED_TEXT: &str = "ami😀 12.34 Taka. rZyab🔥 rrkSh 1.a2 songskrriti🚫";
 const AUTOCORRECT_INPUT: &str = "কীরন";
 const SHIPPED_AUTOCORRECT_FST: &[u8] = include_bytes!("../www/assets/autocorrect/bn.fst");
+const SHIPPED_AUTOSUGGEST_NGRAM: &[u8] =
+    include_bytes!("../www/assets/autosuggest/autosuggest-ngram.bin");
+const AUTOSUGGEST_CONTEXT_TEXT: &str = "আমি আজ";
 
 fn bench_tokenizer(c: &mut Criterion) {
     let tokenizer = Tokenizer::new();
@@ -94,6 +98,132 @@ fn bench_autocorrect(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_autosuggest(c: &mut Criterion) {
+    let lm = AutosuggestLm::from_bytes(SHIPPED_AUTOSUGGEST_NGRAM)
+        .expect("shipped autosuggest model should load");
+    let options = AutosuggestOptions { max_candidates: 5 };
+    let context = autosuggest_context(&lm, AUTOSUGGEST_CONTEXT_TEXT);
+    let token_cycle = autosuggest_token_cycle(&lm);
+    let mut candidates = Vec::with_capacity(options.max_candidates);
+    let mut session = autosuggest_session(&lm, options, &token_cycle);
+    let mut full_personal = full_personal_autosuggest();
+    let mut cycle_index = 0_usize;
+    let mut rejected_token_id = 50_000_u32;
+
+    let mut init_group = c.benchmark_group("autosuggest_init");
+    init_group.throughput(Throughput::Bytes(SHIPPED_AUTOSUGGEST_NGRAM.len() as u64));
+    init_group.bench_function("shipped_ngram_from_bytes", |b| {
+        b.iter(|| {
+            AutosuggestLm::from_bytes(black_box(SHIPPED_AUTOSUGGEST_NGRAM))
+                .expect("shipped autosuggest model should load")
+        });
+    });
+    init_group.finish();
+
+    let mut group = c.benchmark_group("autosuggest");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("suggest_for_text_ngram", |b| {
+        b.iter(|| {
+            lm.suggest_for_text_into(
+                black_box(AUTOSUGGEST_CONTEXT_TEXT),
+                black_box(options),
+                black_box(&mut candidates),
+            )
+            .expect("shipped autosuggest text suggestion should succeed")
+        });
+    });
+
+    group.bench_function("suggest_for_context_ngram", |b| {
+        b.iter(|| {
+            lm.suggest_for_context_into(black_box(context), black_box(options), &mut candidates)
+                .expect("shipped autosuggest context suggestion should succeed")
+        });
+    });
+
+    group.bench_function("session_suggest_personal_overlay", |b| {
+        b.iter(|| {
+            session
+                .suggest()
+                .expect("shipped autosuggest session suggestion should succeed")
+        });
+    });
+
+    group.bench_function("session_commit_token_id_then_suggest", |b| {
+        b.iter(|| {
+            let token_id = token_cycle[cycle_index % token_cycle.len()];
+            cycle_index = cycle_index.wrapping_add(1);
+            session
+                .commit_token_id(Some(black_box(token_id)), false)
+                .expect("known autosuggest token ID should be accepted");
+            session
+                .suggest()
+                .expect("shipped autosuggest session suggestion should succeed")
+        });
+    });
+
+    group.bench_function("personal_full_store_reject_singleton", |b| {
+        b.iter(|| {
+            full_personal.observe_context_ids_target(&[], black_box(rejected_token_id));
+            rejected_token_id = rejected_token_id.wrapping_add(1);
+        });
+    });
+    group.finish();
+}
+
+fn autosuggest_context<D: AsRef<[u8]>>(lm: &AutosuggestLm<D>, text: &str) -> AutosuggestContext {
+    let mut context = AutosuggestContext::new();
+    lm.push_context_text(&mut context, text)
+        .expect("benchmark context should use known tokens");
+    context
+}
+
+fn autosuggest_token_cycle<D: AsRef<[u8]>>(lm: &AutosuggestLm<D>) -> [u32; 4] {
+    ["আমি", "আজ", "বাংলা", "মানুষ"]
+        .map(|token| {
+            lm.token_id(token)
+                .expect("benchmark token lookup should succeed")
+                .expect("benchmark token should exist in shipped autosuggest vocab")
+        })
+}
+
+fn autosuggest_session<'lm, D: AsRef<[u8]>>(
+    lm: &'lm AutosuggestLm<D>,
+    options: AutosuggestOptions,
+    token_cycle: &[u32],
+) -> AutosuggestSession<'lm, D> {
+    let mut session =
+        AutosuggestSession::with_personal_config(lm, PersonalAutosuggestConfig::default(), options);
+    for _ in 0..PersonalAutosuggestConfig::default().min_count {
+        session.clear_context();
+        for token_id in token_cycle {
+            session
+                .commit_token_id(Some(*token_id), false)
+                .expect("known autosuggest token ID should be accepted");
+        }
+    }
+    session.clear_context();
+    for token_id in token_cycle.iter().take(2) {
+        session
+            .commit_token_id(Some(*token_id), false)
+            .expect("known autosuggest token ID should be accepted");
+    }
+    session
+}
+
+fn full_personal_autosuggest() -> PersonalAutosuggest {
+    let config = PersonalAutosuggestConfig {
+        max_entries: 4096,
+        min_count: 1,
+    };
+    let mut personal = PersonalAutosuggest::new(config);
+    for token_id in 3..(3 + config.max_entries as u32) {
+        personal.observe_context_ids_target(&[], token_id);
+        personal.observe_context_ids_target(&[], token_id);
+    }
+    personal.observe_context_ids_target(&[], 49_999);
+    personal
+}
+
 fn stress_lexicon_entries() -> Vec<LexiconEntry> {
     let heads = [
         "ক", "খ", "গ", "ঘ", "চ", "জ", "ট", "ড", "ত", "দ", "ন", "প", "ব", "ম", "য", "র",
@@ -116,6 +246,6 @@ criterion_group! {
         .sample_size(20)
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_tokenizer, bench_transliterator, bench_autocorrect
+    targets = bench_tokenizer, bench_transliterator, bench_autocorrect, bench_autosuggest
 }
 criterion_main!(hot_path);
