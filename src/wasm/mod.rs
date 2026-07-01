@@ -3,15 +3,20 @@ use serde_wasm_bindgen::{from_value, to_value};
 use wasm_bindgen::prelude::*;
 use web_sys::Performance;
 
+use crate::autosuggest::{
+    repetition_observation_for_raw_token, session_repetition_guard_pool_limit,
+    AutosuggestRepetitionHistory,
+};
 use crate::{
     roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
-    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestCandidateId, AutosuggestContext,
-    AutosuggestLm, AutosuggestMetadata, AutosuggestOptions, AutosuggestSource, CandidateFeatures,
-    CorrectionCandidate, CorrectionSource, FstCandidate, FstLexicon, FstLoanwordMatch,
-    FstRepairedBaseline, FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats, LoanwordLexicon,
-    LoanwordSearchOptions, ObadhEngine, PersonalAutosuggest, PersonalAutosuggestConfig,
-    PersonalAutosuggestSuggestion, RomanRepairOptions, RomanRepairedOutput,
-    DEFAULT_AUTOSUGGEST_CANDIDATES, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
+    AutosuggestArtifactError, AutosuggestCandidateId, AutosuggestCandidatePrior,
+    AutosuggestContext, AutosuggestContextPriorOptions, AutosuggestLm, AutosuggestMetadata,
+    AutosuggestOptions, AutosuggestSource, CandidateFeatures, CorrectionCandidate,
+    CorrectionSource, FstCandidate, FstLexicon, FstLoanwordMatch, FstRepairedBaseline,
+    FstSuggestOptions, Lexicon, LexiconEntry, LexiconStats, LoanwordLexicon, LoanwordSearchOptions,
+    ObadhEngine, PersonalAutosuggest, PersonalAutosuggestConfig, PersonalAutosuggestContext,
+    PersonalAutosuggestSuggestion, PersonalAutosuggestTextSuggestion, RomanRepairOptions,
+    RomanRepairedOutput, DEFAULT_AUTOSUGGEST_CANDIDATES, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 
 const AUTOCORRECT_RERANK_POOL_SIZE: usize = 512;
@@ -31,6 +36,12 @@ fn get_performance() -> Option<Performance> {
 // Helper function to measure time
 fn now() -> f64 {
     get_performance().map_or(0.0, |performance| performance.now())
+}
+
+fn reserve_vec_to<T>(values: &mut Vec<T>, capacity: usize) {
+    if values.capacity() < capacity {
+        values.reserve_exact(capacity - values.capacity());
+    }
 }
 
 /// Output options for the transliteration
@@ -139,11 +150,15 @@ pub struct AutocorrectLabResult {
 pub struct AutosuggestStats {
     pub artifact_kind: &'static str,
     pub backend: &'static str,
+    pub artifact_fingerprint_high: u32,
+    pub artifact_fingerprint_low: u32,
     pub vocab_size: usize,
     pub vocab_fingerprint: u32,
     pub unigram_count: usize,
     pub bigram_rows: usize,
     pub trigram_rows: usize,
+    pub fourgram_rows: usize,
+    pub candidate_record_len: usize,
     pub model_bytes: usize,
     pub load_elapsed_ms: f64,
     pub last_elapsed_ms: Option<f64>,
@@ -166,6 +181,29 @@ pub struct AutosuggestLabResult {
     pub elapsed_ms: f64,
     pub model: AutosuggestStats,
     pub candidates: Vec<AutosuggestCandidateInfo>,
+}
+
+#[derive(Serialize)]
+pub struct AutosuggestContextPriorInfo {
+    pub candidate_index: usize,
+    pub text: String,
+    pub token_id: u32,
+    pub prior_rank: usize,
+    pub source: &'static str,
+    pub count: u32,
+    pub score: i32,
+}
+
+#[derive(Serialize)]
+pub struct AutosuggestContextPriorResult {
+    pub context: Vec<String>,
+    pub context_token_count: usize,
+    pub matched_context_token_count: usize,
+    pub prior_candidate_count: usize,
+    pub matched_candidate_count: usize,
+    pub elapsed_ms: f64,
+    pub model: AutosuggestStats,
+    pub priors: Vec<AutosuggestContextPriorInfo>,
 }
 
 /// ObdahWasm is the main WASM interface to the Obadh engine
@@ -351,9 +389,13 @@ pub struct ObadhAutosuggestWasm {
     lm: AutosuggestLm<Vec<u8>>,
     personal: PersonalAutosuggest,
     context: AutosuggestContext,
+    personal_context: PersonalAutosuggestContext,
+    repetition_history: AutosuggestRepetitionHistory,
     personal_scratch: Vec<PersonalAutosuggestSuggestion>,
+    personal_text_scratch: Vec<PersonalAutosuggestTextSuggestion>,
     model_id_scratch: Vec<AutosuggestCandidateId>,
     candidate_id_scratch: Vec<AutosuggestCandidateId>,
+    context_prior_scratch: Vec<AutosuggestCandidatePrior>,
     stats: AutosuggestStats,
 }
 
@@ -363,18 +405,23 @@ impl ObadhAutosuggestWasm {
     pub fn from_ngram_artifact(bytes: &[u8]) -> Result<ObadhAutosuggestWasm, JsValue> {
         let start = now();
         let bytes = bytes.to_vec();
-        let model_bytes = bytes.len();
         let lm = AutosuggestLm::from_bytes(bytes)
             .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let model = lm.model_info();
+        let artifact_fingerprint = lm.artifact_fingerprint();
         let stats = AutosuggestStats {
-            artifact_kind: "ngram",
+            artifact_kind: model.artifact_kind,
             backend: "wasm/rust",
-            vocab_size: lm.vocab_size(),
-            vocab_fingerprint: lm.vocab_fingerprint(),
-            unigram_count: lm.unigram_count(),
-            bigram_rows: lm.bigram_row_count(),
-            trigram_rows: lm.trigram_row_count(),
-            model_bytes,
+            artifact_fingerprint_high: (artifact_fingerprint >> 32) as u32,
+            artifact_fingerprint_low: artifact_fingerprint as u32,
+            vocab_size: model.vocab_size,
+            vocab_fingerprint: model.vocab_fingerprint,
+            unigram_count: model.unigram_count,
+            bigram_rows: model.bigram_rows,
+            trigram_rows: model.trigram_rows,
+            fourgram_rows: model.fourgram_rows,
+            candidate_record_len: model.candidate_record_len,
+            model_bytes: model.artifact_bytes,
             load_elapsed_ms: now() - start,
             last_elapsed_ms: None,
         };
@@ -382,9 +429,13 @@ impl ObadhAutosuggestWasm {
             lm,
             personal: PersonalAutosuggest::new(PersonalAutosuggestConfig::default()),
             context: AutosuggestContext::new(),
+            personal_context: PersonalAutosuggestContext::new(),
+            repetition_history: AutosuggestRepetitionHistory::new(),
             personal_scratch: Vec::with_capacity(DEFAULT_AUTOSUGGEST_CANDIDATES),
+            personal_text_scratch: Vec::with_capacity(DEFAULT_AUTOSUGGEST_CANDIDATES),
             model_id_scratch: Vec::with_capacity(DEFAULT_AUTOSUGGEST_CANDIDATES),
             candidate_id_scratch: Vec::with_capacity(DEFAULT_AUTOSUGGEST_CANDIDATES),
+            context_prior_scratch: Vec::with_capacity(DEFAULT_AUTOSUGGEST_CANDIDATES),
             stats,
         })
     }
@@ -395,27 +446,60 @@ impl ObadhAutosuggestWasm {
     }
 
     #[wasm_bindgen]
-    pub fn suggest(&self, context_tokens_js: JsValue, limit: usize) -> Result<JsValue, JsValue> {
+    pub fn suggest(
+        &mut self,
+        context_tokens_js: JsValue,
+        limit: usize,
+    ) -> Result<JsValue, JsValue> {
         let start = now();
         let context_tokens: Vec<String> = from_value(context_tokens_js)
             .map_err(|error| JsValue::from_str(&format!("invalid context tokens: {error}")))?;
         let mut context = AutosuggestContext::new();
+        let mut personal_context = PersonalAutosuggestContext::new();
+        let mut repetition_history = AutosuggestRepetitionHistory::new();
         for token in &context_tokens {
-            self.lm
-                .push_context_token(&mut context, token)
-                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            match self
+                .lm
+                .token_id(token)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?
+            {
+                Some(token_id) => {
+                    context.push_token_id(Some(token_id));
+                    personal_context.push_word_token_id(token_id);
+                    repetition_history.observe_resolved_token(Some(token_id), true, false);
+                }
+                None => {
+                    context.push_unknown();
+                    personal_context.push_text(token);
+                    repetition_history.observe_resolved_token(None, true, false);
+                }
+            }
         }
-        let mut candidates = Vec::with_capacity(limit.max(1));
+        let options = AutosuggestOptions {
+            max_candidates: limit.max(1),
+        };
+        let pool_limit = session_repetition_guard_pool_limit(options.max_candidates);
+        reserve_vec_to(&mut self.personal_scratch, pool_limit);
+        reserve_vec_to(&mut self.model_id_scratch, pool_limit);
+        reserve_vec_to(&mut self.candidate_id_scratch, options.max_candidates);
         let metadata = self
-            .lm
-            .suggest_for_context_into(
+            .personal
+            .suggest_ids_with_lm_for_personal_context_into(
+                &self.lm,
                 context,
-                AutosuggestOptions {
-                    max_candidates: limit.max(1),
-                },
-                &mut candidates,
+                personal_context,
+                repetition_history.recent_token_ids(),
+                options,
+                &mut self.personal_scratch,
+                &mut self.model_id_scratch,
+                &mut self.candidate_id_scratch,
             )
             .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        self.personal.suggest_text_for_personal_context_into(
+            personal_context,
+            options.max_candidates,
+            &mut self.personal_text_scratch,
+        );
         let elapsed_ms = now() - start;
         let mut stats = self.stats;
         stats.last_elapsed_ms = Some(elapsed_ms);
@@ -425,7 +509,71 @@ impl ObadhAutosuggestWasm {
             matched_context_token_count: metadata.matched_context_token_count,
             elapsed_ms,
             model: stats,
-            candidates: candidates.iter().map(autosuggest_candidate_info).collect(),
+            candidates: autosuggest_candidate_infos_with_text(
+                &self.lm,
+                &self.personal,
+                &self.personal_text_scratch,
+                &self.candidate_id_scratch,
+                options.max_candidates,
+            )
+            .map_err(|error| JsValue::from_str(&error.to_string()))?,
+        };
+        to_value(&lab_result).map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = contextPriors)]
+    pub fn context_priors(
+        &mut self,
+        context_tokens_js: JsValue,
+        candidate_texts_js: JsValue,
+        limit: usize,
+    ) -> Result<JsValue, JsValue> {
+        let start = now();
+        let context_tokens: Vec<String> = from_value(context_tokens_js)
+            .map_err(|error| JsValue::from_str(&format!("invalid context tokens: {error}")))?;
+        let candidate_texts: Vec<String> = from_value(candidate_texts_js)
+            .map_err(|error| JsValue::from_str(&format!("invalid candidate texts: {error}")))?;
+        let mut context = AutosuggestContext::new();
+        for token in &context_tokens {
+            self.lm
+                .push_context_token(&mut context, token)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        }
+
+        let candidate_text_refs = candidate_texts
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let metadata = self
+            .lm
+            .context_priors_for_candidate_texts_into(
+                context,
+                &candidate_text_refs,
+                AutosuggestContextPriorOptions {
+                    max_prior_candidates: limit.max(1),
+                },
+                &mut self.model_id_scratch,
+                &mut self.context_prior_scratch,
+            )
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let elapsed_ms = now() - start;
+        let mut stats = self.stats;
+        stats.last_elapsed_ms = Some(elapsed_ms);
+        let priors = self
+            .context_prior_scratch
+            .iter()
+            .map(|prior| autosuggest_context_prior_info(&self.lm, &candidate_texts, *prior))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let lab_result = AutosuggestContextPriorResult {
+            context: context_tokens,
+            context_token_count: metadata.context_token_count,
+            matched_context_token_count: metadata.matched_context_token_count,
+            prior_candidate_count: metadata.prior_candidate_count,
+            matched_candidate_count: metadata.matched_candidate_count,
+            elapsed_ms,
+            model: stats,
+            priors,
         };
         to_value(&lab_result).map_err(|error| JsValue::from_str(&error.to_string()))
     }
@@ -433,6 +581,8 @@ impl ObadhAutosuggestWasm {
     #[wasm_bindgen(js_name = clearSession)]
     pub fn clear_session(&mut self) {
         self.context.clear();
+        self.personal_context.clear();
+        self.repetition_history.clear();
     }
 
     #[wasm_bindgen(js_name = clearPersonal)]
@@ -458,14 +608,13 @@ impl ObadhAutosuggestWasm {
 
     #[wasm_bindgen(js_name = importPersonalSnapshot)]
     pub fn import_personal_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
-        let mut personal =
-            PersonalAutosuggest::from_compact_bytes(PersonalAutosuggestConfig::default(), bytes)
-                .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        personal
-            .validate_for_model(self.lm.vocab_size(), self.lm.vocab_fingerprint())
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        personal.stamp_model_fingerprint(self.lm.vocab_fingerprint());
-        self.personal = personal;
+        self.personal = PersonalAutosuggest::from_compact_bytes_for_model(
+            PersonalAutosuggestConfig::default(),
+            bytes,
+            self.lm.vocab_size(),
+            self.lm.vocab_fingerprint(),
+        )
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
         Ok(())
     }
 
@@ -480,9 +629,21 @@ impl ObadhAutosuggestWasm {
 
     #[wasm_bindgen(js_name = commitToken)]
     pub fn commit_token(&mut self, raw_token: &str) -> Result<bool, JsValue> {
-        self.personal
-            .observe_committed_token(&self.lm, &mut self.context, raw_token)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
+        let (token_id, had_text, boundary_after) =
+            repetition_observation_for_raw_token(&self.lm, raw_token)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let learned = self
+            .personal
+            .observe_committed_token_with_personal_context(
+                &self.lm,
+                &mut self.context,
+                &mut self.personal_context,
+                raw_token,
+            )
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        self.repetition_history
+            .observe_resolved_token(token_id, had_text, boundary_after);
+        Ok(learned)
     }
 
     #[wasm_bindgen(js_name = commitTokenId)]
@@ -495,22 +656,40 @@ impl ObadhAutosuggestWasm {
             None
         } else {
             let token_id = token_id as u32;
-            if token_id >= self.lm.vocab_size() as u32 {
+            if !self.lm.is_word_token_id(token_id) {
                 return Err(JsValue::from_str(&format!(
                     "autosuggest artifact references invalid token id {token_id}"
                 )));
             }
             Some(token_id)
         };
-        Ok(self
+        let learned = self
             .personal
-            .observe_resolved_token_id(&mut self.context, resolved, boundary_after))
+            .observe_resolved_token_id_with_personal_context(
+                &mut self.context,
+                &mut self.personal_context,
+                resolved,
+                boundary_after,
+            );
+        self.repetition_history.observe_resolved_token(
+            resolved,
+            resolved.is_some(),
+            boundary_after,
+        );
+        Ok(learned)
     }
 
     #[wasm_bindgen(js_name = commitUnknown)]
     pub fn commit_unknown(&mut self, boundary_after: bool) {
         self.personal
-            .observe_resolved_token_id(&mut self.context, None, boundary_after);
+            .observe_resolved_token_id_with_personal_context(
+                &mut self.context,
+                &mut self.personal_context,
+                None,
+                boundary_after,
+            );
+        self.repetition_history
+            .observe_resolved_token(None, true, boundary_after);
     }
 
     #[wasm_bindgen(js_name = suggestSession)]
@@ -520,12 +699,19 @@ impl ObadhAutosuggestWasm {
             &self.lm,
             &self.personal,
             self.context,
+            self.personal_context,
+            self.repetition_history.recent_token_ids(),
             &mut self.personal_scratch,
             limit,
             &mut self.model_id_scratch,
             &mut self.candidate_id_scratch,
         )
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        self.personal.suggest_text_for_personal_context_into(
+            self.personal_context,
+            limit.max(1),
+            &mut self.personal_text_scratch,
+        );
         let elapsed_ms = now() - start;
         let mut stats = self.stats;
         stats.last_elapsed_ms = Some(elapsed_ms);
@@ -536,12 +722,14 @@ impl ObadhAutosuggestWasm {
             matched_context_token_count: metadata.matched_context_token_count,
             elapsed_ms,
             model: stats,
-            candidates: self
-                .candidate_id_scratch
-                .iter()
-                .map(|candidate| autosuggest_candidate_id_info(&self.lm, *candidate))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| JsValue::from_str(&error.to_string()))?,
+            candidates: autosuggest_candidate_infos_with_text(
+                &self.lm,
+                &self.personal,
+                &self.personal_text_scratch,
+                &self.candidate_id_scratch,
+                limit.max(1),
+            )
+            .map_err(|error| JsValue::from_str(&error.to_string()))?,
         };
         to_value(&lab_result).map_err(|error| JsValue::from_str(&error.to_string()))
     }
@@ -552,18 +740,27 @@ impl ObadhAutosuggestWasm {
             &self.lm,
             &self.personal,
             self.context,
+            self.personal_context,
+            self.repetition_history.recent_token_ids(),
             &mut self.personal_scratch,
             limit,
             &mut self.model_id_scratch,
             &mut self.candidate_id_scratch,
         )
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        let candidate_infos = self
-            .candidate_id_scratch
-            .iter()
-            .map(|candidate| autosuggest_candidate_id_info(&self.lm, *candidate))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        self.personal.suggest_text_for_personal_context_into(
+            self.personal_context,
+            limit.max(1),
+            &mut self.personal_text_scratch,
+        );
+        let candidate_infos = autosuggest_candidate_infos_with_text(
+            &self.lm,
+            &self.personal,
+            &self.personal_text_scratch,
+            &self.candidate_id_scratch,
+            limit.max(1),
+        )
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
         to_value(&candidate_infos).map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
@@ -876,24 +1073,29 @@ fn autosuggest_session_candidate_ids_into(
     lm: &AutosuggestLm<Vec<u8>>,
     personal: &PersonalAutosuggest,
     context: AutosuggestContext,
+    personal_context: PersonalAutosuggestContext,
+    repetition_context_ids: &[u32],
     personal_scratch: &mut Vec<PersonalAutosuggestSuggestion>,
     limit: usize,
     model_scratch: &mut Vec<AutosuggestCandidateId>,
     output: &mut Vec<AutosuggestCandidateId>,
 ) -> Result<AutosuggestMetadata, AutosuggestArtifactError> {
     let limit = limit.max(1);
-    if personal_scratch.capacity() < limit {
-        personal_scratch.reserve_exact(limit - personal_scratch.capacity());
+    let pool_limit = session_repetition_guard_pool_limit(limit);
+    if personal_scratch.capacity() < pool_limit {
+        personal_scratch.reserve_exact(pool_limit - personal_scratch.capacity());
     }
-    if model_scratch.capacity() < limit {
-        model_scratch.reserve_exact(limit - model_scratch.capacity());
+    if model_scratch.capacity() < pool_limit {
+        model_scratch.reserve_exact(pool_limit - model_scratch.capacity());
     }
     if output.capacity() < limit {
         output.reserve_exact(limit - output.capacity());
     }
-    personal.suggest_ids_with_lm_into(
+    personal.suggest_ids_with_lm_for_personal_context_into(
         lm,
         context,
+        personal_context,
+        repetition_context_ids,
         AutosuggestOptions {
             max_candidates: limit,
         },
@@ -931,16 +1133,6 @@ fn candidate_features_array(features: CandidateFeatures) -> [i16; crate::AUTOCOR
     features.as_i16_array()
 }
 
-fn autosuggest_candidate_info(candidate: &AutosuggestCandidate<'_>) -> AutosuggestCandidateInfo {
-    AutosuggestCandidateInfo {
-        text: candidate.text.to_string(),
-        token_id: candidate.token_id,
-        source: autosuggest_source_name(candidate.source),
-        count: candidate.count,
-        score: candidate.score,
-    }
-}
-
 fn autosuggest_candidate_id_info(
     lm: &AutosuggestLm<Vec<u8>>,
     candidate: AutosuggestCandidateId,
@@ -951,6 +1143,87 @@ fn autosuggest_candidate_id_info(
         source: autosuggest_source_name(candidate.source),
         count: candidate.count,
         score: candidate.score,
+    })
+}
+
+fn autosuggest_candidate_infos_with_text(
+    lm: &AutosuggestLm<Vec<u8>>,
+    personal: &PersonalAutosuggest,
+    text_suggestions: &[PersonalAutosuggestTextSuggestion],
+    id_candidates: &[AutosuggestCandidateId],
+    limit: usize,
+) -> Result<Vec<AutosuggestCandidateInfo>, AutosuggestArtifactError> {
+    let limit = limit.max(1);
+    let mut candidates: Vec<AutosuggestCandidateInfo> = Vec::with_capacity(limit);
+
+    push_autosuggest_text_infos(personal, text_suggestions, true, limit, &mut candidates);
+
+    for candidate in id_candidates {
+        if candidates.len() >= limit {
+            break;
+        }
+        let info = autosuggest_candidate_id_info(lm, *candidate)?;
+        if candidates
+            .iter()
+            .any(|candidate| candidate.text == info.text)
+        {
+            continue;
+        }
+        candidates.push(info);
+    }
+
+    push_autosuggest_text_infos(personal, text_suggestions, false, limit, &mut candidates);
+
+    Ok(candidates)
+}
+
+fn push_autosuggest_text_infos(
+    personal: &PersonalAutosuggest,
+    text_suggestions: &[PersonalAutosuggestTextSuggestion],
+    contextual: bool,
+    limit: usize,
+    candidates: &mut Vec<AutosuggestCandidateInfo>,
+) {
+    for suggestion in text_suggestions {
+        if candidates.len() >= limit {
+            break;
+        }
+        if (suggestion.context_len > 0) != contextual {
+            continue;
+        }
+        let Some(text) = personal.text_suggestion_text(*suggestion) else {
+            continue;
+        };
+        if candidates.iter().any(|candidate| candidate.text == text) {
+            continue;
+        }
+        candidates.push(AutosuggestCandidateInfo {
+            text: text.to_string(),
+            token_id: 0,
+            source: "autosuggest_personal_oov",
+            count: u32::from(suggestion.count),
+            score: suggestion.score,
+        });
+    }
+}
+
+fn autosuggest_context_prior_info(
+    lm: &AutosuggestLm<Vec<u8>>,
+    candidate_texts: &[String],
+    prior: AutosuggestCandidatePrior,
+) -> Result<AutosuggestContextPriorInfo, AutosuggestArtifactError> {
+    let text = match candidate_texts.get(prior.candidate_index) {
+        Some(text) => text.clone(),
+        None => lm.token_text(prior.token_id)?.to_string(),
+    };
+    Ok(AutosuggestContextPriorInfo {
+        candidate_index: prior.candidate_index,
+        text,
+        token_id: prior.token_id,
+        prior_rank: prior.prior_rank,
+        source: autosuggest_source_name(prior.source),
+        count: prior.count,
+        score: prior.score,
     })
 }
 
@@ -968,6 +1241,7 @@ fn autosuggest_context_labels(
 fn autosuggest_source_name(source: AutosuggestSource) -> &'static str {
     match source {
         AutosuggestSource::Personal => "autosuggest_personal",
+        AutosuggestSource::Fourgram => "autosuggest_ngram_fourgram",
         AutosuggestSource::Trigram => "autosuggest_ngram_trigram",
         AutosuggestSource::Bigram => "autosuggest_ngram_bigram",
         AutosuggestSource::Unigram => "autosuggest_ngram_unigram",

@@ -1,1 +1,5 @@
+coremltools>=9.0; platform_system == "Darwin"
 ijson>=3.3
+onnx>=1.19
+onnxruntime>=1.20
+torch>=2.5

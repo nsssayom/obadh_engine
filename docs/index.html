@@ -27,6 +27,11 @@
 
   <!-- Initialize Alpine.js data -->
   <script>
+    const AUTOCORRECT_FEED_DISPLAY_LIMIT = 5;
+    const AUTOCORRECT_CONTEXT_POOL_LIMIT = 12;
+    const AUTOSUGGEST_CONTEXT_PRIOR_LIMIT = 64;
+    const AUTOSUGGEST_PERSONAL_STORAGE_PREFIX = 'obadh.autosuggest.personal.v1';
+
     // Define debounce function
     function debounce(func, wait) {
       let timeout;
@@ -34,6 +39,25 @@
         clearTimeout(timeout);
         timeout = setTimeout(() => func.apply(this, args), wait);
       };
+    }
+
+    function bytesToBase64(bytes) {
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.subarray(index, index + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      return btoa(binary);
+    }
+
+    function base64ToBytes(value) {
+      const binary = atob(value);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
     }
 
     // Define the Alpine.js data component
@@ -148,6 +172,7 @@
         clearText() {
           this.inputText = '';
           this.romanTokenLog = [];
+          this.clearAutosuggestSession();
           this.clearResult();
         },
         
@@ -369,19 +394,23 @@
 
         resourceSummaryRows() {
           const resources = this.runtimeResources || {};
-          return [
+          const rows = [
             ['WASM', this.formatBytes(resources.wasmLinearMemoryBytes), 'exact'],
             ['Heap', resources.browserHeapAvailable ? this.formatBytes(resources.browserHeapUsedBytes) : 'n/a', resources.browserHeapAvailable ? 'browser' : 'unavailable'],
             ['Next', resources.autosuggestModelBytes ? this.formatBytes(resources.autosuggestModelBytes) : '—', 'asset'],
             ['AI', this.formatDuration(resources.autosuggestLastLatencyMs), 'last'],
           ];
+          if (resources.autosuggestPersonalSnapshotBytes > 40) {
+            rows.push(['Personal', this.formatBytes(resources.autosuggestPersonalSnapshotBytes), 'local']);
+          }
+          return rows;
         },
 
         candidateRows() {
-          return (this.autocorrectResult?.candidates || []).slice(0, 12);
+          return (this.autocorrectResult?.candidates || []).slice(0, AUTOCORRECT_CONTEXT_POOL_LIMIT);
         },
 
-        correctionFeedRows() {
+        correctionFeedRows(limit = AUTOCORRECT_FEED_DISPLAY_LIMIT) {
           const draft = this.draftOutput();
           const seen = new Set(draft ? [draft] : []);
           const rows = [];
@@ -392,7 +421,7 @@
             }
             rows.push(candidate);
             seen.add(candidate.text);
-            if (rows.length === 5) {
+            if (rows.length === limit) {
               break;
             }
           }
@@ -400,12 +429,34 @@
           return rows;
         },
 
+        contextualCorrectionFeedRows() {
+          return this.correctionFeedRows(AUTOCORRECT_CONTEXT_POOL_LIMIT)
+            .map((candidate, index) => ({ candidate, index }))
+            .sort((left, right) => {
+              const leftWeight = this.contextPriorWeight(left.candidate);
+              const rightWeight = this.contextPriorWeight(right.candidate);
+              if (leftWeight !== rightWeight) {
+                return rightWeight - leftWeight;
+              }
+              if (leftWeight > 0) {
+                const leftRank = left.candidate.context_prior_rank || Number.MAX_SAFE_INTEGER;
+                const rightRank = right.candidate.context_prior_rank || Number.MAX_SAFE_INTEGER;
+                if (leftRank !== rightRank) {
+                  return leftRank - rightRank;
+                }
+              }
+              return left.index - right.index;
+            })
+            .slice(0, AUTOCORRECT_FEED_DISPLAY_LIMIT)
+            .map((row) => row.candidate);
+        },
+
         autosuggestFeedRows() {
           if (this.draftText || this.activeProbeRange()) {
             return [];
           }
 
-          return (this.autosuggestResult?.candidates || []).slice(0, 5).map((candidate) => ({
+          return (this.autosuggestResult?.candidates || []).slice(0, AUTOCORRECT_FEED_DISPLAY_LIMIT).map((candidate) => ({
             ...candidate,
             kind: 'autosuggest',
           }));
@@ -413,7 +464,7 @@
 
         activeFeedRows() {
           if (this.draftText) {
-            return this.correctionFeedRows().map((candidate) => ({
+            return this.contextualCorrectionFeedRows().map((candidate) => ({
               ...candidate,
               kind: 'autocorrect',
             }));
@@ -504,6 +555,38 @@
             tokens.push(current);
           }
           return tokens;
+        },
+
+        autocorrectContextTokens() {
+          const range = this.activeProbeRange();
+          if (!range || range.start <= 0) {
+            return [];
+          }
+          return this.banglaContextTokens(this.inputText.slice(0, range.start));
+        },
+
+        contextPriorWeight(candidate) {
+          const source = candidate?.context_prior_source || '';
+          if (source === 'autosuggest_personal') {
+            return 5;
+          }
+          if (source === 'autosuggest_ngram_fourgram') {
+            return 4;
+          }
+          if (source === 'autosuggest_ngram_trigram') {
+            return 3;
+          }
+          if (source === 'autosuggest_ngram_bigram') {
+            return 2;
+          }
+          return 0;
+        },
+
+        candidateFeedLabel(candidate) {
+          if (this.contextPriorWeight(candidate) > 0 && candidate.context_prior_rank) {
+            return `next #${candidate.context_prior_rank}`;
+          }
+          return this.candidateSourceLabel(candidate.source);
         },
 
         isBanglaWordChar(ch) {
@@ -611,6 +694,7 @@
           const after = this.inputText.slice(range.end);
           const separator = appendSpace ? ' ' : '';
           this.recordRomanToken(range.text, replacement, recommended?.source || 'deterministic');
+          this.learnAutosuggestCommit(replacement, null, this.isSentenceBoundarySuffix(suffix));
           this.inputText = `${before}${replacement}${suffix}${separator}${after}`;
           this.doTransliterate();
 
@@ -637,6 +721,39 @@
           if (this.romanTokenLog.length > 200) {
             this.romanTokenLog.splice(0, this.romanTokenLog.length - 200);
           }
+        },
+
+        learnAutosuggestCommit(token, tokenId = null, boundaryAfter = false) {
+          if (!window.obadhAutosuggest || !this.isBanglaWordLike(token)) {
+            return;
+          }
+
+          try {
+            if (Number.isInteger(tokenId) && tokenId > 0) {
+              window.obadhAutosuggest.commitTokenId(tokenId, boundaryAfter);
+              return;
+            }
+            const rawToken = boundaryAfter ? `${token}।` : token;
+            window.obadhAutosuggest.commitToken(rawToken);
+          } catch (err) {
+            console.warn('Autosuggest learn skipped:', err);
+          }
+        },
+
+        clearAutosuggestSession() {
+          try {
+            window.obadhAutosuggest?.clearSession?.();
+          } catch (err) {
+            console.warn('Autosuggest session clear skipped:', err);
+          }
+        },
+
+        isBanglaWordLike(text) {
+          return /[\u0985-\u09B9\u09CE\u09DC-\u09DF]/.test(String(text || ''));
+        },
+
+        isSentenceBoundarySuffix(text) {
+          return /[।॥.!?…]/.test(String(text || ''));
         },
 
         romanDebugText() {
@@ -824,6 +941,7 @@
           const trailing = after && !/^\s/.test(after) ? ' ' : ' ';
           const replacement = `${leading}${candidate.text}${trailing}`;
 
+          this.learnAutosuggestCommit(candidate.text, candidate.token_id || null, false);
           this.inputText = `${before}${replacement}${after}`;
           this.doTransliterate();
 
@@ -890,6 +1008,12 @@
           if (source === 'fst_roman_repair_exact') {
             return 'roman';
           }
+          if (source === 'autosuggest_personal') {
+            return 'personal';
+          }
+          if (source === 'autosuggest_personal_oov') {
+            return 'personal';
+          }
           if (String(source || '').startsWith('autosuggest_ngram_')) {
             return 'next';
           }
@@ -914,7 +1038,9 @@
 
           this.autosuggestResult = null;
           try {
-            this.autocorrectResult = window.obadhAutocorrect.suggest(probe);
+            this.autocorrectResult = this.applyContextPriorsToAutocorrect(
+              window.obadhAutocorrect.suggest(probe),
+            );
             this.autocorrectStats = this.autocorrectResult.lexicon;
             this.refreshDraftText();
           } catch (err) {
@@ -923,6 +1049,44 @@
             this.autocorrectError = err.message || String(err);
             this.refreshDraftText();
           }
+        },
+
+        applyContextPriorsToAutocorrect(result) {
+          if (!result?.candidates?.length || !this.autosuggestLoaded || !window.obadhAutosuggest) {
+            return result;
+          }
+
+          const contextTokens = this.autocorrectContextTokens();
+          if (!contextTokens.length) {
+            return result;
+          }
+
+          const candidateTexts = result.candidates.map((candidate) => candidate.text || '');
+          const priorResult = window.obadhAutosuggest.contextPriors(
+            contextTokens,
+            candidateTexts,
+            AUTOSUGGEST_CONTEXT_PRIOR_LIMIT,
+          );
+          const priorsByIndex = new Map(
+            (priorResult?.priors || []).map((prior) => [prior.candidate_index, prior]),
+          );
+          result.candidates = result.candidates.map((candidate, index) => {
+            const prior = priorsByIndex.get(index);
+            if (!prior) {
+              return candidate;
+            }
+            return {
+              ...candidate,
+              context_token_id: prior.token_id,
+              context_prior_rank: prior.prior_rank,
+              context_prior_source: prior.source,
+              context_prior_count: prior.count,
+              context_prior_score: prior.score,
+            };
+          });
+          result.context_prior = priorResult || null;
+          this.autosuggestStats = priorResult?.model || this.autosuggestStats;
+          return result;
         },
 
         async refreshAutosuggest() {
@@ -1247,7 +1411,7 @@
                       class="group flex min-w-[7rem] flex-1 items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-2 text-center transition-colors hover:border-primary-300 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-primary-700 dark:hover:bg-primary-950 dark:focus:ring-offset-gray-950">
                       <span class="min-w-0">
                         <span class="font-bengali block truncate text-lg font-semibold leading-6 text-slate-950 dark:text-gray-100" x-text="candidate.text"></span>
-                        <span class="mt-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500 group-hover:text-primary-700 dark:text-gray-500 dark:group-hover:text-primary-300" x-text="candidateSourceLabel(candidate.source)"></span>
+                        <span class="mt-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500 group-hover:text-primary-700 dark:text-gray-500 dark:group-hover:text-primary-300" x-text="candidateFeedLabel(candidate)"></span>
                       </span>
                     </button>
                   </template>
@@ -1677,21 +1841,105 @@
       const bytes = new Uint8Array(await modelResponse.arrayBuffer());
       const model = ObadhAutosuggestWasm.fromNgramArtifact(bytes);
       const stats = model.stats();
+      const artifactFingerprint = `${stats.artifact_fingerprint_high.toString(16).padStart(8, '0')}${stats.artifact_fingerprint_low.toString(16).padStart(8, '0')}`;
+      if (manifest.artifact_bytes !== bytes.byteLength) {
+        throw new Error(`Autosuggest artifact byte mismatch: manifest ${manifest.artifact_bytes}, loaded ${bytes.byteLength}`);
+      }
+      if (manifest.vocab_fingerprint !== stats.vocab_fingerprint) {
+        throw new Error(`Autosuggest vocab fingerprint mismatch: manifest ${manifest.vocab_fingerprint}, loaded ${stats.vocab_fingerprint}`);
+      }
+      if (manifest.artifact_fingerprint && manifest.artifact_fingerprint !== artifactFingerprint) {
+        throw new Error(`Autosuggest artifact fingerprint mismatch: manifest ${manifest.artifact_fingerprint}, loaded ${artifactFingerprint}`);
+      }
 
       window.obadhRuntimeAssets.autosuggestManifestBytes = Number(manifestResponse.headers.get('content-length')) || JSON.stringify(manifest).length;
       window.obadhRuntimeAssets.autosuggestModelBytes = bytes.byteLength;
+      const personalStorageKey = `${AUTOSUGGEST_PERSONAL_STORAGE_PREFIX}.${stats.vocab_fingerprint}`;
+
+      const updatePersonalSnapshotSize = () => {
+        window.obadhRuntimeAssets.autosuggestPersonalSnapshotBytes = model.personalSnapshotLen();
+      };
+      const clearStoredPersonalSnapshot = () => {
+        try {
+          localStorage.removeItem(personalStorageKey);
+        } catch (err) {
+          console.warn('Autosuggest personal storage clear skipped:', err);
+        }
+        updatePersonalSnapshotSize();
+      };
+      const persistPersonalSnapshot = () => {
+        try {
+          const snapshot = model.exportPersonalSnapshot();
+          localStorage.setItem(personalStorageKey, bytesToBase64(snapshot));
+          window.obadhRuntimeAssets.autosuggestPersonalSnapshotBytes = snapshot.byteLength;
+        } catch (err) {
+          console.warn('Autosuggest personal storage save skipped:', err);
+          updatePersonalSnapshotSize();
+        }
+      };
+      const restorePersonalSnapshot = () => {
+        let encoded = null;
+        try {
+          encoded = localStorage.getItem(personalStorageKey);
+        } catch (err) {
+          console.warn('Autosuggest personal storage read skipped:', err);
+          updatePersonalSnapshotSize();
+          return;
+        }
+        if (!encoded) {
+          updatePersonalSnapshotSize();
+          return;
+        }
+        try {
+          model.importPersonalSnapshot(base64ToBytes(encoded));
+        } catch (err) {
+          console.warn('Autosuggest personal snapshot rejected:', err);
+          clearStoredPersonalSnapshot();
+          return;
+        }
+        updatePersonalSnapshotSize();
+      };
+
+      restorePersonalSnapshot();
 
       window.obadhAutosuggest = {
         stats,
-        clearPersonal: () => model.clearPersonal(),
+        clearPersonal: () => {
+          model.clearPersonal();
+          clearStoredPersonalSnapshot();
+        },
         clearSession: () => model.clearSession(),
-        commitToken: (token) => model.commitToken(token),
-        commitTokenId: (tokenId, boundaryAfter = false) => model.commitTokenId(tokenId, boundaryAfter),
+        commitToken: (token) => {
+          const learned = model.commitToken(token);
+          if (learned) {
+            persistPersonalSnapshot();
+          } else {
+            updatePersonalSnapshotSize();
+          }
+          return learned;
+        },
+        commitTokenId: (tokenId, boundaryAfter = false) => {
+          const learned = model.commitTokenId(tokenId, boundaryAfter);
+          if (learned) {
+            persistPersonalSnapshot();
+          } else {
+            updatePersonalSnapshotSize();
+          }
+          return learned;
+        },
         commitUnknown: (boundaryAfter = false) => model.commitUnknown(boundaryAfter),
         exportPersonalSnapshot: () => model.exportPersonalSnapshot(),
-        importPersonalSnapshot: (bytes) => model.importPersonalSnapshot(bytes),
+        importPersonalSnapshot: (bytes) => {
+          model.importPersonalSnapshot(bytes);
+          persistPersonalSnapshot();
+        },
         personalSnapshotLen: () => model.personalSnapshotLen(),
         resolveTokenId: (token) => model.resolveTokenId(token),
+        contextPriors: (contextTokens, candidateTexts, limit = 64) => {
+          const result = model.contextPriors(contextTokens, candidateTexts, limit);
+          stats.last_elapsed_ms = result.elapsed_ms;
+          return result;
+        },
         suggest: async (contextTokens, limit = 5) => {
           const result = model.suggest(contextTokens, limit);
           stats.last_elapsed_ms = result.elapsed_ms;
@@ -1721,6 +1969,7 @@
         browserHeapLimitBytes: heap?.jsHeapSizeLimit ?? null,
         autocorrectAssetBytes: (assets.autocorrectFstBytes || 0) + (assets.loanwordFstBytes || 0),
         autosuggestModelBytes: assets.autosuggestModelBytes || null,
+        autosuggestPersonalSnapshotBytes: assets.autosuggestPersonalSnapshotBytes || null,
         autosuggestLastLatencyMs: window.autosuggestStats?.last_elapsed_ms ?? null,
         autosuggestLoadLatencyMs: window.autosuggestStats?.load_elapsed_ms ?? null,
       };

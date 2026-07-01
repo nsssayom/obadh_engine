@@ -10,8 +10,8 @@ mod trie;
 
 use crate::definitions::consonant_value;
 use canonical::{
-    canonical_conjunct_part, is_derived_aspirated_ya_phola,
-    is_derived_aspirated_ya_phola_prefix, is_special_form_key,
+    canonical_conjunct_part, is_derived_aspirated_ya_phola, is_derived_aspirated_ya_phola_prefix,
+    is_special_form_key,
 };
 use rules::CONJUNCT_RULES;
 use trie::ConjunctTrie;
@@ -77,8 +77,7 @@ impl ConjunctDefinitions {
 
     /// Check component parts without allocating a joined key.
     pub fn can_form_conjunct_from_parts(&self, parts: &[&str]) -> bool {
-        self.create_conjunct_from_parts(parts).is_some()
-            || is_derived_aspirated_ya_phola(parts)
+        self.create_conjunct_from_parts(parts).is_some() || is_derived_aspirated_ya_phola(parts)
     }
 
     /// Check derived conjunct forms that are intentionally rule-generated

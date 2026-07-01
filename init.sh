@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 AUTOCORRECT_PATH="data/autocorrect"
 AUTOSUGGEST_PATH="data/autosuggest"
+AUTOSUGGEST_GENERATOR_PREFIX="$AUTOSUGGEST_PATH/models/neural/autosuggest-generator-gru256-topk128-c64-balanced"
 
 info() {
   printf '==> %s\n' "$1"
@@ -103,6 +104,14 @@ verify_file "$AUTOSUGGEST_PATH/models/ngram/vocab.manifest.json"
 verify_resolved_file "$AUTOSUGGEST_PATH/models/ngram/vocab.tsv"
 verify_file "$AUTOSUGGEST_PATH/models/ngram/autosuggest-ngram.manifest.json"
 verify_resolved_file "$AUTOSUGGEST_PATH/models/ngram/autosuggest-ngram.bin"
+verify_file "$AUTOSUGGEST_PATH/models/ngram/autosuggest-ngram-c64.manifest.json"
+verify_resolved_file "$AUTOSUGGEST_PATH/models/ngram/autosuggest-ngram-c64.bin"
+verify_file "$AUTOSUGGEST_GENERATOR_PREFIX.manifest.json"
+verify_resolved_file "$AUTOSUGGEST_GENERATOR_PREFIX.onnx"
+verify_resolved_file "$AUTOSUGGEST_GENERATOR_PREFIX.int8.onnx"
+verify_file "$AUTOSUGGEST_GENERATOR_PREFIX.mlpackage/Manifest.json"
+verify_file "$AUTOSUGGEST_GENERATOR_PREFIX.mlpackage/Data/com.apple.CoreML/model.mlmodel"
+verify_resolved_file "$AUTOSUGGEST_GENERATOR_PREFIX.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
 
 info "Installing web dependencies"
 npm --prefix www install

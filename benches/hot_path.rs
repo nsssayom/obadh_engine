@@ -63,8 +63,10 @@ fn bench_autocorrect(c: &mut Criterion) {
     let mut init_group = c.benchmark_group("autocorrect_init");
     init_group.throughput(Throughput::Bytes(SHIPPED_AUTOCORRECT_FST.len() as u64));
     init_group.bench_function("shipped_fst_map_from_bytes", |b| {
-        b.iter(|| FstLexicon::from_bytes(black_box(SHIPPED_AUTOCORRECT_FST.to_vec()))
-            .expect("shipped FST lexicon should load"));
+        b.iter(|| {
+            FstLexicon::from_bytes(black_box(SHIPPED_AUTOCORRECT_FST.to_vec()))
+                .expect("shipped FST lexicon should load")
+        });
     });
     init_group.finish();
 
@@ -91,9 +93,11 @@ fn bench_autocorrect(c: &mut Criterion) {
     });
 
     group.bench_function("shipped_fst_suggest_sushil_512", |b| {
-        b.iter(|| shipped_fst
-            .suggest(black_box("সুশিল"), black_box(fst_options))
-            .expect("shipped FST suggestion should succeed"));
+        b.iter(|| {
+            shipped_fst
+                .suggest(black_box("সুশিল"), black_box(fst_options))
+                .expect("shipped FST suggestion should succeed")
+        });
     });
     group.finish();
 }
@@ -107,8 +111,11 @@ fn bench_autosuggest(c: &mut Criterion) {
     let mut candidates = Vec::with_capacity(options.max_candidates);
     let mut candidate_ids = Vec::with_capacity(options.max_candidates);
     let mut session = autosuggest_session(&lm, options, &token_cycle);
+    let mut id_session = autosuggest_session(&lm, options, &token_cycle);
+    let mut commit_id_session = autosuggest_session(&lm, options, &token_cycle);
     let mut full_personal = full_personal_autosuggest();
     let mut cycle_index = 0_usize;
+    let mut id_cycle_index = 0_usize;
     let mut rejected_token_id = 50_000_u32;
 
     let mut init_group = c.benchmark_group("autosuggest_init");
@@ -160,6 +167,14 @@ fn bench_autosuggest(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("session_suggest_ids_personal_overlay", |b| {
+        b.iter(|| {
+            id_session
+                .suggest_ids()
+                .expect("shipped autosuggest session ID suggestion should succeed")
+        });
+    });
+
     group.bench_function("session_commit_token_id_then_suggest", |b| {
         b.iter(|| {
             let token_id = token_cycle[cycle_index % token_cycle.len()];
@@ -170,6 +185,19 @@ fn bench_autosuggest(c: &mut Criterion) {
             session
                 .suggest()
                 .expect("shipped autosuggest session suggestion should succeed")
+        });
+    });
+
+    group.bench_function("session_commit_token_id_then_suggest_ids", |b| {
+        b.iter(|| {
+            let token_id = token_cycle[id_cycle_index % token_cycle.len()];
+            id_cycle_index = id_cycle_index.wrapping_add(1);
+            commit_id_session
+                .commit_token_id(Some(black_box(token_id)), false)
+                .expect("known autosuggest token ID should be accepted");
+            commit_id_session
+                .suggest_ids()
+                .expect("shipped autosuggest session ID suggestion should succeed")
         });
     });
 
@@ -190,12 +218,11 @@ fn autosuggest_context<D: AsRef<[u8]>>(lm: &AutosuggestLm<D>, text: &str) -> Aut
 }
 
 fn autosuggest_token_cycle<D: AsRef<[u8]>>(lm: &AutosuggestLm<D>) -> [u32; 4] {
-    ["আমি", "আজ", "বাংলা", "মানুষ"]
-        .map(|token| {
-            lm.token_id(token)
-                .expect("benchmark token lookup should succeed")
-                .expect("benchmark token should exist in shipped autosuggest vocab")
-        })
+    ["আমি", "আজ", "বাংলা", "মানুষ"].map(|token| {
+        lm.token_id(token)
+            .expect("benchmark token lookup should succeed")
+            .expect("benchmark token should exist in shipped autosuggest vocab")
+    })
 }
 
 fn autosuggest_session<'lm, D: AsRef<[u8]>>(

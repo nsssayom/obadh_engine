@@ -223,6 +223,27 @@ export class ObadhAutosuggestWasm {
         wasm.obadhautosuggestwasm_commitUnknown(this.__wbg_ptr, boundary_after);
     }
     /**
+     * @param {any} context_tokens_js
+     * @param {any} candidate_texts_js
+     * @param {number} limit
+     * @returns {any}
+     */
+    contextPriors(context_tokens_js, candidate_texts_js, limit) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.obadhautosuggestwasm_contextPriors(retptr, this.__wbg_ptr, addHeapObject(context_tokens_js), addHeapObject(candidate_texts_js), limit);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @returns {Uint8Array}
      */
     exportPersonalSnapshot() {
