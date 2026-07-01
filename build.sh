@@ -110,7 +110,7 @@ build_wasm() {
     info "Building WASM Package..."
     
     # Build WebAssembly package
-    wasm-pack build --target web --out-dir pkg --no-opt --profile wasm-release || error "Failed to build WebAssembly package"
+    wasm-pack build --target web --out-dir pkg --no-opt --profile wasm-release -- --features wasm || error "Failed to build WebAssembly package"
     optimize_wasm
     
     # Check for www directory
@@ -167,7 +167,7 @@ build_dist() {
     
     # First build the WASM package
     info "Building WebAssembly package..."
-    wasm-pack build --target web --out-dir pkg --no-opt --profile wasm-release || error "Failed to build WebAssembly package"
+    wasm-pack build --target web --out-dir pkg --no-opt --profile wasm-release -- --features wasm || error "Failed to build WebAssembly package"
     optimize_wasm
     
     # Change to www directory
@@ -267,10 +267,10 @@ build_bin() {
     info "Building native Rust binary..."
     
     # Build in release mode for optimization
-    cargo build --release --bin obadh || error "Failed to build native binary"
+    cargo build --release --features cli --bin obadh || error "Failed to build native binary"
     
     success "Native binary built successfully at: target/release/obadh"
-    info "You can install it to your system with: cargo install --path ."
+    info "You can install it to your system with: cargo install --path . --features cli"
     return 0
 }
 

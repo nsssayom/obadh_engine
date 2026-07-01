@@ -7,6 +7,7 @@ pub mod autocorrect;
 pub mod autosuggest;
 pub mod definitions;
 pub mod engine;
+#[cfg(feature = "wasm")]
 pub mod wasm;
 
 // Re-export commonly used types for convenience
@@ -72,6 +73,7 @@ pub use autosuggest::{
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};
+#[cfg(feature = "wasm")]
 pub use wasm::ObadhaWasm;
 
 /// Main entry point for the Obadh transliteration engine

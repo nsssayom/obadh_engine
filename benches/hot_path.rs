@@ -4,6 +4,7 @@ use obadh_engine::{
     CorrectionRequest, FstLexicon, FstSuggestOptions, LexiconEntry, ObadhEngine,
     PersonalAutosuggest, PersonalAutosuggestConfig, Tokenizer,
 };
+use std::fs;
 use std::time::Duration;
 
 const RULE_STRESS_TEXT: &str =
@@ -13,9 +14,14 @@ const MIXED_RULE_TEXT: &str =
     "kA khA gA. rrkSh rrT``sa; k,,y k,,w m,,w,,ra\nngga ngghAt jNG jn 123.45";
 const LENIENT_MIXED_TEXT: &str = "ami😀 12.34 Taka. rZyab🔥 rrkSh 1.a2 songskrriti🚫";
 const AUTOCORRECT_INPUT: &str = "কীরন";
-const SHIPPED_AUTOCORRECT_FST: &[u8] = include_bytes!("../www/assets/autocorrect/bn.fst");
-const SHIPPED_AUTOSUGGEST_NGRAM: &[u8] =
-    include_bytes!("../www/assets/autosuggest/autosuggest-ngram.bin");
+const SHIPPED_AUTOCORRECT_FST_PATHS: &[&str] = &[
+    "www/assets/autocorrect/bn.fst",
+    "data/autocorrect/models/bn.fst",
+];
+const SHIPPED_AUTOSUGGEST_NGRAM_PATHS: &[&str] = &[
+    "www/assets/autosuggest/autosuggest-ngram.bin",
+    "data/autosuggest/models/ngram/autosuggest-ngram.bin",
+];
 const AUTOSUGGEST_CONTEXT_TEXT: &str = "আমি আজ";
 
 fn bench_tokenizer(c: &mut Criterion) {
@@ -60,25 +66,6 @@ fn bench_autocorrect(c: &mut Criterion) {
     let autocorrect = AutocorrectEngine::from_entries(stress_lexicon_entries());
     let request = CorrectionRequest::new(AUTOCORRECT_INPUT);
 
-    let mut init_group = c.benchmark_group("autocorrect_init");
-    init_group.throughput(Throughput::Bytes(SHIPPED_AUTOCORRECT_FST.len() as u64));
-    init_group.bench_function("shipped_fst_map_from_bytes", |b| {
-        b.iter(|| {
-            FstLexicon::from_bytes(black_box(SHIPPED_AUTOCORRECT_FST.to_vec()))
-                .expect("shipped FST lexicon should load")
-        });
-    });
-    init_group.finish();
-
-    let shipped_fst = FstLexicon::from_bytes(SHIPPED_AUTOCORRECT_FST.to_vec())
-        .expect("shipped FST lexicon should load");
-    let fst_options = FstSuggestOptions {
-        max_distance: 2,
-        max_candidates: 512,
-        max_prefix_candidates: 24,
-        response_candidates: 12,
-        ..FstSuggestOptions::default()
-    };
     let mut group = c.benchmark_group("autocorrect");
     group.throughput(Throughput::Elements(1));
     group.bench_function("decide_stress_lexicon_input", |b| {
@@ -91,7 +78,33 @@ fn bench_autocorrect(c: &mut Criterion) {
             autocorrect.decide(black_box(request))
         });
     });
+    group.finish();
 
+    let Some(shipped_fst_bytes) = read_first_existing(SHIPPED_AUTOCORRECT_FST_PATHS) else {
+        return;
+    };
+
+    let mut init_group = c.benchmark_group("autocorrect_init");
+    init_group.throughput(Throughput::Bytes(shipped_fst_bytes.len() as u64));
+    init_group.bench_function("shipped_fst_map_from_bytes", |b| {
+        b.iter(|| {
+            FstLexicon::from_bytes(black_box(shipped_fst_bytes.clone()))
+                .expect("shipped FST lexicon should load")
+        });
+    });
+    init_group.finish();
+
+    let shipped_fst =
+        FstLexicon::from_bytes(shipped_fst_bytes).expect("shipped FST lexicon should load");
+    let fst_options = FstSuggestOptions {
+        max_distance: 2,
+        max_candidates: 512,
+        max_prefix_candidates: 24,
+        response_candidates: 12,
+        ..FstSuggestOptions::default()
+    };
+    let mut group = c.benchmark_group("autocorrect_shipped");
+    group.throughput(Throughput::Elements(1));
     group.bench_function("shipped_fst_suggest_sushil_512", |b| {
         b.iter(|| {
             shipped_fst
@@ -103,8 +116,11 @@ fn bench_autocorrect(c: &mut Criterion) {
 }
 
 fn bench_autosuggest(c: &mut Criterion) {
-    let lm = AutosuggestLm::from_bytes(SHIPPED_AUTOSUGGEST_NGRAM)
-        .expect("shipped autosuggest model should load");
+    let Some(ngram_bytes) = read_first_existing(SHIPPED_AUTOSUGGEST_NGRAM_PATHS) else {
+        return;
+    };
+    let lm =
+        AutosuggestLm::from_bytes(&ngram_bytes).expect("shipped autosuggest model should load");
     let options = AutosuggestOptions { max_candidates: 5 };
     let context = autosuggest_context(&lm, AUTOSUGGEST_CONTEXT_TEXT);
     let token_cycle = autosuggest_token_cycle(&lm);
@@ -119,10 +135,10 @@ fn bench_autosuggest(c: &mut Criterion) {
     let mut rejected_token_id = 50_000_u32;
 
     let mut init_group = c.benchmark_group("autosuggest_init");
-    init_group.throughput(Throughput::Bytes(SHIPPED_AUTOSUGGEST_NGRAM.len() as u64));
+    init_group.throughput(Throughput::Bytes(ngram_bytes.len() as u64));
     init_group.bench_function("shipped_ngram_from_bytes", |b| {
         b.iter(|| {
-            AutosuggestLm::from_bytes(black_box(SHIPPED_AUTOSUGGEST_NGRAM))
+            AutosuggestLm::from_bytes(black_box(ngram_bytes.as_slice()))
                 .expect("shipped autosuggest model should load")
         });
     });
@@ -261,6 +277,22 @@ fn full_personal_autosuggest() -> PersonalAutosuggest {
     }
     personal.observe_context_ids_target(&[], 49_999);
     personal
+}
+
+fn read_first_existing(paths: &[&str]) -> Option<Vec<u8>> {
+    for path in paths {
+        match fs::read(path) {
+            Ok(bytes) => return Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!("skipping benchmark artifact {path}: {error}"),
+        }
+    }
+
+    eprintln!(
+        "skipping shipped-artifact benchmarks; none of these paths exist: {}",
+        paths.join(", ")
+    );
+    None
 }
 
 fn stress_lexicon_entries() -> Vec<LexiconEntry> {

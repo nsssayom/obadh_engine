@@ -15,6 +15,7 @@ mod lm;
 mod rerank;
 mod scorer;
 
+#[cfg(feature = "wasm")]
 pub(crate) use adaptive::{
     repetition_observation_for_raw_token, session_repetition_guard_pool_limit,
     AutosuggestRepetitionHistory,

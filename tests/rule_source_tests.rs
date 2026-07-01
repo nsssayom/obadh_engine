@@ -229,13 +229,15 @@ fn deliberate_input_contract_documents_non_conjunct_ra_ya_zwnj_source_note() {
 #[test]
 fn cargo_package_excludes_non_runtime_audit_and_playground_assets() {
     for excluded_path in [
-        "/benches/**",
-        "/data/**",
+        "/data/autocorrect/**",
+        "/data/autosuggest/**",
         "/docs/**",
-        "/tests/**",
+        "/tools/**",
         "/www/**",
+        "/.gitmodules",
         "/Makefile",
         "/build.sh",
+        "/init.sh",
     ] {
         assert!(
             cargo_manifest_exclude_entries(CARGO_MANIFEST_DOC).contains(&excluded_path),

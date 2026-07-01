@@ -39,12 +39,34 @@ brew install wasm-pack binaryen
 Common commands:
 
 ```bash
-cargo run --bin obadh -- 'aji e probhate robir kor'
+cargo run --features cli --bin obadh -- 'aji e probhate robir kor'
 ./build.sh dev
 ./build.sh dist
 cargo test
 cargo bench --bench hot_path
 ```
+
+## Crate Features
+
+The crates.io package is the Rust SDK. It includes source code, CLI/WASM source
+behind explicit features, tests, and the small deterministic rule fixtures. It
+does not bundle large runtime model artifacts.
+
+```toml
+# Native Rust SDK: deterministic core, autocorrect/autosuggest runtimes,
+# personal autosuggest, and native model handoff helpers.
+obadh_engine = "0.5"
+
+# CLI tools and artifact builders.
+obadh_engine = { version = "0.5", features = ["cli"] }
+
+# Browser playground bindings.
+obadh_engine = { version = "0.5", features = ["wasm"] }
+```
+
+The default feature set is empty. Native downstreams, including the planned iOS
+wrapper, do not pay for `clap`, ZIP/EPUB tooling, `wasm-bindgen`, or browser
+APIs unless they opt into those features.
 
 ## Runtime Shape
 
@@ -113,17 +135,17 @@ artifact bytes.
 Inspect shipped artifacts:
 
 ```bash
-cargo run --release --bin obadh-autocorrect -- inspect-fst-lexicon \
+cargo run --release --features cli --bin obadh-autocorrect -- inspect-fst-lexicon \
   --input data/autocorrect/models/bn.fst --pretty
 
-cargo run --release --bin obadh-autocorrect -- inspect-loanword-lexicon \
+cargo run --release --features cli --bin obadh-autocorrect -- inspect-loanword-lexicon \
   --input data/autocorrect/models/en_bn_loanwords.fst --pretty
 ```
 
 Probe the production FST path:
 
 ```bash
-cargo run --release --bin obadh-autocorrect -- suggest-fst \
+cargo run --release --features cli --bin obadh-autocorrect -- suggest-fst \
   --lexicon data/autocorrect/models/bn.fst \
   --loanwords data/autocorrect/models/en_bn_loanwords.fst \
   --input sushil \
@@ -202,11 +224,11 @@ python3 -m tools.autosuggest.build_ngram_lm \
   --max-sentences 20000 \
   --output target/autosuggest-smoke.bin
 
-cargo run --release --bin obadh-autosuggest -- inspect \
+cargo run --release --features cli --bin obadh-autosuggest -- inspect \
   --input target/autosuggest-smoke.bin \
   --pretty
 
-cargo run --release --bin obadh-autosuggest -- suggest \
+cargo run --release --features cli --bin obadh-autosuggest -- suggest \
   --model target/autosuggest-smoke.bin \
   --context 'আমি আজ' \
   --top-k 5 \
@@ -277,7 +299,7 @@ python3 -m tools.autosuggest.eval_ngram_lm \
   --max-sentences-per-source 5000 \
   --top-k 10
 
-cargo run --release --bin obadh-autosuggest -- bench \
+cargo run --release --features cli --bin obadh-autosuggest -- bench \
   --model target/autosuggest-smoke.bin \
   --context 'আমি আজ' \
   --context 'বাংলাদেশের মানুষ' \
@@ -285,7 +307,7 @@ cargo run --release --bin obadh-autosuggest -- bench \
   --iterations 200000 \
   --pretty
 
-cargo run --release --bin obadh-autosuggest -- bench \
+cargo run --release --features cli --bin obadh-autosuggest -- bench \
   --model target/autosuggest-smoke.bin \
   --context 'আমি আজ' \
   --context 'বাংলাদেশের মানুষ' \
@@ -381,7 +403,7 @@ python3 -m tools.autosuggest.package_scorer \
   --output data/autosuggest/models/neural/autosuggest-generator-gru256-topk128-c64-balanced.manifest.json \
   --scored-union-profile balanced_by_mrr
 
-cargo run --release --bin obadh-autosuggest -- validate-generator \
+cargo run --release --features cli --bin obadh-autosuggest -- validate-generator \
   --model data/autosuggest/models/ngram/autosuggest-ngram-c64.bin \
   --manifest data/autosuggest/models/neural/autosuggest-generator-gru256-topk128-c64-balanced.manifest.json \
   --pretty
@@ -508,6 +530,31 @@ git -C data/autocorrect lfs pull
 git -C data/autosuggest lfs pull
 ```
 
+## Data Artifacts
+
+Runtime data is packaged outside the crates.io tarball. The crate stays small
+and auditable; data repos carry the large LFS artifacts:
+
+| Runtime | Required artifacts |
+| --- | --- |
+| deterministic core | none |
+| autocorrect | `data/autocorrect/models/bn.fst` |
+| autocorrect loanwords | `data/autocorrect/models/en_bn_loanwords.fst` |
+| browser autosuggest | `data/autosuggest/models/ngram/autosuggest-ngram.bin` |
+| native autosuggest | `data/autosuggest/models/ngram/autosuggest-ngram-c64.bin` |
+| neural next-word package | generator manifest plus Core ML or ONNX model |
+
+The main repo pins exact data commits through submodules. A fresh checkout
+should run `./init.sh`, which initializes both submodules, resolves LFS files,
+and verifies the required runtime artifacts are present. Future data updates
+should land in the data repo first, then the main repo should update the
+submodule pointer and validation docs in the same engine release commit.
+
+For iOS, `obadh-ios` should bundle only the runtime artifacts it uses:
+autocorrect FSTs, the c64 n-gram, the generator manifest, and a compiled Core
+ML model. Corpora, raw TSVs, training checkpoints, and builder outputs should
+not ship inside the keyboard target.
+
 ## Web / WASM Usage
 
 ```javascript
@@ -532,6 +579,17 @@ that a host should persist for this user; `importPersonalSnapshot` restores
 those bytes and validates that they belong to the loaded vocabulary.
 `clearSession` clears only the recent context. `clearPersonal` clears the
 learned local dictionary.
+
+Local playground workflow:
+
+```bash
+./build.sh wasm
+npm --prefix www run serve
+```
+
+`./build.sh dev` runs the Tailwind watcher plus the same lightweight `www/`
+server. The playground server is intentionally outside the Rust crate dependency
+graph.
 
 ## Rust Library Usage
 
@@ -613,10 +671,14 @@ copied distribution files directly.
 
 ```bash
 cargo test
+cargo test --features cli
+cargo check --target wasm32-unknown-unknown --no-default-features --features wasm --lib
 cargo bench --bench hot_path --no-run
+cargo publish --dry-run
 ./build.sh dist
 git status --short
 ```
 
 For a tagged release, bump the Cargo/npm versions together, rebuild `docs/`,
-commit source plus generated artifacts, push, then tag the exact commit.
+commit source plus generated artifacts, push, publish the crate, then tag the
+exact published commit.
