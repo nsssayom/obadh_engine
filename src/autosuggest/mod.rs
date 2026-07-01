@@ -12,6 +12,7 @@ mod adaptive;
 mod artifact;
 mod generator;
 mod lm;
+mod open_vocab;
 mod rerank;
 mod scorer;
 
@@ -59,6 +60,23 @@ pub use lm::{
     AUTOSUGGEST_BOS_ID, AUTOSUGGEST_PAD_I32, AUTOSUGGEST_PAD_ID, AUTOSUGGEST_UNK_I32,
     AUTOSUGGEST_UNK_ID, DEFAULT_AUTOSUGGEST_CANDIDATES, MAX_AUTOSUGGEST_CONTEXT_TOKENS,
     MAX_AUTOSUGGEST_RERANK_CONTEXT_TOKENS,
+};
+pub use open_vocab::{
+    accept_open_vocab_texts_into, merge_static_generated_and_open_vocab_candidates_into,
+    validate_open_vocab_text, AutosuggestOpenVocabError, AutosuggestOpenVocabPolicy,
+    AutosuggestOpenVocabRejectionKind, AutosuggestOpenVocabValidationReport,
+    AutosuggestUnifiedCandidate, AutosuggestUnifiedCandidateKind,
+    AutosuggestValidatedTextCandidate, DEFAULT_AUTOSUGGEST_OPEN_VOCAB_GENERATED_TEXT_PENALTY,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_GENERATED_TEXT_RANK_PENALTY,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_GENERATED_TOKEN_PENALTY,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_GENERATED_TOKEN_RANK_PENALTY,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_MAX_CANDIDATES, DEFAULT_AUTOSUGGEST_OPEN_VOCAB_MAX_SCALAR_RUN,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_MAX_WORD_CHARS, DEFAULT_AUTOSUGGEST_OPEN_VOCAB_OVERLAP_BONUS,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_STATIC_BONUS,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_STATIC_LOG_COUNT_SCALE,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_STATIC_RANK_PENALTY,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_STATIC_SOURCE_BONUS,
+    DEFAULT_AUTOSUGGEST_OPEN_VOCAB_TEXT_HEAP_BYTES,
 };
 pub use rerank::{
     rerank_candidate_ids_with_fixed_scores_into, rerank_candidate_ids_with_scores_into,

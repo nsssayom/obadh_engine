@@ -32,7 +32,7 @@ Live playground: [https://sayom.me/obadh_engine/](https://sayom.me/obadh_engine/
 Use the Rust library crate for native integrations:
 
 ```toml
-obadh_engine = "0.5.1"
+obadh_engine = "0.6.0"
 ```
 
 The default feature set is empty. Native downstreams, including iOS wrappers,
@@ -42,10 +42,10 @@ Optional features:
 
 ```toml
 # CLI tools and artifact builders.
-obadh_engine = { version = "0.5.1", features = ["cli"] }
+obadh_engine = { version = "0.6.0", features = ["cli"] }
 
 # Browser/WASM bindings for the playground.
-obadh_engine = { version = "0.5.1", features = ["wasm"] }
+obadh_engine = { version = "0.6.0", features = ["wasm"] }
 ```
 
 Repository setup for development:
@@ -85,7 +85,8 @@ surface:
 - active-word autocorrect primitives
 - next-word autosuggest runtime
 - bounded personal autosuggest snapshots
-- native handoff helpers for Core ML/ONNX next-word models
+- native scorer/generator handoff helpers for Core ML/ONNX next-word models
+- validated open-vocabulary generated-word candidates for native generators
 
 The crate ships source code, tests, and small deterministic rule fixtures. It
 does not bundle large runtime model artifacts. Those artifacts are versioned in
@@ -109,9 +110,11 @@ flowchart LR
   C --> W[Active-word candidates]
   T[Committed Bengali text] --> N[Next-word n-gram runtime]
   N --> P[Personal overlay]
-  N --> G[Neural generator handoff]
+  N --> G[Neural handoff]
+  G --> O[Validated open-vocab text]
   P --> S[Suggestion ribbon]
   G --> S
+  O --> S
 ```
 
 The typing path is split intentionally:
@@ -124,7 +127,8 @@ The typing path is split intentionally:
 4. The personal overlay adjusts next-word suggestions locally without mutating
    global model artifacts.
 5. Native platforms can pass fixed buffers to Core ML/ONNX and return model
-   scores to Rust for bounded merging.
+   scores, token IDs, or generated Bengali word candidates to Rust.
+6. Rust validates, deduplicates, scores, and merges all suggestion channels.
 
 ## Deterministic Core
 
@@ -213,12 +217,19 @@ while a Roman token is active and does not replace active-word autocorrect.
 
 The static runtime is a compact n-gram candidate generator with suffix backoff.
 The browser playground uses the compact c16 artifact. Native integrations can
-use the c64 candidate artifact plus the packaged GRU256 generator/scorer
-contract.
+use the c64 candidate artifact plus an optional scorer or generator model.
 
-The neural path is intentionally bounded. The model proposes token IDs and
-scores a static candidate pool; Rust performs the final merge. The model does
+The neural path is intentionally bounded and platform-runtime agnostic. A scorer
+model ranks a static candidate pool. A generator model can return known-vocab
+token IDs and, in the native SDK, open-vocabulary Bengali word candidates. Rust
+performs validation, deduplication, weighting, and final merge. The model does
 not replace lexicon retrieval and does not run on every Roman keystroke.
+
+Open-vocabulary candidates are not dictionary-bound, but they are not unchecked
+free-form text either. The SDK accepts generated Bengali words only after a
+cheap validator confirms script, word shape, length, mark order, repetition, and
+confidence policy. Accepted generated text can be committed immediately and
+later learned by the personal overlay as local OOV text.
 
 Personal autosuggest has two lifetimes:
 
@@ -238,6 +249,10 @@ For keyboard integrations:
 - resolve vocabulary IDs once and prefer token-ID APIs on the hot path
 - call `suggest_ids_for_context_into` with reused buffers
 - use `AutosuggestSession` when personal overlay behavior is needed
+- use `AutosuggestScorerSession` for a cheaper candidate-ranking model
+- use `AutosuggestGeneratorSession` for known-token or open-vocab generation
+- pass generated text through `accept_open_vocab_text_outputs`
+- read final native candidates from the unified open-vocab merge path
 - persist with `write_personal_snapshot_into`
 - restore with `import_personal_snapshot`
 - call `push_boundary()` on sentence/editor boundaries
