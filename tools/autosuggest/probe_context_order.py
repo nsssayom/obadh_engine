@@ -21,6 +21,12 @@ from typing import Iterator
 from tools.autosuggest.common import BOS_ID, UNK_ID, load_vocab, sentence_paths
 
 
+def model_recent_context_ids(recent: list[int], at_sentence_start: bool) -> list[int]:
+    if at_sentence_start and not recent:
+        return [BOS_ID]
+    return recent
+
+
 @dataclass
 class ContextOrderCounts:
     unigram: Counter[int] = field(default_factory=Counter)
@@ -37,16 +43,20 @@ class ContextOrderCounts:
 
     def observe(self, encoded: list[int], max_context: int) -> None:
         recent: list[int] = []
+        at_sentence_start = True
         for token_id in encoded[1:]:
             if token_id <= UNK_ID:
                 recent.clear()
+                at_sentence_start = False
                 continue
 
             self.unigram[token_id] += 1
-            usable = min(max_context, len(recent))
+            model_recent = model_recent_context_ids(recent, at_sentence_start)
+            usable = min(max_context, len(model_recent))
             for order in range(1, usable + 1):
-                self.contexts[order][tuple(recent[-order:])][token_id] += 1
+                self.contexts[order][tuple(model_recent[-order:])][token_id] += 1
 
+            at_sentence_start = False
             recent.append(token_id)
             if len(recent) > max_context:
                 recent.pop(0)
@@ -171,6 +181,7 @@ def probe(
         limit_per_source=eval_sentences_per_source,
     ):
         recent: list[int] = []
+        at_sentence_start = True
         eval_sentences[source] += 1
         encoded = encode_tokens(tokens, vocab)
         eval_tokens[source] += max(0, len(encoded) - 1)
@@ -179,12 +190,15 @@ def probe(
             if target <= UNK_ID:
                 skipped_unknown_targets += 1
                 recent.clear()
+                at_sentence_start = False
                 continue
 
+            model_recent = model_recent_context_ids(recent, at_sentence_start)
             for order, stats in profiles.items():
-                candidates = table.suggest(recent, max_context=order, limit=top_k)
+                candidates = table.suggest(model_recent, max_context=order, limit=top_k)
                 stats.observe(source, target, candidates, top_k)
 
+            at_sentence_start = False
             recent.append(target)
             if len(recent) > max_context:
                 recent.pop(0)
@@ -198,6 +212,7 @@ def probe(
         "train_sentences_per_source": train_sentences_per_source,
         "eval_sentences_per_source": eval_sentences_per_source,
         "max_context": max_context,
+        "context_semantics": "bos_sentence_start_unknown_fallback",
         "max_candidates_per_prefix": max_candidates_per_prefix,
         "min_count": min_count,
         "unigram_size": unigram_size,
@@ -244,7 +259,7 @@ class EvaluationStats:
 
         if rank:
             self.reciprocal_rank_sum += 1.0 / rank
-        for k in (1, 3, 5, top_k):
+        for k in sorted({1, 3, 5, top_k}):
             if rank and rank <= min(k, top_k):
                 self.hits[k] += 1
         if rank == 1:

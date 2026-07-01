@@ -22,13 +22,53 @@ pub use autocorrect::{
     DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES, DEFAULT_LOANWORD_FUZZY_CANDIDATES,
     DEFAULT_ROMAN_REPAIR_BEAM_SIZE, FST_MAX_LEVENSHTEIN_DISTANCE, LOANWORD_FUZZY_MAX_DISTANCE,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use autosuggest::AutosuggestLoadError;
 pub use autosuggest::{
-    AutosuggestArtifactError, AutosuggestCandidate, AutosuggestContext, AutosuggestLm,
-    AutosuggestMetadata, AutosuggestOptions, AutosuggestResult, AutosuggestSession,
-    AutosuggestSource, PersonalAutosuggest, PersonalAutosuggestConfig, PersonalAutosuggestError,
-    PersonalAutosuggestSuggestion, DEFAULT_AUTOSUGGEST_CANDIDATES,
+    materialize_generated_candidates_into, materialize_merged_candidates_into,
+    materialize_scored_union_candidates_into, merge_static_and_generated_candidates_into,
+    rerank_candidate_ids_with_fixed_scores_into, rerank_candidate_ids_with_scores_into,
+    scored_union_static_and_generated_candidates_into, scorer_candidate_i32s_for_candidates_into,
+    scorer_candidate_ids_for_candidates_into, AutosuggestArtifactError, AutosuggestCandidate,
+    AutosuggestCandidateId, AutosuggestCandidatePrior, AutosuggestContext,
+    AutosuggestContextPriorMetadata, AutosuggestContextPriorOptions,
+    AutosuggestGeneratedCandidateId, AutosuggestGeneratorCompatibility, AutosuggestGeneratorFile,
+    AutosuggestGeneratorHandoff, AutosuggestGeneratorHandoffError, AutosuggestGeneratorManifest,
+    AutosuggestGeneratorManifestError, AutosuggestGeneratorMergeOptions,
+    AutosuggestGeneratorMergedQuality, AutosuggestGeneratorModel, AutosuggestGeneratorNgram,
+    AutosuggestGeneratorQuality, AutosuggestGeneratorQualityMetrics,
+    AutosuggestGeneratorRuntimeContract, AutosuggestGeneratorScoredUnionPolicy,
+    AutosuggestGeneratorScoredUnionQuality, AutosuggestGeneratorSession, AutosuggestLm,
+    AutosuggestMaterializedGeneratedCandidate, AutosuggestMaterializedMergedCandidate,
+    AutosuggestMaterializedScoredCandidate, AutosuggestMaterializedScoredUnionCandidate,
+    AutosuggestMergedCandidateId, AutosuggestMergedCandidateSource, AutosuggestMetadata,
+    AutosuggestModelInfo, AutosuggestOptions, AutosuggestRerankError,
+    AutosuggestRerankInputMetadata, AutosuggestRerankOptions, AutosuggestResult,
+    AutosuggestScoredCandidateId, AutosuggestScoredUnionCandidateId,
+    AutosuggestScorerCompatibility, AutosuggestScorerFile, AutosuggestScorerHandoff,
+    AutosuggestScorerHandoffError, AutosuggestScorerManifest, AutosuggestScorerManifestError,
+    AutosuggestScorerModel, AutosuggestScorerNgram, AutosuggestScorerQuality,
+    AutosuggestScorerQualityMetrics, AutosuggestScorerRuntimeContract, AutosuggestScorerSession,
+    AutosuggestSession, AutosuggestSource, PersonalAutosuggest, PersonalAutosuggestConfig,
+    PersonalAutosuggestContext, PersonalAutosuggestError, PersonalAutosuggestSnapshotError,
+    PersonalAutosuggestSuggestion, PersonalAutosuggestTextSuggestion, AUTOSUGGEST_ARTIFACT_KIND,
+    AUTOSUGGEST_BOS_I32, AUTOSUGGEST_BOS_ID, AUTOSUGGEST_GENERATOR_COREML_INPUT_DTYPE,
+    AUTOSUGGEST_GENERATOR_MANIFEST_VERSION, AUTOSUGGEST_GENERATOR_ONNX_INPUT_DTYPE,
+    AUTOSUGGEST_GENERATOR_PACKAGE_KIND, AUTOSUGGEST_GENERATOR_RUNTIME_ROLE,
+    AUTOSUGGEST_GENERATOR_SCORE_DTYPE, AUTOSUGGEST_GENERATOR_TOKEN_ID_DTYPE, AUTOSUGGEST_PAD_I32,
+    AUTOSUGGEST_PAD_ID, AUTOSUGGEST_SCORER_COREML_INPUT_DTYPE, AUTOSUGGEST_SCORER_MANIFEST_VERSION,
+    AUTOSUGGEST_SCORER_ONNX_INPUT_DTYPE, AUTOSUGGEST_SCORER_PACKAGE_KIND,
+    AUTOSUGGEST_SCORER_RUNTIME_ROLE, AUTOSUGGEST_SCORER_SCORE_DTYPE,
+    AUTOSUGGEST_SCORER_TOKEN_ID_DTYPE, AUTOSUGGEST_UNK_I32, AUTOSUGGEST_UNK_ID,
+    DEFAULT_AUTOSUGGEST_CANDIDATES, DEFAULT_AUTOSUGGEST_GENERATOR_LOCKED_STATIC_PREFIX,
+    DEFAULT_AUTOSUGGEST_RERANK_LOCKED_PREFIX, DEFAULT_AUTOSUGGEST_RERANK_RANK_PENALTY,
     DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES, DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT,
-    MAX_AUTOSUGGEST_CONTEXT_TOKENS,
+    MAX_AUTOSUGGEST_CONTEXT_TOKENS, MAX_AUTOSUGGEST_RERANK_CONTEXT_TOKENS,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use autosuggest::{
+    AutosuggestGeneratorAsset, AutosuggestGeneratorAssetReport, AutosuggestScorerAsset,
+    AutosuggestScorerAssetReport,
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};

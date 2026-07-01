@@ -3,23 +3,34 @@ use std::fmt;
 use std::str;
 
 pub(crate) const MAGIC: &[u8; 16] = b"OBAUTOSUGLM_V1\0\0";
+pub(crate) const MAGIC_V2: &[u8; 16] = b"OBAUTOSUGLM_V2\0\0";
+pub(crate) const MAGIC_V3: &[u8; 16] = b"OBAUTOSUGLM_V3\0\0";
 pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION_V2: u32 = 2;
+pub(crate) const VERSION_V3: u32 = 3;
 
 pub(crate) const HEADER_LEN: usize = 52;
+pub(crate) const HEADER_LEN_V2: usize = 56;
+pub(crate) const HEADER_LEN_V3: usize = 60;
 pub(crate) const ID_TOKEN_RECORD_LEN: usize = 8;
 pub(crate) const TOKEN_INDEX_RECORD_LEN: usize = 12;
 pub(crate) const CANDIDATE_RECORD_LEN: usize = 12;
+pub(crate) const COUNT_CANDIDATE_RECORD_LEN: usize = 8;
 pub(crate) const BIGRAM_ROW_LEN: usize = 12;
 pub(crate) const TRIGRAM_ROW_LEN: usize = 16;
+pub(crate) const FOURGRAM_ROW_LEN: usize = 20;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Header {
+    pub(crate) version: u32,
     pub(crate) vocab_size: u32,
     pub(crate) token_index_count: u32,
     pub(crate) unigram_count: u32,
     pub(crate) bigram_row_count: u32,
     pub(crate) trigram_row_count: u32,
+    pub(crate) fourgram_row_count: u32,
     pub(crate) candidate_count: u32,
+    pub(crate) candidate_record_len: u32,
     pub(crate) token_bytes_len: u32,
     pub(crate) vocab_fingerprint: u32,
 }
@@ -31,6 +42,7 @@ pub(crate) struct Sections {
     pub(crate) unigrams: usize,
     pub(crate) bigram_rows: usize,
     pub(crate) trigram_rows: usize,
+    pub(crate) fourgram_rows: usize,
     pub(crate) candidates: usize,
     pub(crate) token_bytes: usize,
     pub(crate) end: usize,
@@ -86,31 +98,90 @@ pub(crate) fn parse_layout(bytes: &[u8]) -> Result<Layout, AutosuggestArtifactEr
     if bytes.len() < HEADER_LEN {
         return Err(AutosuggestArtifactError::UnexpectedEof);
     }
-    if &bytes[..MAGIC.len()] != MAGIC {
+    let magic = bytes
+        .get(..MAGIC.len())
+        .ok_or(AutosuggestArtifactError::UnexpectedEof)?;
+    if magic != MAGIC && magic != MAGIC_V2 && magic != MAGIC_V3 {
         return Err(AutosuggestArtifactError::InvalidMagic);
     }
 
     let version = read_u32(bytes, 16)?;
-    if version != VERSION {
+    if (magic == MAGIC && version != VERSION)
+        || (magic == MAGIC_V2 && version != VERSION_V2)
+        || (magic == MAGIC_V3 && version != VERSION_V3)
+    {
         return Err(AutosuggestArtifactError::UnsupportedVersion(version));
     }
+    let header_len = match version {
+        VERSION => HEADER_LEN,
+        VERSION_V2 => {
+            if bytes.len() < HEADER_LEN_V2 {
+                return Err(AutosuggestArtifactError::UnexpectedEof);
+            }
+            HEADER_LEN_V2
+        }
+        VERSION_V3 => {
+            if bytes.len() < HEADER_LEN_V3 {
+                return Err(AutosuggestArtifactError::UnexpectedEof);
+            }
+            HEADER_LEN_V3
+        }
+        _ => return Err(AutosuggestArtifactError::UnsupportedVersion(version)),
+    };
 
-    let header = Header {
-        vocab_size: read_u32(bytes, 20)?,
-        token_index_count: read_u32(bytes, 24)?,
-        unigram_count: read_u32(bytes, 28)?,
-        bigram_row_count: read_u32(bytes, 32)?,
-        trigram_row_count: read_u32(bytes, 36)?,
-        candidate_count: read_u32(bytes, 40)?,
-        token_bytes_len: read_u32(bytes, 44)?,
-        vocab_fingerprint: read_u32(bytes, 48)?,
+    let header = match version {
+        VERSION => Header {
+            version,
+            vocab_size: read_u32(bytes, 20)?,
+            token_index_count: read_u32(bytes, 24)?,
+            unigram_count: read_u32(bytes, 28)?,
+            bigram_row_count: read_u32(bytes, 32)?,
+            trigram_row_count: read_u32(bytes, 36)?,
+            fourgram_row_count: 0,
+            candidate_count: read_u32(bytes, 40)?,
+            candidate_record_len: CANDIDATE_RECORD_LEN as u32,
+            token_bytes_len: read_u32(bytes, 44)?,
+            vocab_fingerprint: read_u32(bytes, 48)?,
+        },
+        VERSION_V2 => Header {
+            version,
+            vocab_size: read_u32(bytes, 20)?,
+            token_index_count: read_u32(bytes, 24)?,
+            unigram_count: read_u32(bytes, 28)?,
+            bigram_row_count: read_u32(bytes, 32)?,
+            trigram_row_count: read_u32(bytes, 36)?,
+            fourgram_row_count: read_u32(bytes, 40)?,
+            candidate_count: read_u32(bytes, 44)?,
+            candidate_record_len: CANDIDATE_RECORD_LEN as u32,
+            token_bytes_len: read_u32(bytes, 48)?,
+            vocab_fingerprint: read_u32(bytes, 52)?,
+        },
+        VERSION_V3 => Header {
+            version,
+            vocab_size: read_u32(bytes, 20)?,
+            token_index_count: read_u32(bytes, 24)?,
+            unigram_count: read_u32(bytes, 28)?,
+            bigram_row_count: read_u32(bytes, 32)?,
+            trigram_row_count: read_u32(bytes, 36)?,
+            fourgram_row_count: read_u32(bytes, 40)?,
+            candidate_count: read_u32(bytes, 44)?,
+            token_bytes_len: read_u32(bytes, 48)?,
+            vocab_fingerprint: read_u32(bytes, 52)?,
+            candidate_record_len: read_u32(bytes, 56)?,
+        },
+        _ => return Err(AutosuggestArtifactError::UnsupportedVersion(version)),
     };
 
     if header.vocab_size == 0 || header.token_index_count != header.vocab_size {
         return Err(AutosuggestArtifactError::InvalidSectionLayout);
     }
+    if header.candidate_record_len as usize != CANDIDATE_RECORD_LEN
+        && header.candidate_record_len as usize != COUNT_CANDIDATE_RECORD_LEN
+    {
+        return Err(AutosuggestArtifactError::InvalidSectionLayout);
+    }
 
-    let id_tokens = HEADER_LEN;
+    let id_tokens = header_len;
     let token_index = checked_advance(
         id_tokens,
         header.vocab_size as usize,
@@ -126,7 +197,7 @@ pub(crate) fn parse_layout(bytes: &[u8]) -> Result<Layout, AutosuggestArtifactEr
     let bigram_rows = checked_advance(
         unigrams,
         header.unigram_count as usize,
-        CANDIDATE_RECORD_LEN,
+        header.candidate_record_len as usize,
         bytes.len(),
     )?;
     let trigram_rows = checked_advance(
@@ -135,16 +206,22 @@ pub(crate) fn parse_layout(bytes: &[u8]) -> Result<Layout, AutosuggestArtifactEr
         BIGRAM_ROW_LEN,
         bytes.len(),
     )?;
-    let candidates = checked_advance(
+    let fourgram_rows = checked_advance(
         trigram_rows,
         header.trigram_row_count as usize,
         TRIGRAM_ROW_LEN,
         bytes.len(),
     )?;
+    let candidates = checked_advance(
+        fourgram_rows,
+        header.fourgram_row_count as usize,
+        FOURGRAM_ROW_LEN,
+        bytes.len(),
+    )?;
     let token_bytes = checked_advance(
         candidates,
         header.candidate_count as usize,
-        CANDIDATE_RECORD_LEN,
+        header.candidate_record_len as usize,
         bytes.len(),
     )?;
     let end = checked_advance(token_bytes, header.token_bytes_len as usize, 1, bytes.len())?;
@@ -161,6 +238,7 @@ pub(crate) fn parse_layout(bytes: &[u8]) -> Result<Layout, AutosuggestArtifactEr
             unigrams,
             bigram_rows,
             trigram_rows,
+            fourgram_rows,
             candidates,
             token_bytes,
             end,
@@ -226,7 +304,10 @@ fn checked_advance(
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::{MAGIC, VERSION};
+    use super::{
+        CANDIDATE_RECORD_LEN, COUNT_CANDIDATE_RECORD_LEN, MAGIC, MAGIC_V2, MAGIC_V3, VERSION,
+        VERSION_V2, VERSION_V3,
+    };
 
     #[derive(Debug, Clone)]
     pub(crate) struct Row {
@@ -238,6 +319,23 @@ pub(crate) mod test_support {
         tokens: &[&str],
         unigrams: &[(u32, u32, i32)],
         rows: &[Row],
+    ) -> Vec<u8> {
+        build_fixture_inner(tokens, unigrams, rows, false)
+    }
+
+    pub(crate) fn build_count_fixture(
+        tokens: &[&str],
+        unigrams: &[(u32, u32, i32)],
+        rows: &[Row],
+    ) -> Vec<u8> {
+        build_fixture_inner(tokens, unigrams, rows, true)
+    }
+
+    fn build_fixture_inner(
+        tokens: &[&str],
+        unigrams: &[(u32, u32, i32)],
+        rows: &[Row],
+        compact_count_records: bool,
     ) -> Vec<u8> {
         let mut token_bytes = Vec::new();
         let mut id_records = Vec::new();
@@ -261,6 +359,7 @@ pub(crate) mod test_support {
 
         let mut bigram_rows = Vec::new();
         let mut trigram_rows = Vec::new();
+        let mut fourgram_rows = Vec::new();
         let mut candidates = Vec::new();
 
         for row in rows {
@@ -273,23 +372,56 @@ pub(crate) mod test_support {
                 [prefix1, prefix2] => {
                     trigram_rows.push((*prefix1, *prefix2, start, row.candidates.len() as u32))
                 }
-                _ => panic!("fixture rows must be bigram or trigram contexts"),
+                [prefix1, prefix2, prefix3] => fourgram_rows.push((
+                    *prefix1,
+                    *prefix2,
+                    *prefix3,
+                    start,
+                    row.candidates.len() as u32,
+                )),
+                _ => panic!("fixture rows must be bigram, trigram, or fourgram contexts"),
             }
         }
         bigram_rows.sort_by_key(|row| row.0);
         trigram_rows.sort_by_key(|row| (row.0, row.1));
+        fourgram_rows.sort_by_key(|row| (row.0, row.1, row.2));
 
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(MAGIC);
-        write_u32(&mut bytes, VERSION);
+        let version = if compact_count_records {
+            VERSION_V3
+        } else if !fourgram_rows.is_empty() {
+            VERSION_V2
+        } else {
+            VERSION
+        };
+        bytes.extend_from_slice(match version {
+            VERSION => MAGIC,
+            VERSION_V2 => MAGIC_V2,
+            VERSION_V3 => MAGIC_V3,
+            _ => unreachable!(),
+        });
+        write_u32(&mut bytes, version);
         write_u32(&mut bytes, tokens.len() as u32);
         write_u32(&mut bytes, tokens.len() as u32);
         write_u32(&mut bytes, unigrams.len() as u32);
         write_u32(&mut bytes, bigram_rows.len() as u32);
         write_u32(&mut bytes, trigram_rows.len() as u32);
+        if version >= VERSION_V2 {
+            write_u32(&mut bytes, fourgram_rows.len() as u32);
+        }
         write_u32(&mut bytes, candidates.len() as u32);
         write_u32(&mut bytes, token_bytes.len() as u32);
         write_u32(&mut bytes, 0);
+        if version >= VERSION_V3 {
+            write_u32(
+                &mut bytes,
+                if compact_count_records {
+                    COUNT_CANDIDATE_RECORD_LEN
+                } else {
+                    CANDIDATE_RECORD_LEN
+                } as u32,
+            );
+        }
 
         for (offset, len) in &id_records {
             write_u32(&mut bytes, *offset);
@@ -303,7 +435,9 @@ pub(crate) mod test_support {
         for (token_id, count, score) in unigrams {
             write_u32(&mut bytes, *token_id);
             write_u32(&mut bytes, *count);
-            write_i32(&mut bytes, *score);
+            if !compact_count_records {
+                write_i32(&mut bytes, *score);
+            }
         }
         for (prefix, start, len) in &bigram_rows {
             write_u32(&mut bytes, *prefix);
@@ -316,10 +450,19 @@ pub(crate) mod test_support {
             write_u32(&mut bytes, *start);
             write_u32(&mut bytes, *len);
         }
+        for (prefix1, prefix2, prefix3, start, len) in &fourgram_rows {
+            write_u32(&mut bytes, *prefix1);
+            write_u32(&mut bytes, *prefix2);
+            write_u32(&mut bytes, *prefix3);
+            write_u32(&mut bytes, *start);
+            write_u32(&mut bytes, *len);
+        }
         for (token_id, count, score) in &candidates {
             write_u32(&mut bytes, *token_id);
             write_u32(&mut bytes, *count);
-            write_i32(&mut bytes, *score);
+            if !compact_count_records {
+                write_i32(&mut bytes, *score);
+            }
         }
         bytes.extend_from_slice(&token_bytes);
         bytes

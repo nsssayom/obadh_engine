@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -74,7 +75,13 @@ def main() -> None:
     parser.add_argument("--min-frequency", type=int, default=3)
     args = parser.parse_args()
 
-    print(build_vocab(args.corpus_dir, args.output, args.vocab_size, args.min_frequency))
+    print(
+        json.dumps(
+            build_vocab(args.corpus_dir, args.output, args.vocab_size, args.min_frequency),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
