@@ -21,6 +21,11 @@ use super::lm::{
     AutosuggestRerankInputMetadata, AutosuggestSource, AUTOSUGGEST_BOS_ID, AUTOSUGGEST_PAD_ID,
     AUTOSUGGEST_UNK_ID, DEFAULT_AUTOSUGGEST_CANDIDATES, MAX_AUTOSUGGEST_RERANK_CONTEXT_TOKENS,
 };
+use super::open_vocab::{
+    accept_open_vocab_texts_into, merge_static_generated_and_open_vocab_candidates_into,
+    AutosuggestOpenVocabError, AutosuggestOpenVocabPolicy, AutosuggestUnifiedCandidate,
+    AutosuggestValidatedTextCandidate, DEFAULT_AUTOSUGGEST_OPEN_VOCAB_TEXT_HEAP_BYTES,
+};
 
 pub const AUTOSUGGEST_GENERATOR_PACKAGE_KIND: &str = "obadh-autosuggest-generator-package";
 pub const AUTOSUGGEST_GENERATOR_RUNTIME_ROLE: &str = "next_word_candidate_generate";
@@ -1036,8 +1041,10 @@ pub struct AutosuggestGeneratorSession {
     candidate_ids_i32: Vec<i32>,
     static_candidates: Vec<AutosuggestCandidateId>,
     generated: Vec<AutosuggestGeneratedCandidateId>,
+    generated_text: Vec<AutosuggestValidatedTextCandidate>,
     merged: Vec<AutosuggestMergedCandidateId>,
     scored_union: Vec<AutosuggestScoredUnionCandidateId>,
+    unified: Vec<AutosuggestUnifiedCandidate>,
 }
 
 impl AutosuggestGeneratorSession {
@@ -1054,8 +1061,10 @@ impl AutosuggestGeneratorSession {
             candidate_ids_i32: vec![AUTOSUGGEST_PAD_ID as i32; candidate_pool],
             static_candidates: Vec::with_capacity(candidate_pool),
             generated: Vec::with_capacity(top_k_output),
+            generated_text: Vec::with_capacity(top_k_output),
             merged: Vec::with_capacity(top_k_output),
             scored_union: Vec::with_capacity(union_capacity),
+            unified: Vec::with_capacity(union_capacity),
         }
     }
 
@@ -1096,6 +1105,10 @@ impl AutosuggestGeneratorSession {
         &self.generated
     }
 
+    pub fn generated_text_candidates(&self) -> &[AutosuggestValidatedTextCandidate] {
+        &self.generated_text
+    }
+
     pub fn merged_candidates(&self) -> &[AutosuggestMergedCandidateId] {
         &self.merged
     }
@@ -1104,14 +1117,16 @@ impl AutosuggestGeneratorSession {
         &self.scored_union
     }
 
+    pub fn unified_candidates(&self) -> &[AutosuggestUnifiedCandidate] {
+        &self.unified
+    }
+
     pub fn prepare_u32_context<D: AsRef<[u8]>>(
         &mut self,
         lm: &AutosuggestLm<D>,
         context: AutosuggestContext,
     ) -> Result<usize, AutosuggestGeneratorHandoffError> {
-        self.generated.clear();
-        self.merged.clear();
-        self.scored_union.clear();
+        self.clear_outputs();
         self.clear_static_candidates();
         self.handoff
             .u32_context_for_context_into(lm, context, &mut self.context_ids_u32)
@@ -1157,9 +1172,7 @@ impl AutosuggestGeneratorSession {
         lm: &AutosuggestLm<D>,
         context: AutosuggestContext,
     ) -> Result<usize, AutosuggestGeneratorHandoffError> {
-        self.generated.clear();
-        self.merged.clear();
-        self.scored_union.clear();
+        self.clear_outputs();
         self.clear_static_candidates();
         self.handoff
             .coreml_context_for_context_into(lm, context, &mut self.context_ids_i32)
@@ -1230,6 +1243,17 @@ impl AutosuggestGeneratorSession {
         Ok(&self.generated)
     }
 
+    pub fn accept_open_vocab_text_outputs<S: AsRef<str>>(
+        &mut self,
+        texts: &[S],
+        model_scores: &[f32],
+        policy: AutosuggestOpenVocabPolicy,
+    ) -> Result<&[AutosuggestValidatedTextCandidate], AutosuggestOpenVocabError> {
+        accept_open_vocab_texts_into(texts, model_scores, policy, &mut self.generated_text)?;
+        self.unified.clear();
+        Ok(&self.generated_text)
+    }
+
     pub fn merge_static_candidates(
         &mut self,
         static_candidates: &[AutosuggestCandidateId],
@@ -1242,6 +1266,39 @@ impl AutosuggestGeneratorSession {
             &mut self.merged,
         );
         &self.merged
+    }
+
+    pub fn unified_static_generated_and_text_candidates<D: AsRef<[u8]>>(
+        &mut self,
+        lm: &AutosuggestLm<D>,
+        policy: AutosuggestOpenVocabPolicy,
+    ) -> Result<&[AutosuggestUnifiedCandidate], AutosuggestOpenVocabError> {
+        merge_static_generated_and_open_vocab_candidates_into(
+            lm,
+            &self.static_candidates,
+            &self.generated,
+            &self.generated_text,
+            policy,
+            &mut self.unified,
+        )?;
+        Ok(&self.unified)
+    }
+
+    pub fn unified_candidates_for_static_candidates<D: AsRef<[u8]>>(
+        &mut self,
+        lm: &AutosuggestLm<D>,
+        static_candidates: &[AutosuggestCandidateId],
+        policy: AutosuggestOpenVocabPolicy,
+    ) -> Result<&[AutosuggestUnifiedCandidate], AutosuggestOpenVocabError> {
+        merge_static_generated_and_open_vocab_candidates_into(
+            lm,
+            static_candidates,
+            &self.generated,
+            &self.generated_text,
+            policy,
+            &mut self.unified,
+        )?;
+        Ok(&self.unified)
     }
 
     pub fn scored_union_static_candidates(
@@ -1314,8 +1371,20 @@ impl AutosuggestGeneratorSession {
             + self.candidate_ids_i32.capacity() * mem::size_of::<i32>()
             + self.static_candidates.capacity() * mem::size_of::<AutosuggestCandidateId>()
             + self.generated.capacity() * mem::size_of::<AutosuggestGeneratedCandidateId>()
+            + self.generated_text.capacity() * mem::size_of::<AutosuggestValidatedTextCandidate>()
+            + self
+                .generated_text
+                .iter()
+                .map(|candidate| candidate.text.capacity())
+                .sum::<usize>()
             + self.merged.capacity() * mem::size_of::<AutosuggestMergedCandidateId>()
             + self.scored_union.capacity() * mem::size_of::<AutosuggestScoredUnionCandidateId>()
+            + self.unified.capacity() * mem::size_of::<AutosuggestUnifiedCandidate>()
+            + self
+                .unified
+                .iter()
+                .map(|candidate| candidate.text.capacity())
+                .sum::<usize>()
     }
 
     pub fn heap_limit_bytes(&self) -> usize {
@@ -1329,14 +1398,20 @@ impl AutosuggestGeneratorSession {
             + candidate_pool * mem::size_of::<i32>()
             + candidate_pool * mem::size_of::<AutosuggestCandidateId>()
             + top_k_output * mem::size_of::<AutosuggestGeneratedCandidateId>()
+            + top_k_output * mem::size_of::<AutosuggestValidatedTextCandidate>()
+            + top_k_output * DEFAULT_AUTOSUGGEST_OPEN_VOCAB_TEXT_HEAP_BYTES
             + top_k_output * mem::size_of::<AutosuggestMergedCandidateId>()
             + union_capacity * mem::size_of::<AutosuggestScoredUnionCandidateId>()
+            + union_capacity * mem::size_of::<AutosuggestUnifiedCandidate>()
+            + union_capacity * DEFAULT_AUTOSUGGEST_OPEN_VOCAB_TEXT_HEAP_BYTES
     }
 
     fn clear_outputs(&mut self) {
         self.generated.clear();
+        self.generated_text.clear();
         self.merged.clear();
         self.scored_union.clear();
+        self.unified.clear();
     }
 
     fn clear_static_candidates(&mut self) {
@@ -2340,7 +2415,9 @@ fn add_package_size(
 mod tests {
     use super::*;
     use crate::autosuggest::artifact::test_support::{build_fixture, Row};
-    use crate::autosuggest::{AutosuggestSource, PersonalAutosuggestConfig};
+    use crate::autosuggest::{
+        AutosuggestSource, AutosuggestUnifiedCandidateKind, PersonalAutosuggestConfig,
+    };
     #[cfg(not(target_arch = "wasm32"))]
     use std::fs;
     #[cfg(not(target_arch = "wasm32"))]
@@ -3003,6 +3080,104 @@ mod tests {
         assert_eq!(session.merged_candidates().as_ptr(), merged_ptr);
         assert_eq!(session.merged_candidates().len(), 8);
         assert!(session.estimated_heap_bytes() <= session.heap_limit_bytes());
+    }
+
+    #[test]
+    fn generator_session_unifies_known_tokens_and_open_vocab_text() {
+        let lm = fixture_lm();
+        let manifest = fixture_manifest();
+        let mut session =
+            AutosuggestGeneratorSession::from_manifest_for_lm(&manifest, &lm).unwrap();
+        let static_candidates = [
+            static_candidate(7, 100),
+            static_candidate(6, 80),
+            static_candidate(5, 60),
+        ];
+        let mut context = AutosuggestContext::new();
+        lm.push_context_text(&mut context, "আমি আজ").unwrap();
+
+        session.prepare_coreml_context(&lm, context).unwrap();
+        session
+            .accept_i32_outputs(
+                &lm,
+                &[6, 5, 7, 4, 8, 9, 10, 3],
+                &[7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0],
+            )
+            .unwrap();
+        session
+            .accept_open_vocab_text_outputs(
+                &["গিয়েছিলাম", "স্কুলে", "hello"],
+                &[8.0, 4.0, 9.0],
+                AutosuggestOpenVocabPolicy {
+                    max_candidates: 4,
+                    locked_static_prefix: 0,
+                    generated_text_penalty: 0.0,
+                    generated_token_penalty: 0.0,
+                    ..AutosuggestOpenVocabPolicy::default()
+                },
+            )
+            .unwrap();
+
+        let unified = session
+            .unified_candidates_for_static_candidates(
+                &lm,
+                &static_candidates,
+                AutosuggestOpenVocabPolicy {
+                    max_candidates: 6,
+                    locked_static_prefix: 0,
+                    generated_text_penalty: 0.0,
+                    generated_token_penalty: 0.0,
+                    ..AutosuggestOpenVocabPolicy::default()
+                },
+            )
+            .unwrap();
+
+        let open_vocab = unified
+            .iter()
+            .find(|candidate| candidate.text == "গিয়েছিলাম")
+            .unwrap();
+        assert_eq!(open_vocab.token_id, None);
+        assert_eq!(
+            open_vocab.kind,
+            AutosuggestUnifiedCandidateKind::GeneratedText
+        );
+        assert!(open_vocab.has_generated_text_signal());
+
+        let overlapped = unified
+            .iter()
+            .find(|candidate| candidate.text == "স্কুলে")
+            .unwrap();
+        assert_eq!(overlapped.token_id, Some(6));
+        assert_eq!(overlapped.kind, AutosuggestUnifiedCandidateKind::Mixed);
+        assert!(overlapped.has_static_signal());
+        assert!(overlapped.has_generated_token_signal());
+        assert!(overlapped.has_generated_text_signal());
+        assert!(!unified.iter().any(|candidate| candidate.text == "hello"));
+        assert!(session.estimated_heap_bytes() <= session.heap_limit_bytes());
+    }
+
+    #[test]
+    fn generator_session_clears_open_vocab_outputs_on_prepare() {
+        let lm = fixture_lm();
+        let manifest = fixture_manifest();
+        let mut session =
+            AutosuggestGeneratorSession::from_manifest_for_lm(&manifest, &lm).unwrap();
+        let mut context = AutosuggestContext::new();
+        lm.push_context_text(&mut context, "আমি আজ").unwrap();
+
+        session
+            .accept_open_vocab_text_outputs(
+                &["গিয়েছিলাম"],
+                &[8.0],
+                AutosuggestOpenVocabPolicy::default(),
+            )
+            .unwrap();
+        assert_eq!(session.generated_text_candidates().len(), 1);
+
+        session.prepare_coreml_context(&lm, context).unwrap();
+
+        assert!(session.generated_text_candidates().is_empty());
+        assert!(session.unified_candidates().is_empty());
     }
 
     #[test]
