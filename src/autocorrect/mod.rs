@@ -14,6 +14,7 @@ mod loanword;
 mod morphology;
 mod ranker;
 mod phoneme;
+mod qwerty;
 mod roman_repair;
 mod skeleton;
 
@@ -41,3 +42,4 @@ pub use roman_repair::{
 // `skeleton` (the dropped-vowel channel) and `phoneme` (graded consonant confusion) are
 // internal to the FST suggest path — they expose no public surface, only new
 // `FstCandidateSource` variants on the results.
+pub use qwerty::key_slip_repaired_outputs;
