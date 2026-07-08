@@ -111,7 +111,8 @@ fn test_aspirated_ya_phola_derivation_stays_narrow() {
         ("Ngya", "ঙয়া"),
         ("zoy", "যয়"),
         ("zy", "য্য"),
-        ("qya", "qয়া"),
+        // `q` maps to `k` (foreign-letter alias), so it takes ya-phola like ক: qya → ক্যা.
+        ("qya", "ক্যা"),
     ];
 
     for (input, expected) in examples {
@@ -185,4 +186,40 @@ fn test_vocalic_r_case() {
     // Test krri => কৃ
     let result = engine.transliterate("krri");
     assert_eq!(result, "কৃ");
+}
+
+#[test]
+fn test_productive_ya_phola_on_conjunct_bases() {
+    let engine = ObadhEngine::new();
+
+    // ya-phola composes onto any renderable conjunct base (not just listed
+    // clusters), so loanwords such as প্ল্যান/ব্ল্যাক/ফ্ল্যাট are typeable. The bare
+    // `y`/`Y` marker and the অ্যা (`aY`/`AY`) vowel path are equivalent.
+    for (input, expected) in [
+        ("ply", "প্ল্য"),
+        ("plY", "প্ল্য"),
+        ("plYa", "প্ল্যা"),
+        ("plYan", "প্ল্যান"),
+        ("plaYn", "প্ল্যান"),
+        ("plAYn", "প্ল্যান"),
+        ("blYak", "ব্ল্যাক"),
+        ("glYad", "গ্ল্যাদ"),
+        ("flYaT", "ফ্ল্যাট"),
+        ("klYap", "ক্ল্যাপ"),
+    ] {
+        assert_eq!(engine.transliterate(input), expected, "{input}");
+    }
+
+    // Regressions preserved: ya-refusing bases (র/ড়/ঢ়/ঙ) and phola-terminated
+    // bases stay decomposed, and enumerated/aspirated forms are unchanged.
+    for (input, expected) in [
+        ("rya", "রয়া"),
+        ("Ngya", "ঙয়া"),
+        ("Swy", "শ্বয়"),
+        ("stwy", "স্ত্বয়"),
+        ("khy", "খ্য"),
+        ("sty", "স্ত্য"),
+    ] {
+        assert_eq!(engine.transliterate(input), expected, "{input}");
+    }
 }

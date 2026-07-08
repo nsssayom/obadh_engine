@@ -1,3 +1,5 @@
+use crate::definitions::consonant_value;
+
 pub(super) fn canonical_conjunct_part(part: &str) -> &str {
     match part {
         "chh" | "C" | "Ch" | "CH" | "Chh" | "CHH" => "ch",
@@ -16,30 +18,37 @@ pub(super) fn canonical_conjunct_part(part: &str) -> &str {
     }
 }
 
-/// Productive aspirated-base ya-phola forms are intentionally derived instead
-/// of duplicated in the source-owned conjunct table. This covers spellings such
-/// as ছ্য/ঝ্য/ফ্য while preserving non-phola base paths like রয়া/ড়য়া.
-pub(super) fn is_derived_aspirated_ya_phola(parts: &[&str]) -> bool {
-    parts.len() == 2
-        && is_aspirated_varga_consonant(parts[0])
-        && canonical_conjunct_part(parts[1]) == "y"
+/// Roman markers that request a ya-phola (য-ফলা).
+pub(super) fn is_ya_phola_marker(part: &str) -> bool {
+    matches!(part, "y" | "Y")
 }
 
-pub(super) fn is_derived_aspirated_ya_phola_prefix(parts: &[&str]) -> bool {
-    match parts {
-        [base] => is_aspirated_varga_consonant(base),
-        [base, phola] => {
-            is_aspirated_varga_consonant(base) && canonical_conjunct_part(phola) == "y"
-        }
-        _ => false,
-    }
+/// Whether a ya-phola can subjoin directly onto `base_last`, the consonant it
+/// would attach to.
+///
+/// Ya-phola is productive: it composes onto any real consonant base — a single
+/// consonant (খ্য, প্য) or the tail of a conjunct (প্ল + য-ফলা = প্ল্য, used by
+/// loanwords such as প্ল্যান). Two narrow exceptions are preserved:
+///  - র/ড়/ঢ়/ঙ (`r`/`R`/`Rh`/`Ng`) refuse ya-phola and instead yield the standalone
+///    forms রয়া/ড়য়া/ঢ়য়া/ঙয়া;
+///  - a base that already ends in a phola marker takes no further ya-phola, so
+///    শ্ব + য stays শ্বয় and the `iyw` long-ঈয় signal is untouched.
+pub(super) fn ya_phola_attaches_to(base_last: &str) -> bool {
+    let canonical = canonical_conjunct_part(base_last);
+    consonant_value(canonical).is_some()
+        && !is_ya_phola_refusing(canonical)
+        && !is_phola_marker_component(base_last)
 }
 
-fn is_aspirated_varga_consonant(part: &str) -> bool {
-    matches!(
-        canonical_conjunct_part(part),
-        "kh" | "gh" | "ch" | "jh" | "Th" | "Dh" | "th" | "dh" | "ph" | "bh"
-    )
+fn is_ya_phola_refusing(canonical: &str) -> bool {
+    matches!(canonical, "r" | "R" | "Rh" | "Ng")
+}
+
+fn is_phola_marker_component(part: &str) -> bool {
+    // `y`/`Y` (য়) and `w` (ওয়/ব-ফলা) carry consonant values but are phola markers,
+    // not phola bases: a base already ending in one takes no further ya-phola, so
+    // শ্ব + য stays শ্বয় rather than শ্ব্য.
+    matches!(canonical_conjunct_part(part), "y" | "w")
 }
 
 pub(super) fn is_special_form_key(form: &str) -> bool {
@@ -82,27 +91,17 @@ mod tests {
     }
 
     #[test]
-    fn aspirated_ya_phola_is_derived_for_varga_consonants_only() {
-        for parts in [
-            ["kh", "y"],
-            ["Ch", "Y"],
-            ["JH", "y"],
-            ["TH", "Y"],
-            ["f", "y"],
-            ["v", "Y"],
-        ] {
-            assert!(is_derived_aspirated_ya_phola(&parts), "{parts:?}");
+    fn ya_phola_attaches_to_real_consonants_except_the_refusing_set() {
+        // Any real consonant base takes ya-phola productively: aspirated stops
+        // (খ্য/ছ্য/ফ্য), plain stops, sibilants, and the tail of a conjunct (প্ল + য).
+        for base_last in ["kh", "Ch", "JH", "TH", "f", "v", "p", "l", "sh", "z", "s"] {
+            assert!(ya_phola_attaches_to(base_last), "{base_last:?} should take ya-phola");
         }
 
-        for parts in [
-            ["r", "y"],
-            ["R", "y"],
-            ["Rh", "y"],
-            ["Ng", "y"],
-            ["sh", "y"],
-            ["z", "y"],
-        ] {
-            assert!(!is_derived_aspirated_ya_phola(&parts), "{parts:?}");
+        // র/ড়/ঢ়/ঙ refuse ya-phola (রয়া/ড়য়া/ঢ়য়া/ঙয়া); phola markers are not bases;
+        // non-consonants (`q`) never take it.
+        for base_last in ["r", "R", "Rh", "Ng", "y", "Y", "w", "q"] {
+            assert!(!ya_phola_attaches_to(base_last), "{base_last:?} must refuse ya-phola");
         }
     }
 }

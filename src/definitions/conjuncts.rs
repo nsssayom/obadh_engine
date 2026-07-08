@@ -10,8 +10,7 @@ mod trie;
 
 use crate::definitions::consonant_value;
 use canonical::{
-    canonical_conjunct_part, is_derived_aspirated_ya_phola, is_derived_aspirated_ya_phola_prefix,
-    is_special_form_key,
+    canonical_conjunct_part, is_special_form_key, is_ya_phola_marker, ya_phola_attaches_to,
 };
 use rules::CONJUNCT_RULES;
 use trie::ConjunctTrie;
@@ -77,19 +76,52 @@ impl ConjunctDefinitions {
 
     /// Check component parts without allocating a joined key.
     pub fn can_form_conjunct_from_parts(&self, parts: &[&str]) -> bool {
-        self.create_conjunct_from_parts(parts).is_some() || is_derived_aspirated_ya_phola(parts)
+        self.create_conjunct_from_parts(parts).is_some() || self.is_derived_ya_phola(parts)
     }
 
     /// Check derived conjunct forms that are intentionally rule-generated
     /// instead of listed in the static source-owned conjunct table.
     pub(crate) fn can_form_derived_conjunct_from_parts(&self, parts: &[&str]) -> bool {
-        is_derived_aspirated_ya_phola(parts)
+        self.is_derived_ya_phola(parts)
     }
 
     /// Check whether the current parts can still become a derived conjunct if
     /// the tokenizer consumes one more component.
     pub(crate) fn can_match_derived_conjunct_prefix(&self, parts: &[&str]) -> bool {
-        is_derived_aspirated_ya_phola_prefix(parts)
+        if self.is_derived_ya_phola(parts) {
+            return true;
+        }
+        // The parts so far form a renderable base that could still take a
+        // ya-phola once the tokenizer consumes one more component.
+        self.base_takes_ya_phola(parts)
+    }
+
+    /// A productive ya-phola conjunct: a renderable base (a single consonant or an
+    /// enumerated conjunct) directly followed by a ya-phola marker. This lets
+    /// loanword clusters such as প্ল্য/ব্ল্য/গ্ল্য form even though they are absent
+    /// from the native conjunct table, mirroring how the অ্যা vowel already
+    /// attaches to any conjunct.
+    fn is_derived_ya_phola(&self, parts: &[&str]) -> bool {
+        let Some((phola, base)) = parts.split_last() else {
+            return false;
+        };
+        is_ya_phola_marker(phola) && self.base_takes_ya_phola(base)
+    }
+
+    /// Whether `base` is a renderable conjunct base whose final consonant accepts
+    /// a ya-phola.
+    fn base_takes_ya_phola(&self, base: &[&str]) -> bool {
+        base.last().is_some_and(|last| ya_phola_attaches_to(last)) && self.base_is_renderable(base)
+    }
+
+    /// Whether `base` renders on its own: a single consonant, or an enumerated
+    /// conjunct. (Derived ya-phola forms are not themselves valid ya-phola bases.)
+    fn base_is_renderable(&self, base: &[&str]) -> bool {
+        match base {
+            [] => false,
+            [single] => consonant_value(canonical_conjunct_part(single)).is_some(),
+            _ => self.create_conjunct_from_parts(base).is_some(),
+        }
     }
 
     /// Return the root trie cursor for incremental conjunct matching.

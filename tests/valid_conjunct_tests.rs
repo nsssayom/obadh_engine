@@ -705,7 +705,6 @@ fn test_invalid_conjuncts() {
     let test_cases = [
         "kf",  // ক+ফ is not a standard conjunct
         "pv",  // প+ভ is not a standard conjunct
-        "qw",  // q is not even a Bengali consonant
         "hk",  // হ+ক is not a standard conjunct
         "Rw",  // w is not blindly accepted after every consonant
         "kfw", // only declared full clusters absorb the ba-phola marker

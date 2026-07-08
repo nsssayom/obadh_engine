@@ -82,7 +82,7 @@ fn deliberate_input_rule_probe_corpus_matches_runtime_behavior() {
 
     assert_eq!(
         rows.len(),
-        22,
+        24,
         "rule probe corpus should keep the deliberate seed coverage set complete"
     );
 

@@ -2,10 +2,6 @@ use crate::definitions::{consonant_value, vowel_value};
 
 use super::{PhoneticUnit, PhoneticUnitType};
 
-pub(super) fn is_long_iya_marker_at(text: &str, byte_index: usize) -> bool {
-    byte_index > 0 && matches!(text.as_bytes().get(byte_index - 1), Some(b'y') | Some(b'Y'))
-}
-
 pub(super) fn normalize_iyw_long_iya_signal(units: &mut Vec<PhoneticUnit>) -> bool {
     let Some(first_match) = first_iyw_long_iya_signal(units) else {
         return false;
@@ -15,10 +11,22 @@ pub(super) fn normalize_iyw_long_iya_signal(units: &mut Vec<PhoneticUnit>) -> bo
     let mut write = first_match;
     while read < units.len() {
         if is_iyw_long_iya_signal_at(units, read) {
+            // The `w` marker may have already absorbed the following vowel (kiywo →
+            // `ki`,`y`,`wo`). Capture it before dropping the marker so it can be
+            // re-homed onto the ya (কীয়ো), matching the vowel-less case (তীয়).
+            let marker_vowel = long_iya_marker_trailing_vowel(&units[read + 2]);
             promote_short_i_to_long_i(&mut units[read]);
             super::move_unit(units, read, write);
             super::move_unit(units, read + 1, write + 1);
             write += 2;
+            if let Some((vowel_text, vowel_type, position)) = marker_vowel {
+                units[write] = PhoneticUnit {
+                    text: vowel_text,
+                    unit_type: vowel_type,
+                    position,
+                };
+                write += 1;
+            }
             read += 3;
             continue;
         }
@@ -90,7 +98,29 @@ fn is_ya_consonant_unit(unit: &PhoneticUnit) -> bool {
 }
 
 fn is_long_iya_marker(unit: &PhoneticUnit) -> bool {
-    unit.unit_type == PhoneticUnitType::Unknown && unit.text == "w"
+    match unit.unit_type {
+        // Bare `w` (তীয় from tiyw).
+        PhoneticUnitType::Consonant => unit.text == "w",
+        // `w` that has absorbed a following vowel (কীয়ো from kiywo).
+        PhoneticUnitType::ConsonantWithVowel | PhoneticUnitType::ConsonantWithTerminator => {
+            long_iya_marker_trailing_vowel(unit).is_some()
+        }
+        _ => false,
+    }
+}
+
+/// The vowel a `w` long-ঈয় marker carries, if it absorbed one during compaction.
+/// Returns the vowel text and its unit type so the caller can re-emit it.
+fn long_iya_marker_trailing_vowel(
+    unit: &PhoneticUnit,
+) -> Option<(String, PhoneticUnitType, usize)> {
+    let vowel_type = match unit.unit_type {
+        PhoneticUnitType::ConsonantWithVowel => PhoneticUnitType::Vowel,
+        PhoneticUnitType::ConsonantWithTerminator => PhoneticUnitType::TerminatingVowel,
+        _ => return None,
+    };
+    let vowel = unit.text.strip_prefix('w').filter(|vowel| !vowel.is_empty())?;
+    Some((vowel.to_string(), vowel_type, unit.position))
 }
 
 fn promote_short_i_to_long_i(unit: &mut PhoneticUnit) {

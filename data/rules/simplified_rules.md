@@ -157,7 +157,8 @@ There's special handling for য-ফলা and ব-ফলা:
   - `bw` → `ব্ব` (regular `b` base + ba-phola marker)
   - Valid phola clusters may also be typed with an explicit boundary: `k,,y` → `ক্য`, `k,,w` → `ক্ব`, `m,,w,,r` → `ম্ব্র`
   - `mw` → `ম্ব`, `mwr` → `ম্ব্র`
-  - `y`/`Y` and `w` are accepted as phola markers only inside declared valid conjunct clusters; invalid explicit clusters remain decomposed
+  - `y`/`Y` (য-ফলা) compose onto any consonant or conjunct base, so loanword clusters form too: `ply` → `প্ল্য`, `plYan` → `প্ল্যান`, `blYak` → `ব্ল্যাক`. The bases `r`/`R`/`Rh`/`Ng` refuse ya-phola (`rya` → `রয়া`), and a base already ending in a phola marker takes no further phola (`Swy` → `শ্বয়`)
+  - `w` is the ব-ফলা marker only inside a valid conjunct cluster; standalone it is the ওয় glide, e.g. `waTar` → `ওয়াটার` (see Foreign-Sound Letters). Invalid explicit clusters remain decomposed
   - After a short-i-bearing consonant or conjunct, `iyw` is a deliberate long-ঈয় signal rather than a ব-ফলা command: `tiyw` → `তীয়`, `ktiYwta` → `ক্তীয়তা`
   - Lowercase `o` after that signal stays an inherent-vowel terminator (`kiywo` → `কীয়`); uppercase `O` gives visible ও-কার (`kiywO` → `কীয়ো`)
   - `aY`/`AY` are the deliberate অ্যা vowel signals: `aYp` / `AYp` → `অ্যাপ`; lowercase `ayp` remains `আয়প`
@@ -166,6 +167,15 @@ There's special handling for য-ফলা and ব-ফলা:
   - `kz` → `কয` (k + ya, no conjunct)
   - `kb` → `কব` (k + ba, no conjunct)
   - `zoy` → `যয়` (the `o` terminator blocks `zy`)
+
+### Foreign-Sound Letters
+
+Letters with no native Bengali phoneme map to their settled convention instead of leaking ASCII:
+
+- `q` → `ক` (qaf → ka): `iraq` → `ইরাক`, `qatar` → `কাতার`
+- `qq` → `ঁ` (চন্দ্রবিন্দু); matched ahead of `q` by longest prefix, so `baqq` → `বাঁ`
+- `x` → `ক্স`: `box` → `বক্স`, `fix` → `ফিক্স`
+- `w` standalone → `ওয়` glide (`waTar` → `ওয়াটার`); after a consonant base it is the ব-ফলা marker (`kw` → `ক্ব`)
 
 ### Non-Conjunct র‌্য Signal
 

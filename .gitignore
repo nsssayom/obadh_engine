@@ -56,3 +56,5 @@ epubs/
 !www/css/styles.css
 !www/js/*.js
 !www/js/*.wasm
+
+CLAUDE.md

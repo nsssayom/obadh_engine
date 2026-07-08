@@ -111,6 +111,7 @@ const SPECIAL: &[ConsonantRule] = &[
     ("Rh", "ঢ়"), // ṛhô
     ("y", "য়"),  // antastô yô
     ("Y", "য়"),  // antastô yô
+    ("w", "ওয়"), // /w/ glide standalone (ওয়াটার); stays ব-ফলা inside a cluster
 ];
 
 const CONSONANT_CATEGORIES: [&[ConsonantRule]; 8] = [
@@ -190,6 +191,7 @@ pub fn consonant_value(roman: &str) -> Option<&'static str> {
         "R" => Some("ড়"),
         "Rh" => Some("ঢ়"),
         "y" | "Y" => Some("য়"),
+        "w" => Some("ওয়"),
         _ => None,
     }
 }

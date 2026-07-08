@@ -1,4 +1,3 @@
-use super::long_iya::is_long_iya_marker_at;
 use super::{PhoneticUnit, PhoneticUnitType};
 
 #[derive(Default)]
@@ -28,12 +27,17 @@ impl WordScanHints {
         if previous.is_some_and(is_anusvara_ng_signal) && is_velar_nasal_conjunct_tail(unit) {
             self.has_velar_nasal_conjunct_alias_candidate = true;
         }
+
+        // `iyw` long-ঈয় signal: a `w` consonant directly after a `y`/`Y` consonant.
+        // (`w` now tokenizes as a consonant, so this is detected here rather than
+        // on the unknown-char path.)
+        if is_ba_phola_w_signal(unit) && previous.is_some_and(is_ya_phola_signal) {
+            self.has_long_iya_marker_candidate = true;
+        }
     }
 
     pub(super) fn observe_unknown_text(&mut self, text: &str, word: &str, byte_index: usize) {
-        if text == "w" && is_long_iya_marker_at(word, byte_index) {
-            self.has_long_iya_marker_candidate = true;
-        } else if text == "Z" && is_non_conjunct_ra_ya_zwnj_marker_at(word, byte_index) {
+        if text == "Z" && is_non_conjunct_ra_ya_zwnj_marker_at(word, byte_index) {
             self.has_non_conjunct_ra_ya_zwnj_candidate = true;
         }
     }
@@ -82,6 +86,14 @@ fn is_anusvara_ng_signal(unit: &PhoneticUnit) -> bool {
 fn is_velar_nasal_conjunct_tail(unit: &PhoneticUnit) -> bool {
     unit.unit_type == PhoneticUnitType::Consonant
         && matches!(unit.text.as_str(), "g" | "gh" | "Gh" | "GH")
+}
+
+fn is_ya_phola_signal(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::Consonant && matches!(unit.text.as_str(), "y" | "Y")
+}
+
+fn is_ba_phola_w_signal(unit: &PhoneticUnit) -> bool {
+    unit.unit_type == PhoneticUnitType::Consonant && unit.text == "w"
 }
 
 fn is_non_conjunct_ra_ya_zwnj_marker_at(text: &str, byte_index: usize) -> bool {

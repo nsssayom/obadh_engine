@@ -243,7 +243,7 @@ fn test_case_fallback_does_not_override_deliberate_uppercase_signals() {
 
     assert_eq!(
         engine.transliterate("T D N S I U O Y M Zya q Q"),
-        "ট ড ণ শ ঈ ঊ ও য় ং Zয়া q Q"
+        "ট ড ণ শ ঈ ঊ ও য় ং Zয়া ক ক"
     );
 }
 
@@ -251,17 +251,19 @@ fn test_case_fallback_does_not_override_deliberate_uppercase_signals() {
 fn test_unreserved_external_layout_aliases_are_not_imported_without_obadh_rule_reason() {
     let tokenizer = Tokenizer::new();
 
-    for input in ["q", "Q", "Z"] {
-        let units = tokenizer.tokenize_word(input);
-        assert_eq!(units.len(), 1);
-        assert_eq!(units[0].text, input);
-        assert_eq!(units[0].unit_type, PhoneticUnitType::Unknown);
-    }
+    // `Z` stays an unmapped marker (reserved for the rZ non-conjunct ra-ya path);
+    // it is not imported as a generic `z`. By contrast `q`/`Q`/`x`/`X` ARE mapped,
+    // but only because they carry a deliberate foreign-letter rule reason (qaf → ক,
+    // x → ক্স) — see `test_foreign_letter_aliases_map_to_bengali_convention`.
+    let units = tokenizer.tokenize_word("Z");
+    assert_eq!(units.len(), 1);
+    assert_eq!(units[0].text, "Z");
+    assert_eq!(units[0].unit_type, PhoneticUnitType::Unknown);
 
     let engine = ObadhEngine::new();
     assert_eq!(
-        engine.transliterate("q qa Q Z Zya gog jNG jn gg"),
-        "q qআ Q Z Zয়া গগ জ্ঞ জ্ঞ জ্ঞ"
+        engine.transliterate("Z Zya gog jNG jn gg"),
+        "Z Zয়া গগ জ্ঞ জ্ঞ জ্ঞ"
     );
 }
 
@@ -858,7 +860,7 @@ fn test_iyw_long_iya_signal_does_not_mutate_vocalic_rri() {
             vec![
                 ("krri", PhoneticUnitType::ConsonantWithVowel),
                 ("y", PhoneticUnitType::Consonant),
-                ("w", PhoneticUnitType::Unknown),
+                ("w", PhoneticUnitType::Consonant),
             ],
         ),
         (
@@ -866,7 +868,7 @@ fn test_iyw_long_iya_signal_does_not_mutate_vocalic_rri() {
             vec![
                 ("kI", PhoneticUnitType::ConsonantWithVowel),
                 ("y", PhoneticUnitType::Consonant),
-                ("w", PhoneticUnitType::Unknown),
+                ("w", PhoneticUnitType::Consonant),
             ],
         ),
         (
@@ -874,7 +876,7 @@ fn test_iyw_long_iya_signal_does_not_mutate_vocalic_rri() {
             vec![
                 ("kai", PhoneticUnitType::ConsonantWithVowel),
                 ("y", PhoneticUnitType::Consonant),
-                ("w", PhoneticUnitType::Unknown),
+                ("w", PhoneticUnitType::Consonant),
             ],
         ),
     ] {
@@ -890,7 +892,10 @@ fn test_iyw_long_iya_signal_does_not_mutate_vocalic_rri() {
     }
 
     let engine = ObadhEngine::new();
-    assert_eq!(engine.transliterate("krriyw kIyw kaiyw"), "কৃয়w কীয়w কাইয়w");
+    assert_eq!(
+        engine.transliterate("krriyw kIyw kaiyw"),
+        "কৃয়ওয় কীয়ওয় কাইয়ওয়"
+    );
 }
 
 #[test]
@@ -975,7 +980,7 @@ fn test_ba_phola_marker_uses_valid_conjunct_table() {
         "র্ব র্বা র্ব্য র্ব্যা র্দ্ব র্দ্বা র্শ্ব র্শ্বা র্ব্ব র্ব্বা"
     );
     assert_eq!(engine.transliterate("rry rrya rrY rrYa"), "র্য র্যা র্য র্যা");
-    assert_eq!(engine.transliterate("Rw kfw qwa"), "ড়w কফw qwআ");
+    assert_eq!(engine.transliterate("Rw kfw qwa"), "ড়ওয় কফওয় ক্বা");
 }
 
 #[test]
@@ -1084,7 +1089,7 @@ fn test_explicit_hasant_accepts_declared_phola_clusters_only() {
         vec![
             ("R", PhoneticUnitType::Consonant),
             (",,", PhoneticUnitType::ConsonantWithHasant),
-            ("w", PhoneticUnitType::Unknown),
+            ("w", PhoneticUnitType::Consonant),
         ]
     );
 
@@ -1117,7 +1122,7 @@ fn test_explicit_hasant_accepts_declared_phola_clusters_only() {
     let engine = ObadhEngine::new();
     assert_eq!(
         engine.transliterate("k,,w k,,wa k,,y k,,Ya S,,w S,,wa b,,w b,,wa m,,w,,r m,,w,,ra rr,,w rr,,w,,ya rr,,Y R,,w R,,y k,,f,,w k,,f,,y"),
-        "ক্ব ক্বা ক্য ক্যা শ্ব শ্বা ব্ব ব্বা ম্ব্র ম্ব্রা র্ব র্ব্যা র্য ড়্w ড়্য় ক্ফ্w ক্ফ্য়"
+        "ক্ব ক্বা ক্য ক্যা শ্ব শ্বা ব্ব ব্বা ম্ব্র ম্ব্রা র্ব র্ব্যা র্য ড়্ওয় ড়্য় ক্ফ্ওয় ক্ফ্য়"
     );
 }
 
@@ -1288,4 +1293,41 @@ fn test_explicit_hasant_reph_tail_clusters_match_implicit_cluster_shape() {
         engine.transliterate("rrkSh rrk,,Sh rrk,,Sha rrsk rrs,,k rrs,,ka rrhri rrh,,ri"),
         "র্ক্ষ র্ক্ষ র্ক্ষা র্স্ক র্স্ক র্স্কা র্হরি র্হ্রি"
     );
+}
+
+#[test]
+fn test_foreign_letter_aliases_map_to_bengali_convention() {
+    let engine = ObadhEngine::new();
+
+    // Foreign-sound letters map by settled Bengali convention instead of leaking
+    // ASCII. `qq` is the চন্দ্রবিন্দু signal, resolved ahead of `q` by longest match.
+    for (input, expected) in [
+        ("q", "ক"),
+        ("Q", "ক"),
+        ("qatar", "কাতার"),
+        ("iraq", "ইরাক"),
+        ("qq", "ঁ"),
+        ("baqq", "বাঁ"),
+        ("x", "ক্স"),
+        ("X", "ক্স"),
+        ("box", "বক্স"),
+        ("fix", "ফিক্স"),
+        ("exam", "এক্সাম"),
+        ("w", "ওয়"),
+        ("W", "ওয়"),
+        ("wa", "ওয়া"),
+        ("water", "ওয়াতের"),
+    ] {
+        assert_eq!(engine.transliterate(input), expected, "{input}");
+    }
+
+    // `w` still serves as the ব-ফলা marker inside a declared conjunct cluster.
+    for (input, expected) in [
+        ("kw", "ক্ব"),
+        ("tw", "ত্ব"),
+        ("biSw", "বিশ্ব"),
+        ("stw", "স্ত্ব"),
+    ] {
+        assert_eq!(engine.transliterate(input), expected, "{input}");
+    }
 }

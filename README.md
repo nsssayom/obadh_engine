@@ -155,7 +155,10 @@ Representative deliberate signals:
 | `NGj`, `nj`, `nJ` | ঞ্জ paths |
 | `rr` + cluster | reph over a valid cluster |
 | `rZy` / `rZY` | non-conjunct ZWNJ-separated র‌্য form |
-| `y`, `w` | য-ফলা / ব-ফলা markers in declared clusters |
+| `y` / `Y` | য-ফলা after a consonant base (productive): `ply` -> `প্ল্য`, `plYan` -> `প্ল্যান`; standalone য় |
+| `w` | ব-ফলা after a consonant (`kw` -> `ক্ব`); standalone ওয় glide (`waTar` -> `ওয়াটার`) |
+| `q`, `qq` | ক (qaf): `iraq` -> `ইরাক`; `qq` -> চন্দ্রবিন্দু ঁ, resolved ahead of `q` by longest match (`baqq` -> `বাঁ`) |
+| `x` | ক্স: `box` -> `বক্স`, `fix` -> `ফিক্স` |
 | `,,` | explicit hasant / conjunct boundary command |
 | <code>t``</code> | খণ্ড ত / ৎ |
 | <code>T``</code> | খণ্ড ত / ৎ |

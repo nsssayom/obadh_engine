@@ -19,6 +19,44 @@ struct PhoneticPattern {
     unit_type: PhoneticUnitType,
 }
 
+/// Deterministic romanization aliases for foreign-sound letters that have no
+/// native Bengali phoneme but a settled conventional spelling. Each maps its
+/// input to the canonical key of an already-supported form, so no ASCII leaks
+/// into the output:
+///   - `q`/`Q` → `k` (qaf → ka: ইরাক, কাতার);
+///   - `qq` → `^` chandrabindu (a downstream input convention, e.g. iOS) — matched
+///     ahead of `q` by longest-prefix so `baqq` → বাঁ while `iraq` → ইরাক;
+///   - `x`/`X` → the ক্স conjunct (box → বক্স, ফিক্স).
+/// `w` is intentionally absent here: it is context-dependent (ব-ফলা inside a
+/// cluster vs. the ওয় glide standalone) and handled in the tokenizer instead.
+const FOREIGN_LETTER_ALIASES: &[PhoneticPattern] = &[
+    PhoneticPattern {
+        input: "qq",
+        canonical: "^",
+        unit_type: PhoneticUnitType::SpecialForm,
+    },
+    PhoneticPattern {
+        input: "q",
+        canonical: "k",
+        unit_type: PhoneticUnitType::Consonant,
+    },
+    PhoneticPattern {
+        input: "Q",
+        canonical: "k",
+        unit_type: PhoneticUnitType::Consonant,
+    },
+    PhoneticPattern {
+        input: "x",
+        canonical: "k,,s",
+        unit_type: PhoneticUnitType::Conjunct,
+    },
+    PhoneticPattern {
+        input: "X",
+        canonical: "k,,s",
+        unit_type: PhoneticUnitType::Conjunct,
+    },
+];
+
 #[derive(Default)]
 pub(super) struct PatternTrie {
     nodes: Vec<TrieNode>,
@@ -201,6 +239,14 @@ fn append_exact_phonetic_patterns(patterns: &mut Vec<PhoneticPattern>) {
             push_exact(patterns, roman, PhoneticUnitType::Vowel);
         }
     }
+
+    for alias in FOREIGN_LETTER_ALIASES {
+        patterns.push(PhoneticPattern {
+            input: alias.input,
+            canonical: alias.canonical,
+            unit_type: alias.unit_type,
+        });
+    }
 }
 
 fn push_exact(
@@ -295,6 +341,7 @@ fn exact_phonetic_pattern_count() -> usize {
         + symbol_rules().len()
         + consonant_count
         + vowel_count_without_terminating_o
+        + FOREIGN_LETTER_ALIASES.len()
 }
 
 #[cfg(test)]
