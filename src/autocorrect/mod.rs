@@ -13,7 +13,9 @@ mod lexicon;
 mod loanword;
 mod morphology;
 mod ranker;
+mod phoneme;
 mod roman_repair;
+mod skeleton;
 
 pub use artifact::LexiconArtifactError;
 pub use edit::{weighted_edit_distance, EditCost};
@@ -36,3 +38,6 @@ pub use roman_repair::{
     roman_repair_beam, roman_repaired_outputs, RomanRepair, RomanRepairKind, RomanRepairOptions,
     RomanRepairedOutput, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
+// `skeleton` (the dropped-vowel channel) and `phoneme` (graded consonant confusion) are
+// internal to the FST suggest path — they expose no public surface, only new
+// `FstCandidateSource` variants on the results.
