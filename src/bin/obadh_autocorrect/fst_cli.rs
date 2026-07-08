@@ -209,6 +209,8 @@ pub fn read_fst_lexicon(
     // The mapping is read-only and the file handle is kept valid for the map
     // creation call. The returned mmap owns the OS mapping afterwards.
     let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
+    // The dropped-vowel channel reads skeleton-mates from this same fst at query time (via
+    // the skeleton automaton), so there is no separate index to load or attach.
     Ok(FstLexicon::from_map(fst::Map::new(mmap)?))
 }
 

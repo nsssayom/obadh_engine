@@ -30,6 +30,27 @@ const PREFIX_COMPLETION_CHANNEL_PENALTY: i64 = 192;
 const STEM_SUFFIX_COMPLETION_PRIOR: i64 = 768;
 const STEM_SUFFIX_COST_SCALE: i64 = 256;
 const STEM_SUFFIX_SURFACE_COST_SCALE: i64 = 64;
+// Skeleton (dropped-vowel) channel. Its prior sits far below the exact baseline prior
+// (16_384), so a real word the user typed correctly always outranks any skeleton sibling
+// — the channel only wins when the baseline is not itself a confident word.
+const SKELETON_VOWEL_DROP_PRIOR: i64 = 4_096;
+const SKELETON_VOWEL_DROP_COST_SCALE: i64 = 256;
+// Only run the skeleton walk when the baseline is a weak signal (not a lexicon word,
+// or a rare one) — an efficiency/noise gate; precision is guaranteed by the prior above.
+const SKELETON_BASELINE_FREQUENCY_FLOOR: u64 = 2_048;
+const SKELETON_MATCH_LIMIT: usize = 16;
+// Bound on words collected from one skeleton walk before frequency ranking, so a very short
+// (highly ambiguous) skeleton cannot make a single lookup unbounded.
+const SKELETON_MATCH_SCAN_CAP: usize = 512;
+// Consonant-confusion channel: substitute one baseline consonant with a near phoneme
+// (graded by articulatory distance) and keep the real-word results. Prior is high (a
+// same-sound spelling fix is high-precision when the sibling is a frequent word) but still
+// below the exact prior, and each candidate pays its phoneme distance — so a correctly
+// spelled word (whose confusion siblings are rare) is not demoted.
+const CONSONANT_CONFUSION_PRIOR: i64 = 12_288;
+const CONSONANT_CONFUSION_DISTANCE_SCALE: i64 = 512;
+const CONSONANT_CONFUSION_MAX_DISTANCE: u16 = 4;
+const CONFUSION_BASELINE_FREQUENCY_FLOOR: u64 = 2_048;
 const ROMAN_SEPARATOR_REPAIR_EXACT_BONUS: i64 = 4_096;
 const ROMAN_ASPIRATED_SPLIT_REPAIR_EXACT_BONUS: i64 = 2_048;
 const ROMAN_FLAP_REPAIR_EXACT_BONUS: i64 = 2_048;
@@ -53,6 +74,41 @@ pub struct FstLexicon<D: AsRef<[u8]> = Vec<u8>> {
 impl<D: AsRef<[u8]>> FstLexicon<D> {
     pub fn from_map(map: fst::Map<D>) -> Self {
         Self { map }
+    }
+
+    /// Lexicon words sharing `baseline`'s consonant skeleton, highest-frequency first, up to
+    /// `limit`. This reads skeleton-mates directly out of the lexicon fst via
+    /// [`SkeletonAutomaton`] — no separate index — so it always sees the full vocabulary with
+    /// real frequencies. Empty when the skeleton is not in the indexable length band.
+    ///
+    /// Cost: one automaton walk of the fst that dies the instant a consonant diverges from
+    /// the skeleton, so it visits only the shared subtree of actual skeleton-mates.
+    fn skeleton_matches(&self, baseline: &str, limit: usize) -> Vec<super::skeleton::SkeletonMatch> {
+        use super::skeleton::{SkeletonAutomaton, SkeletonMatch};
+
+        if limit == 0 {
+            return Vec::new();
+        }
+        let Some(automaton) = SkeletonAutomaton::for_baseline(baseline) else {
+            return Vec::new();
+        };
+
+        let mut stream = self.map.search(automaton).into_stream();
+        let mut collected: Vec<SkeletonMatch> = Vec::new();
+        while let Some((key, frequency)) = stream.next() {
+            if collected.len() >= SKELETON_MATCH_SCAN_CAP {
+                break;
+            }
+            if let Ok(word) = std::str::from_utf8(key) {
+                collected.push(SkeletonMatch {
+                    word: word.to_string(),
+                    frequency,
+                });
+            }
+        }
+        collected.sort_by(|a, b| b.frequency.cmp(&a.frequency).then_with(|| a.word.cmp(&b.word)));
+        collected.truncate(limit);
+        collected
     }
 
     pub fn len(&self) -> usize {
@@ -211,6 +267,78 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
             insert_english_loanword_candidate(&mut seeds, loanword, frequency, baseline);
         }
 
+        // The recovery channels below (skeleton, consonant-confusion) are heuristic guesses.
+        // They must never outrank a CONFIDENT reading of the input — an exact lexicon word, a
+        // cheap roman-repair to one, or an exact loanword. Cap them just below the best such
+        // candidate already collected; when none exists they are the only recovery and rank
+        // freely (e.g. korlm → করলাম, where nothing else explains the input).
+        let confident_ceiling = seeds
+            .values()
+            .filter(|candidate| candidate.source.is_confident())
+            .map(|candidate| candidate.score)
+            .max();
+
+        // Skeleton (dropped-vowel) channel: when the baseline is a weak signal (not a
+        // lexicon word, or a rare one), pull real words sharing its consonant skeleton
+        // straight out of the lexicon fst (via the skeleton automaton — no separate index)
+        // and rank them by corpus frequency.
+        let baseline_is_weak =
+            exact_frequency.map_or(true, |freq| freq < SKELETON_BASELINE_FREQUENCY_FLOOR);
+        if baseline_is_weak {
+            for candidate in self.skeleton_matches(baseline, SKELETON_MATCH_LIMIT) {
+                if candidate.word == baseline {
+                    continue;
+                }
+                insert_skeleton_candidate(
+                    &mut seeds,
+                    &candidate.word,
+                    candidate.frequency,
+                    baseline,
+                    confident_ceiling,
+                    options.max_edit_cost,
+                );
+            }
+        }
+
+        // Consonant-confusion channel: substitute one baseline consonant with a near
+        // phoneme and keep the real-word results. Gated to weak baselines (not a confident
+        // word) so it never floods the ribbon of a correctly spelled input; among fired
+        // candidates the prior + phoneme distance still let only a far-more-frequent
+        // same-sound sibling win.
+        let baseline_is_weak =
+            exact_frequency.map_or(true, |freq| freq < CONFUSION_BASELINE_FREQUENCY_FLOOR);
+        if baseline_is_weak {
+            let chars: Vec<(usize, char)> = baseline.char_indices().collect();
+            for (position, &(byte_index, ch)) in chars.iter().enumerate() {
+                // Skip nukta-form base consonants (ড়/ঢ়/য়); they are whole units.
+                if chars
+                    .get(position + 1)
+                    .is_some_and(|&(_, next)| next == '\u{09BC}')
+                {
+                    continue;
+                }
+                for (near, distance) in
+                    super::phoneme::near_consonants(ch, CONSONANT_CONFUSION_MAX_DISTANCE)
+                {
+                    let mut variant = String::with_capacity(baseline.len() + 3);
+                    variant.push_str(&baseline[..byte_index]);
+                    variant.push(near);
+                    variant.push_str(&baseline[byte_index + ch.len_utf8()..]);
+                    if let Some(frequency) = self.exact_frequency(&variant) {
+                        insert_confusion_candidate(
+                            &mut seeds,
+                            variant,
+                            frequency,
+                            distance,
+                            baseline,
+                            confident_ceiling,
+                            options.max_edit_cost,
+                        );
+                    }
+                }
+            }
+        }
+
         let mut ranked = seeds.into_values().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
             right
@@ -309,6 +437,7 @@ pub struct FstCandidate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive] // new suggestion channels may add variants without a breaking change
 pub enum FstCandidateSource {
     Exact,
     EditDistance,
@@ -316,6 +445,8 @@ pub enum FstCandidateSource {
     OrthographicVowelLengthEdit,
     PrefixCompletion,
     StemSuffixCompletion,
+    SkeletonVowelDrop,
+    ConsonantConfusion,
     RomanRepairExact,
     EnglishLoanwordExact,
     EnglishLoanwordFuzzy,
@@ -330,10 +461,40 @@ impl FstCandidateSource {
             Self::OrthographicVowelLengthEdit => "fst_orthographic_vowel_length_edit",
             Self::PrefixCompletion => "fst_prefix_completion",
             Self::StemSuffixCompletion => "fst_stem_suffix_completion",
+            Self::SkeletonVowelDrop => "fst_skeleton_vowel_drop",
+            Self::ConsonantConfusion => "fst_consonant_confusion",
             Self::RomanRepairExact => "fst_roman_repair_exact",
             Self::EnglishLoanwordExact => "fst_english_loanword_exact",
             Self::EnglishLoanwordFuzzy => "fst_english_loanword_fuzzy",
         }
+    }
+
+    /// Provenance authority for dedup. The skeleton and consonant-confusion channels are
+    /// heuristic recovery generators (0); every direct channel — exact, edit, roman-repair,
+    /// loanword — is authoritative (1). When two channels yield the same word, the word keeps
+    /// the more authoritative provenance (see `insert_best_candidate`), so a recovery guess
+    /// can never relabel a confidently-found word.
+    fn authority(self) -> u8 {
+        match self {
+            Self::SkeletonVowelDrop | Self::ConsonantConfusion => 0,
+            _ => 1,
+        }
+    }
+
+    /// A *confident* reading of the input — one that resolves to a specific exact lexicon
+    /// word (typed directly, reached by a cheap roman-repair, or an exact loanword). The
+    /// recovery channels (skeleton, consonant-confusion) are capped below the best confident
+    /// candidate so a heuristic guess can never outrank a word the input actually spells.
+    fn is_confident(self) -> bool {
+        matches!(
+            self,
+            Self::Exact
+                | Self::RomanRepairExact
+                | Self::EnglishLoanwordExact
+                | Self::DiacriticEdit
+                | Self::OrthographicVowelLengthEdit
+                | Self::StemSuffixCompletion
+        )
     }
 
     fn prior(self) -> i64 {
@@ -344,6 +505,8 @@ impl FstCandidateSource {
             Self::OrthographicVowelLengthEdit => ORTHOGRAPHIC_VOWEL_LENGTH_CHANNEL_PRIOR,
             Self::PrefixCompletion => -PREFIX_COMPLETION_CHANNEL_PENALTY,
             Self::StemSuffixCompletion => STEM_SUFFIX_COMPLETION_PRIOR,
+            Self::SkeletonVowelDrop => SKELETON_VOWEL_DROP_PRIOR,
+            Self::ConsonantConfusion => CONSONANT_CONFUSION_PRIOR,
             Self::RomanRepairExact => 0,
             Self::EnglishLoanwordExact => ENGLISH_LOANWORD_EXACT_PRIOR,
             Self::EnglishLoanwordFuzzy => ENGLISH_LOANWORD_FUZZY_PRIOR,
@@ -524,11 +687,94 @@ fn insert_diacritic_candidate(
     insert_best_candidate(seeds, candidate);
 }
 
+fn insert_skeleton_candidate(
+    seeds: &mut BTreeMap<String, FstCandidate>,
+    text: &str,
+    frequency: u64,
+    baseline: &str,
+    confident_ceiling: Option<i64>,
+    max_edit_cost: Option<u16>,
+) {
+    let edit_cost = weighted_edit_distance(baseline, text).0;
+    if max_edit_cost.is_some_and(|limit| edit_cost > limit) {
+        return;
+    }
+    let mut score = frequency_score(frequency) + SKELETON_VOWEL_DROP_PRIOR
+        - (edit_cost as i64 * SKELETON_VOWEL_DROP_COST_SCALE);
+    // A skeleton match is a heuristic vowel-restoration guess; it must not outrank a confident
+    // reading of the input (exact word / cheap roman-repair / exact loanword).
+    if let Some(ceiling) = confident_ceiling {
+        score = score.min(ceiling - 1);
+    }
+    let candidate = FstCandidate {
+        text: text.to_string(),
+        source: FstCandidateSource::SkeletonVowelDrop,
+        edit_cost,
+        frequency,
+        score,
+        roman_repair: None,
+        roman_repair_kind: None,
+        roman_repair_cost: None,
+    };
+    insert_best_candidate(seeds, candidate);
+}
+
+fn insert_confusion_candidate(
+    seeds: &mut BTreeMap<String, FstCandidate>,
+    text: String,
+    frequency: u64,
+    phoneme_distance: u16,
+    baseline: &str,
+    confident_ceiling: Option<i64>,
+    max_edit_cost: Option<u16>,
+) {
+    let edit_cost = weighted_edit_distance(baseline, &text).0;
+    if max_edit_cost.is_some_and(|limit| edit_cost > limit) {
+        return;
+    }
+    let mut score = frequency_score(frequency) + CONSONANT_CONFUSION_PRIOR
+        - (phoneme_distance as i64 * CONSONANT_CONFUSION_DISTANCE_SCALE);
+    // A confusion is a heuristic sound-based guess (be it a different-sound ট↔ত or a
+    // same-sound শ↔ষ). It must not outrank a confident reading of the input — a typed word, a
+    // deliberate roman-repair, an exact loanword — so cap it just below the best such
+    // candidate. When none exists (e.g. মানুশ → মানুষ, a genuinely ambiguous same-sound
+    // spelling with no confident competitor) the ceiling is absent and it ranks freely.
+    if let Some(ceiling) = confident_ceiling {
+        score = score.min(ceiling - 1);
+    }
+    let candidate = FstCandidate {
+        text,
+        source: FstCandidateSource::ConsonantConfusion,
+        edit_cost,
+        frequency,
+        score,
+        roman_repair: None,
+        roman_repair_kind: None,
+        roman_repair_cost: None,
+    };
+    insert_best_candidate(seeds, candidate);
+}
+
 fn insert_best_candidate(seeds: &mut BTreeMap<String, FstCandidate>, candidate: FstCandidate) {
     match seeds.entry(candidate.text.clone()) {
         Entry::Occupied(mut entry) => {
-            if candidate.score > entry.get().score {
-                entry.insert(candidate);
+            // A word ranks by its best evidence (max score across channels) but is labelled by
+            // the most authoritative channel that found it. Same authority → higher score wins.
+            let existing_authority = entry.get().source.authority();
+            let existing_score = entry.get().score;
+            let incoming_authority = candidate.source.authority();
+            let best_score = existing_score.max(candidate.score);
+            let take_incoming = if incoming_authority != existing_authority {
+                incoming_authority > existing_authority
+            } else {
+                candidate.score > existing_score
+            };
+            if take_incoming {
+                let mut chosen = candidate;
+                chosen.score = best_score;
+                entry.insert(chosen);
+            } else {
+                entry.get_mut().score = best_score;
             }
         }
         Entry::Vacant(entry) => {
@@ -1398,5 +1644,37 @@ mod tests {
                 .expect("fixture key should insert");
         }
         FstLexicon::from_map(builder.into_map())
+    }
+
+    /// Isolated timing of the skeleton automaton walk on the real 845k-word bn.fst. Ignored
+    /// by default (needs resolved submodule data); run with:
+    ///   cargo test --release --lib skeleton_walk_timing -- --ignored --nocapture
+    #[test]
+    #[ignore = "needs the resolved data/autocorrect/models/bn.fst; timing probe"]
+    fn skeleton_walk_timing() {
+        use std::time::Instant;
+        let path = "data/autocorrect/models/bn.fst";
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("skip: {path} not resolved");
+            return;
+        };
+        let lexicon = FstLexicon::from_bytes(bytes).expect("load fst");
+        // Vowel-dropped baselines (the channel's real inputs) plus a 2-consonant worst case.
+        for baseline in ["ক্রল্ম", "দখলম", "প্রয়জন", "ক্র"] {
+            for _ in 0..200 {
+                let _ = lexicon.skeleton_matches(baseline, super::SKELETON_MATCH_LIMIT);
+            }
+            let n = 5000;
+            let start = Instant::now();
+            let mut sink = 0usize;
+            for _ in 0..n {
+                sink += lexicon.skeleton_matches(baseline, super::SKELETON_MATCH_LIMIT).len();
+            }
+            let per_us = start.elapsed().as_secs_f64() * 1e6 / n as f64;
+            eprintln!(
+                "skeleton_matches({baseline:12}) {per_us:7.1} µs/call  (mates≈{})",
+                sink / n
+            );
+        }
     }
 }
