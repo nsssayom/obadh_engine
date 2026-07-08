@@ -8,7 +8,8 @@ use crate::autosuggest::{
     AutosuggestRepetitionHistory,
 };
 use crate::{
-    roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
+    key_slip_repaired_outputs, roman_repaired_outputs, AutocorrectConfig, AutocorrectDecision,
+    AutocorrectEngine,
     AutosuggestArtifactError, AutosuggestCandidateId, AutosuggestCandidatePrior,
     AutosuggestContext, AutosuggestContextPriorOptions, AutosuggestLm, AutosuggestMetadata,
     AutosuggestOptions, AutosuggestSource, CandidateFeatures, CorrectionCandidate,
@@ -976,7 +977,16 @@ fn fst_autocorrect_result(
     elapsed_ms: f64,
 ) -> Result<AutocorrectLabResult, JsValue> {
     let obadh_output = obadh.transliterate(roman_input);
-    let repair_records = fst_roman_repairs(roman_input, obadh, &obadh_output);
+    let mut repair_records = fst_roman_repairs(roman_input, obadh, &obadh_output);
+    // QWERTY fat-finger (key-slip) repairs — gated to non-word baselines and lexicon-validated
+    // inside the helper. Mirrors the CLI path so the browser corrects identically.
+    repair_records.extend(key_slip_repaired_outputs(
+        roman_input,
+        &obadh_output,
+        lexicon.exact_frequency(&obadh_output),
+        |roman| obadh.transliterate(roman),
+        |word| lexicon.exact_frequency(word).is_some(),
+    ));
     let repaired_baselines = repair_records
         .iter()
         .map(|repair| FstRepairedBaseline {

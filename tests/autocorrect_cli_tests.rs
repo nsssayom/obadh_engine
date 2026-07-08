@@ -1634,6 +1634,92 @@ fn autocorrect_cli_exports_labeled_candidate_jsonl() {
     assert_eq!(records[1]["baseline_exact"], true);
 }
 
+#[test]
+fn autocorrect_cli_key_slip_recovers_adjacent_finger_error() {
+    // "desj" is a QWERTY fat-finger for "desh" (j is the key next to h). Its baseline is a
+    // non-word, so the key-slip channel rewrites j→h, transliterates "desh" → দেশ, and
+    // promotes the real word.
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-key-slip-recover");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+    fs::write(&lexicon_tsv, "দেশ\t55873\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "desj",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "5",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "দেশ");
+    assert_eq!(candidates[0]["source"], "fst_roman_repair_exact");
+    assert_eq!(candidates[0]["roman_repair"], "desh");
+    assert_eq!(candidates[0]["roman_repair_kind"], "qwerty_key_slip");
+}
+
+#[test]
+fn autocorrect_cli_key_slip_leaves_correctly_typed_word_untouched() {
+    // A correctly-typed word transliterates to a lexicon word, so the key-slip gate stays
+    // shut: the exact word stays #1 and no qwerty_key_slip repair is even attempted.
+    let workspace = TempWorkspace::new("obadh-autocorrect-cli-key-slip-precision");
+    let lexicon_tsv = workspace.path("lexicon.tsv");
+    let artifact = workspace.path("obadh.bn.fst");
+    fs::write(&lexicon_tsv, "দেশ\t55873\nদেব\t9000\n").expect("lexicon fixture should write");
+
+    let build = run_obadh_autocorrect([
+        "build-fst-lexicon",
+        "--input",
+        path_str(&lexicon_tsv),
+        "--output",
+        path_str(&artifact),
+    ]);
+    assert!(build.status.success(), "stderr: {}", stderr(&build));
+
+    let suggest = run_obadh_autocorrect([
+        "suggest-fst",
+        "--lexicon",
+        path_str(&artifact),
+        "--input",
+        "desh",
+        "--max-distance",
+        "2",
+        "--response-candidates",
+        "5",
+    ]);
+    assert!(suggest.status.success(), "stderr: {}", stderr(&suggest));
+
+    let json = json_stdout(&suggest);
+    assert_eq!(json["obadh_output"], "দেশ");
+    let candidates = json["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["text"], "দেশ");
+    assert_eq!(candidates[0]["source"], "fst_exact");
+    assert!(
+        json["roman_repairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|repair| repair["kind"] != "qwerty_key_slip"),
+        "no key-slip repair should be attempted for a correctly-typed word"
+    );
+}
+
 struct TempWorkspace {
     root: PathBuf,
 }

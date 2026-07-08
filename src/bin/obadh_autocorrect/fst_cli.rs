@@ -3,10 +3,10 @@ use std::io::BufWriter;
 use std::path::PathBuf;
 
 use obadh_engine::{
-    roman_repaired_outputs, FstCandidate, FstLexicon, FstLoanwordMatch, FstRepairedBaseline,
-    FstSuggestOptions, LoanwordLexicon, LoanwordSearchOptions, ObadhEngine, RomanRepairOptions,
-    RomanRepairedOutput, DEFAULT_FST_MAX_DISTANCE, DEFAULT_FST_PREFIX_CANDIDATES,
-    DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
+    key_slip_repaired_outputs, roman_repaired_outputs, FstCandidate, FstLexicon, FstLoanwordMatch,
+    FstRepairedBaseline, FstSuggestOptions, LoanwordLexicon, LoanwordSearchOptions, ObadhEngine,
+    RomanRepairOptions, RomanRepairedOutput, DEFAULT_FST_MAX_DISTANCE,
+    DEFAULT_FST_PREFIX_CANDIDATES, DEFAULT_ROMAN_REPAIR_BEAM_SIZE,
 };
 use serde::Serialize;
 
@@ -136,7 +136,16 @@ pub fn suggest_fst(
 ) -> Result<FstSuggestReport, Box<dyn std::error::Error>> {
     let obadh = ObadhEngine::new();
     let obadh_output = obadh.transliterate(input);
-    let repair_records = fst_roman_repairs(input, &obadh, &obadh_output);
+    let mut repair_records = fst_roman_repairs(input, &obadh, &obadh_output);
+    // QWERTY fat-finger (key-slip) repairs, gated to non-word baselines and validated against
+    // the lexicon inside the helper — the engine owns every numeric parameter.
+    repair_records.extend(key_slip_repaired_outputs(
+        input,
+        &obadh_output,
+        lexicon_model.exact_frequency(&obadh_output),
+        |roman| obadh.transliterate(roman),
+        |word| lexicon_model.exact_frequency(word).is_some(),
+    ));
     let repaired_baselines = repair_records
         .iter()
         .map(|repair| FstRepairedBaseline {

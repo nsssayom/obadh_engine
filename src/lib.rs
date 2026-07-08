@@ -12,8 +12,9 @@ pub mod wasm;
 
 // Re-export commonly used types for convenience
 pub use autocorrect::{
-    build_loanword_bytes, is_loanword_key, roman_repair_beam, roman_repaired_outputs,
-    weighted_edit_distance, AutocorrectConfig, AutocorrectDecision, AutocorrectEngine,
+    build_loanword_bytes, is_loanword_key, key_slip_repaired_outputs, roman_repair_beam,
+    roman_repaired_outputs, weighted_edit_distance, AutocorrectConfig, AutocorrectDecision,
+    AutocorrectEngine,
     CandidateFeatures, CorrectionCandidate, CorrectionRequest, CorrectionSource, EditCost,
     FstCandidate, FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline,
     FstSuggestError, FstSuggestOptions, FstSuggestResult, Lexicon, LexiconArtifactError,

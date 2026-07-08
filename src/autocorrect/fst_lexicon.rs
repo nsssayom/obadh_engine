@@ -56,6 +56,11 @@ const ROMAN_ASPIRATED_SPLIT_REPAIR_EXACT_BONUS: i64 = 2_048;
 const ROMAN_FLAP_REPAIR_EXACT_BONUS: i64 = 2_048;
 const ROMAN_PALATAL_NASAL_REPAIR_EXACT_BONUS: i64 = 768;
 const ROMAN_VELAR_NASAL_REPAIR_EXACT_BONUS: i64 = 2_048;
+// QWERTY fat-finger (key-slip) repair. Deliberately conservative: it roughly offsets a
+// single nearest-key slip's cost so a plausible fat-finger to a real word ranks near that
+// word's own frequency, but it never gets the higher bonus a deterministic linguistic repair
+// earns. The channel is also gated to non-word baselines, so a validly-typed word is untouched.
+const ROMAN_KEY_SLIP_REPAIR_EXACT_BONUS: i64 = 1_024;
 const ROMAN_STRONG_VELAR_NASAL_REPAIR_EXACT_BONUS: i64 = 12_288;
 const ROMAN_STRONG_REPAIR_FREQUENCY_FLOOR: u64 = 128;
 const ROMAN_REPAIR_COST_SCALE: i64 = 1024;
@@ -818,6 +823,7 @@ fn roman_repair_exact_bonus(repair_kind: &str, frequency: u64) -> i64 {
         "velar_nasal_from_ng" => ROMAN_VELAR_NASAL_REPAIR_EXACT_BONUS,
         "split_aspirated_consonant" => ROMAN_ASPIRATED_SPLIT_REPAIR_EXACT_BONUS,
         "lowercase_r_to_flap" => ROMAN_FLAP_REPAIR_EXACT_BONUS,
+        "qwerty_key_slip" => ROMAN_KEY_SLIP_REPAIR_EXACT_BONUS,
         _ => ROMAN_SEPARATOR_REPAIR_EXACT_BONUS,
     }
 }
