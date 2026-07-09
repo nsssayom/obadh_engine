@@ -6,6 +6,55 @@ Semantic Versioning (with the `0.x` caveat that the minor version carries breaki
 
 Releases before `0.7.0` predate this file; see the git history and tags for those.
 
+## [Unreleased]
+
+### Fixed
+
+- **`ন্স` (`ns`) is now a conjunct.** It was absent from the inventory, so `laisens` produced
+  লাইসেনস instead of লাইসেন্স, and `kansa` gave কানসা instead of কান্সা. The whole `-ence`/
+  `-ance`/`-ense` loanword family was affected (ডিফেন্স, ব্যালেন্স, সেন্স, রেসপন্স,
+  ফাইন্যান্স), as was `ট্রান্সফার`. It behaves like every other conjunct: adjacency joins and
+  the inherent vowel breaks, so `nsa` → ন্সা while `nosa` → নসা, exactly as `kta` → ক্তা and
+  `kota` → কতা.
+
+  `ন্স` is a **loanword-only** cluster. Native and tatsama Bangla writes the same sequence with
+  anusvara — ধ্বংস, হংস, বংশ — and those are unaffected.
+
+### Changed
+
+- **Scope of the change: roman input where `n` is immediately followed by `s`. Nothing else
+  moves.** No other conjunct, cluster, or romanization is affected.
+
+  Within that scope, `ns` now behaves like every other conjunct rather than like a pair the
+  engine could not spell. Adjacency joins, and the inherent vowel breaks — the same rule that
+  has always governed `amra` → আম্রা vs `amora` → আমরা. So words that take the cluster now come
+  out right on their own (`respons` → রেস্পন্স, `TrAnsphar` → ট্রান্সফার), and words that spell
+  ন and স separately type the `o` (`anosar` → আনসার, `monosur` → মনসুর, `inosTol` → ইনস্টল,
+  `konosarrT` → কনসার্ট).
+
+  Previously ন্স was simply unreachable, so `ansar` → আনসার fell out by default. That default is
+  gone, not because the convention changed, but because `ns` finally has a conjunct to form.
+
+### Added
+
+- **`tests/juktoborno_corpus_tests.rs`** — an exhaustive conjunct corpus (~20k assertions)
+  driven from `data/conjuncts.csv` rather than hand-transcribed. It guards both directions of
+  the contract: every inventory conjunct must form word-initially, medially and finally and
+  accept every dependent vowel; and every consonant pair *outside* the inventory must **not**
+  join on its own (1,023 negative cases), since silent over-production is as much a defect as a
+  missing conjunct. It also pins the inherent-vowel break, the `,,` explicit-hasant escape for
+  all 1,024 pairs, the Unicode khanda-ta ligature rule (ত renders as ৎ except before
+  ত/থ/ন/ব/ম/য/র), and a well-formedness sweep asserting the engine never emits a dotted circle,
+  a dangling hasant, a hasant before a matra, a doubled hasant, or a hasant on a non-joining sign.
+
+### Notes
+
+- `data/rules/conjunct.wiki` mirrors the Bengali Wikipedia যুক্তবর্ণ list, which claims its 306
+  entries are exhaustive (*"এর বাইরে কোন যুক্তবর্ণ সম্ভবত বাংলায় প্রচলিত নয়"*). That claim does not
+  hold for modern loanwords — bn.wikipedia's own article title লাইসেন্স uses `ন্স`. The mirror is
+  left byte-identical to upstream; `data/conjuncts.csv` is the engine's inventory and now
+  intentionally carries one conjunct the wiki does not. The `wiki ⊆ csv` contract test still holds.
+
 ## [0.7.0]
 
 Three grounded recovery channels are added to the **active-word autocorrect layer**
