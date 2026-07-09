@@ -230,6 +230,9 @@ pub(super) const CONJUNCT_RULES: &[ConjunctRule] = &[
     ConjunctRule("nm", "ন্ম"),
     ConjunctRule("ny", "ন্য"),
     ConjunctRule("nY", "ন্য"),
+    // Loanword-only cluster: native/tatsama Bangla writes this sequence with
+    // anusvara (ধ্বংস, হংস, বংশ). লাইসেন্স, ডিফেন্স, ট্রান্সফার, কান্সা.
+    ConjunctRule("ns", "ন্স"),
     ConjunctRule("pT", "প্ট"),
     ConjunctRule("pt", "প্ত"),
     ConjunctRule("pn", "প্ন"),
