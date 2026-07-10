@@ -6,9 +6,33 @@ Semantic Versioning (with the `0.x` caveat that the minor version carries breaki
 
 Releases before `0.7.0` predate this file; see the git history and tags for those.
 
-## [Unreleased]
+## [0.7.1]
+
+A patch release: three orthography fixes in the deterministic core, a terminology sweep, and the
+test and CI infrastructure that found the bugs. **The public API is unchanged.** Every output that
+changes was previously a cluster Bangla does not permit.
 
 ### Fixed
+
+- **A vowel after a conjunct, reph or numeral could render as a second kar.**
+  `transliterate_word_units_into` carries one flag, `previous_unit_accepts_dependent_vowel`, that
+  decides whether the next vowel is a dependent sign or an independent letter. Seven of its sixteen
+  match arms never assigned it, so a stale `true` leaked across them from a preceding bare
+  consonant: `pxiE` → পক্সি**ে** instead of পক্সিএ, `krrkie` → কর্কি**ে** instead of কর্কিএ, and
+  `k1i` → ক১**ি** — a vowel sign hanging off a Bengali digit. The suite already asserted this
+  contract for `,,`, `^`, `:`, `ng`, <code>t``</code> and `rr`; conjuncts, reph and numerals were
+  exempt only because their arms forgot.
+  ([#9](https://github.com/nsssayom/obadh_engine/issues/9))
+
+- **An explicit hasant with no consonant to sit on is now dropped.** A hasant suppresses a
+  consonant's *inherent* vowel; after an explicit kar there is nothing left to suppress, so `ka,,`
+  emitted কা**্**. The same hole let it land on chandrabindu (`k^,,`), anusvar (`kng,,`), bisarga
+  (`k:,,`), khanda ta (<code>kt``,,</code> — already a dead consonant), a numeral (`k1,,`), and
+  even another hasant (`rr,,` → র্**্**). The rule is now one predicate: **a hasant attaches only
+  to a consonant.** As a standalone marker `,,` still renders on its own, and everything the rule
+  sources document keeps working — `k,,` → ক্, `ko,,` → ক্, `kk,,` → ক্ক্, `rr,,ka` → র্কা,
+  <code>rrk,,Sh</code> → র্ক্ষ, `kR,,` → কড়্.
+  ([#10](https://github.com/nsssayom/obadh_engine/issues/10))
 
 - **`ন্স` (`ns`) is now a conjunct.** It was absent from the inventory, so `laisens` produced
   লাইসেনস instead of লাইসেন্স, and `kansa` gave কানসা instead of কান্সা. The whole `-ence`/
@@ -35,7 +59,38 @@ Releases before `0.7.0` predate this file; see the git history and tags for thos
   Previously ন্স was simply unreachable, so `ansar` → আনসার fell out by default. That default is
   gone, not because the convention changed, but because `ns` finally has a conjunct to form.
 
+- **Bangla terminology replaces Sanskrit, Devanagari and Arabic terms** throughout the source,
+  tests and rule docs: `virama` → `hasant` (হসন্ত), `visarga` → `bisarga` (বিসর্গ), `anusvara` →
+  `anusvar` (অনুস্বার), `matra` → `kar` (কার), `nukta` → `phota` (ফোটা). In Bangla, মাত্রা is the
+  headstroke on a letter, not the vowel sign — that is a কার; and নুক্তা is Arabic (نقطة), while
+  the Bangla name for the subscript dot is ফোটা. `chandrabindu`, `khanda ta`, `reph`, `phola` and
+  `juktoborno` were already Bangla and are untouched.
+
+  The renamed constants are `pub(crate)` or private, so **the public API does not change**.
+  Verified behavior-neutral: 19,110 generated inputs transliterate byte-identically before and
+  after. ([#11](https://github.com/nsssayom/obadh_engine/issues/11))
+
 ### Added
+
+- **`tests/property_tests.rs`** — seven reference-free properties over a fixed-seed corpus of ~45k
+  supported inputs and ~14k inputs that deliberately leave the sanitizer's allowed set. None of
+  them needs to know the expected Bengali for a given Roman input, so they hold for inputs nobody
+  tabulated: `transliterate` is idempotent on its own output; `transliterate(x)` equals
+  `transliterate_tokens(tokenize(x))` on supported input; `transliterate_lenient(x)` equals
+  `transliterate(clean(x))`; tokenizer spans reassemble the input; no render path emits a dotted
+  circle. Each property was mutation-tested — an injected bug in the token render path, in
+  `transliterate_lenient`, and in word-internal numeral rendering each failed exactly one property
+  and no others.
+
+- **Structural sweeps in `tests/orthography_tests.rs` and `tests/hasant_tests.rs`.** Over 4,320 and
+  7,072 generated inputs respectively, no output may stack two vowel signs, hang one off a numeral,
+  or place a hasant on a sign that cannot carry it. Both fail on the pre-fix engine (839/4,320 and
+  6,051/7,072), so they are regression nets rather than rubber stamps.
+
+- **CI (`.github/workflows/ci.yml`).** `cargo test`, `cargo test --features cli`, the `wasm32`
+  target check and the benchmark compile now run on every push and pull request, with
+  `RUSTFLAGS: -D warnings`. Submodules are deliberately not checked out, so CI enforces rather than
+  assumes the claim that the suite passes without the Git-LFS data.
 
 - **`tests/juktoborno_corpus_tests.rs`** — an exhaustive conjunct corpus (~20k assertions)
   driven from `data/conjuncts.csv` rather than hand-transcribed. It guards both directions of
@@ -54,6 +109,12 @@ Releases before `0.7.0` predate this file; see the git history and tags for thos
   hold for modern loanwords — bn.wikipedia's own article title লাইসেন্স uses `ন্স`. The mirror is
   left byte-identical to upstream; `data/conjuncts.csv` is the engine's inventory and now
   intentionally carries one conjunct the wiki does not. The `wiki ⊆ csv` contract test still holds.
+
+- `transliterate` and `transliterate_tokens` disagree on **unsupported** input: the former is
+  strict and returns the whole input unchanged, the latter renders the supported tokens and passes
+  the rest through (`ké` → `ké` vs `কé`). The behavior is unchanged in this release and is now
+  pinned by a test; resolving it is a public-API decision tracked in
+  [#16](https://github.com/nsssayom/obadh_engine/issues/16).
 
 ## [0.7.0]
 
