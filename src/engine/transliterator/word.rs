@@ -106,6 +106,8 @@ impl Transliterator {
                     if !self.append_conjunct_parts(result, parts.as_slice()) {
                         result.push_str(&unit.text);
                     }
+                    // A conjunct ends on a consonant, so it still takes a matra.
+                    previous_unit_accepts_dependent_vowel = true;
                 }
                 PhoneticUnitType::ConjunctWithVowel => {
                     let mut parts = ConjunctParts::from_text(&unit.text);
@@ -130,6 +132,7 @@ impl Transliterator {
                     } else {
                         result.push_str(&unit.text);
                     }
+                    previous_unit_accepts_dependent_vowel = false;
                 }
                 PhoneticUnitType::ConjunctWithTerminator => {
                     let mut parts = ConjunctParts::from_text(&unit.text);
@@ -158,6 +161,7 @@ impl Transliterator {
                     } else {
                         result.push_str(&unit.text);
                     }
+                    previous_unit_accepts_dependent_vowel = false;
                 }
                 PhoneticUnitType::RephOverConsonant => {
                     if let Some(mapped) = self.conjuncts.create_conjunct(&unit.text) {
@@ -172,6 +176,8 @@ impl Transliterator {
                             result.push_str(&unit.text);
                         }
                     }
+                    // Reph sits over a consonant, which still takes a matra.
+                    previous_unit_accepts_dependent_vowel = true;
                 }
                 PhoneticUnitType::RephOverConsonantWithVowel => {
                     if let Some((consonant_part, vowel_part)) =
@@ -196,6 +202,7 @@ impl Transliterator {
                     } else {
                         result.push_str(&unit.text);
                     }
+                    previous_unit_accepts_dependent_vowel = false;
                 }
                 PhoneticUnitType::RephOverConsonantWithTerminator => {
                     if let Some((consonant_part, terminator_part)) =
@@ -228,6 +235,7 @@ impl Transliterator {
                     } else {
                         result.push_str(&unit.text);
                     }
+                    previous_unit_accepts_dependent_vowel = false;
                 }
                 PhoneticUnitType::SpecialForm => {
                     if unit.text == "rr" {
@@ -247,6 +255,7 @@ impl Transliterator {
                 }
                 PhoneticUnitType::Numeral => {
                     self.render_number_token(result, &unit.text);
+                    previous_unit_accepts_dependent_vowel = false;
                 }
                 PhoneticUnitType::Symbol => {
                     if let Some(bengali_symbol) = symbol_value(unit.text.as_str()) {
