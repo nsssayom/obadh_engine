@@ -149,7 +149,7 @@ Representative deliberate signals:
 | `a` / `A` | visible আ / া, including before clusters |
 | `I`, `U`, `O` | long ঈ / ঊ and ও |
 | `aY` / `AY` | অ্যা / ্যা, e.g. `aYp` -> `অ্যাপ` |
-| `ng`, `M`, `Ng` | anusvara / explicit anusvara escape / velar nasal |
+| `ng`, `M`, `Ng` | anusvar / explicit anusvar escape / velar nasal |
 | `ngg`, `nggh` | ঙ্গ / ঙ্ঘ shorthand |
 | `jNG`, `jn`, `gg` | জ্ঞ paths |
 | `NGj`, `nj`, `nJ` | ঞ্জ paths |
@@ -163,7 +163,7 @@ Representative deliberate signals:
 | <code>t``</code> | খণ্ড ত / ৎ |
 | <code>T``</code> | খণ্ড ত / ৎ |
 | `^` | chandrabindu |
-| `:` | visarga |
+| `:` | bisarga |
 | `.` | danda, while decimal periods stay ASCII periods |
 | `$` | taka sign |
 

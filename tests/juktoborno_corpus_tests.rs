@@ -12,7 +12,7 @@
 //! Both halves are driven from `data/conjuncts.csv`, the source of truth, so the
 //! expectations are derived rather than hand-transcribed. On top of that sits a
 //! well-formedness sweep asserting the engine never emits a malformed cluster
-//! (dotted circle, dangling hasant, hasant before a matra, doubled hasant), and
+//! (dotted circle, dangling hasant, hasant before a kar, doubled hasant), and
 //! a small curated table of real Bangla words.
 
 use obadh_engine::{
@@ -27,7 +27,7 @@ const KHANDA_TA: char = '\u{09CE}';
 const DOTTED_CIRCLE: char = '\u{25CC}';
 
 /// One canonical roman key per Bengali consonant letter. `y`/`Y` (ya-phola),
-/// `w` (ba-phola), `rr` (reph) and the nukta letters are excluded: they are
+/// `w` (ba-phola), `rr` (reph) and the phota letters are excluded: they are
 /// productive or positional forms, tested separately.
 const CONSONANTS: &[&str] = &[
     "k", "kh", "g", "gh", "Ng", "c", "ch", "j", "jh", "NG", "T", "Th", "D", "Dh", "N", "t", "th",
@@ -47,7 +47,7 @@ const VOWELS: &[(&str, &str)] = &[
     ("OU", "\u{09CC}"),
 ];
 
-const MATRAS: &[char] = &[
+const KARS: &[char] = &[
     '\u{09BE}', '\u{09BF}', '\u{09C0}', '\u{09C1}', '\u{09C2}', '\u{09C3}', '\u{09C7}', '\u{09C8}',
     '\u{09CB}', '\u{09CC}',
 ];
@@ -67,7 +67,7 @@ impl Row {
         self.roman.concat()
     }
 
-    /// `র্ৎ` composes a reph over khanda ta and cannot take a matra.
+    /// `র্ৎ` composes a reph over khanda ta and cannot take a kar.
     fn is_khanda_ta_reph(&self) -> bool {
         self.roman.iter().any(|c| c == "t``")
     }
@@ -145,11 +145,11 @@ fn every_source_conjunct_forms_in_every_word_position() {
         }
 
         // Word-initial and medial, before each dependent vowel.
-        for (vk, matra) in VOWELS {
+        for (vk, kar) in VOWELS {
             let initial = format!("{key}{vk}");
             assert_eq!(
                 engine.transliterate(&initial),
-                format!("{}{matra}", row.conjunct),
+                format!("{}{kar}", row.conjunct),
                 "row {}: '{initial}' broke '{}' word-initially",
                 row.line,
                 row.conjunct
@@ -158,7 +158,7 @@ fn every_source_conjunct_forms_in_every_word_position() {
             let medial = format!("bA{key}{vk}");
             assert_eq!(
                 engine.transliterate(&medial),
-                format!("বা{}{matra}", row.conjunct),
+                format!("বা{}{kar}", row.conjunct),
                 "row {}: '{medial}' broke '{}' medially",
                 row.line,
                 row.conjunct
@@ -349,8 +349,8 @@ fn engine_never_emits_a_malformed_cluster() {
             }
             if let Some(&next) = chars.get(i + 1) {
                 assert!(
-                    !MATRAS.contains(&next),
-                    "'{input}': hasant before matra in '{out}'"
+                    !KARS.contains(&next),
+                    "'{input}': hasant before kar in '{out}'"
                 );
                 assert!(
                     next != HASANT,
@@ -416,8 +416,8 @@ fn real_bangla_words_transliterate_correctly() {
         ("Daktar", "ডাক্তার"),
     ];
 
-    // Native /n+s/ is written with anusvara, never ন্স.
-    let anusvara = [("hongso", "হংস"), ("bongsho", "বংশ")];
+    // Native /n+s/ is written with anusvar, never ন্স.
+    let anusvar = [("hongso", "হংস"), ("bongsho", "বংশ")];
 
     // Loanwords: ন্স is a loanword-only cluster.
     let loan = [
@@ -448,7 +448,7 @@ fn real_bangla_words_transliterate_correctly() {
 
     for (input, expected) in native
         .iter()
-        .chain(&anusvara)
+        .chain(&anusvar)
         .chain(&loan)
         .chain(&broken)
     {

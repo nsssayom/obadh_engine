@@ -315,7 +315,7 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
         if baseline_is_weak {
             let chars: Vec<(usize, char)> = baseline.char_indices().collect();
             for (position, &(byte_index, ch)) in chars.iter().enumerate() {
-                // Skip nukta-form base consonants (ড়/ঢ়/য়); they are whole units.
+                // Skip phota-form base consonants (ড়/ঢ়/য়); they are whole units.
                 if chars
                     .get(position + 1)
                     .is_some_and(|&(_, next)| next == '\u{09BC}')

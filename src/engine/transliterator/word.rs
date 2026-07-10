@@ -1,6 +1,6 @@
 use crate::definitions::{
     consonant_value,
-    diacritics::{ANUSVARA, CHANDRABINDU, HASANT, KHANDA_TA, VISARGA},
+    diacritics::{ANUSVAR, BISARGA, CHANDRABINDU, HASANT, KHANDA_TA},
     symbol_value,
 };
 
@@ -111,7 +111,7 @@ impl Transliterator {
                     if !self.append_conjunct_parts(result, parts.as_slice()) {
                         result.push_str(&unit.text);
                     }
-                    // A conjunct ends on a consonant, so it still takes a matra.
+                    // A conjunct ends on a consonant, so it still takes a kar.
                     previous_unit_accepts_dependent_vowel = true;
                 }
                 PhoneticUnitType::ConjunctWithVowel => {
@@ -181,7 +181,7 @@ impl Transliterator {
                             result.push_str(&unit.text);
                         }
                     }
-                    // Reph sits over a consonant, which still takes a matra.
+                    // Reph sits over a consonant, which still takes a kar.
                     previous_unit_accepts_dependent_vowel = true;
                 }
                 PhoneticUnitType::RephOverConsonantWithVowel => {
@@ -248,11 +248,11 @@ impl Transliterator {
                     } else if unit.text == "^" {
                         result.push_str(CHANDRABINDU);
                     } else if unit.text == ":" {
-                        result.push_str(VISARGA);
+                        result.push_str(BISARGA);
                     } else if matches!(unit.text.as_str(), "t``" | "T``") {
                         result.push_str(KHANDA_TA);
                     } else if matches!(unit.text.as_str(), "ng" | "M") {
-                        result.push_str(ANUSVARA);
+                        result.push_str(ANUSVAR);
                     } else {
                         result.push_str(&unit.text);
                     }

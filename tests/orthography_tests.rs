@@ -689,7 +689,7 @@ fn test_visible_a_kept_in_open_syllables() {
 }
 
 #[test]
-fn test_anusvara_boundary_preserves_following_conjunct_run() {
+fn test_anusvar_boundary_preserves_following_conjunct_run() {
     let tokenizer = Tokenizer::new();
     let units = tokenizer.tokenize_word("songskrriti");
 
@@ -759,7 +759,7 @@ fn test_adjacent_normalization_runs_do_not_shift_tail_units() {
 }
 
 #[test]
-fn test_plain_ng_remains_anusvara_before_non_g_velars() {
+fn test_plain_ng_remains_anusvar_before_non_g_velars() {
     let engine = ObadhEngine::new();
 
     assert_eq!(
@@ -770,7 +770,7 @@ fn test_plain_ng_remains_anusvara_before_non_g_velars() {
 }
 
 #[test]
-fn test_uppercase_m_is_explicit_anusvara_escape_before_g_velars() {
+fn test_uppercase_m_is_explicit_anusvar_escape_before_g_velars() {
     let tokenizer = Tokenizer::new();
     let units = tokenizer.tokenize_word("sMgo");
 

@@ -1,7 +1,7 @@
 //! Definitions for Bengali diacritics
 //!
 //! This file contains mappings for Bengali diacritics like
-//! hasanta (virama), visarga, chandrabindu, etc.
+//! hasant, bisarga, chandrabindu, etc.
 
 use super::insert_unique;
 use std::collections::HashMap;
@@ -12,20 +12,20 @@ pub type DiacriticRule = (&'static str, &'static str);
 
 pub(crate) const HASANT: &str = "্";
 pub(crate) const CHANDRABINDU: &str = "ঁ";
-pub(crate) const VISARGA: &str = "ঃ";
+pub(crate) const BISARGA: &str = "ঃ";
 pub(crate) const KHANDA_TA: &str = "ৎ";
-pub(crate) const ANUSVARA: &str = "ং";
+pub(crate) const ANUSVAR: &str = "ং";
 
 const DIACRITIC_RULES: &[DiacriticRule] = &[
-    // Hasanta (virama) - explicit user signal that suppresses the inherent vowel
+    // Hasant - explicit user signal that suppresses the inherent vowel
     // and drives deterministic conjunct formation when placed between consonants.
     (",,", HASANT),
     ("^", CHANDRABINDU), // Chandrabindu
-    (":", VISARGA),      // Visarga
+    (":", BISARGA),      // Bisarga
     ("t``", KHANDA_TA),  // Khanda Ta
     ("T``", KHANDA_TA),  // Khanda Ta alias
-    ("ng", ANUSVARA),    // Anusvara
-    ("M", ANUSVARA),     // Explicit anusvara alias; useful before g/gh without invoking ngg/nggh
+    ("ng", ANUSVAR),     // Anusvar
+    ("M", ANUSVAR),      // Explicit anusvar alias; useful before g/gh without invoking ngg/nggh
 ];
 
 fn build_diacritics() -> HashMap<&'static str, &'static str> {
@@ -48,9 +48,9 @@ pub fn diacritic_value(roman: &str) -> Option<&'static str> {
     match roman {
         ",," => Some(HASANT),
         "^" => Some(CHANDRABINDU),
-        ":" => Some(VISARGA),
+        ":" => Some(BISARGA),
         "t``" | "T``" => Some(KHANDA_TA),
-        "ng" | "M" => Some(ANUSVARA),
+        "ng" | "M" => Some(ANUSVAR),
         _ => None,
     }
 }

@@ -35,7 +35,7 @@ pub(super) fn identify_complex_forms(units: &mut Vec<PhoneticUnit>, scan_hints: 
     collapse_explicit_hasant_chains(units, conjunct_defs);
 
     // Process contiguous consonant runs to form conjuncts. Non-consonant units
-    // such as anusvara are boundaries, not blockers for subsequent runs.
+    // such as anusvar are boundaries, not blockers for subsequent runs.
     let mut run_start = 0;
     while run_start < units.len() {
         while run_start < units.len() && !is_conjunct_run_component(&units[run_start]) {

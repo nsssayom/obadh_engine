@@ -38,7 +38,7 @@ This document is the source contract for runtime consonant rule keys. Consonant 
 | Sh / SH | ষ | Fricative | retroflex sha |
 | s | স | Fricative | dental sa |
 | h | হ | Fricative | ha |
-| R | ড় | Special | Bengali ra with nukta-like dot |
+| R | ড় | Special | Bengali ra with phota-like dot |
 | Rh | ঢ় | Special | aspirated dotted ra |
 | y / Y | য় | Special | regular antastha y standalone; after a consonant base it serves as the য-ফলা marker |
 | w | ওয় | Special | /w/ glide standalone (`w` → ওয়, `water` → ওয়াটার); after a consonant base it serves as the ব-ফলা marker |

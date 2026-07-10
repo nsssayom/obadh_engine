@@ -77,7 +77,7 @@ Bengali has its own numerals that are mapped directly from Latin numerals:
 
 ## Special Rules
 
-### Hasanta Handling
+### Hasant Handling
 
 - Represented in Obadh input as `,,`
   - Signal: `k,,` → `ক্`
@@ -86,7 +86,7 @@ Bengali has its own numerals that are mapped directly from Latin numerals:
 - A trailing explicit hasant after a formed conjunct remains visible:
   - Signal: `k,,k,,` → `ক্ক্`
   - Signal: `n,,d,,r,,` → `ন্দ্র্`
-- As a standalone marker, `,,` renders the virama directly:
+- As a standalone marker, `,,` renders the hasant directly:
   - Signal: `,,` → `্`
 - A vowel typed after an explicit dead consonant is independent, not a dependent kar on that dead consonant:
   - Signal: `k,,a` → `ক্আ`
@@ -116,7 +116,7 @@ Bengali has its own numerals that are mapped directly from Latin numerals:
 
 - Chandrabindu is represented by `^`
   - Signal: `kA^` → `কাঁ`
-- Visarga is represented by `:`
+- Bisarga is represented by `:`
   - Signal: `ku:` → `কুঃ`
 - Trailing diacritic marks are explicit ordered marks. The engine preserves the order typed by the user:
   - Signal: `kA^:` → `কাঁঃ`
@@ -129,10 +129,10 @@ Bengali has its own numerals that are mapped directly from Latin numerals:
 
 Nasal input is deterministic and must preserve the user's intended spelling:
 
-- `ng` is anusvara:
+- `ng` is anusvar:
   - Signal: `bangla` → `বাংলা`
   - Signal: `songket` → `সংকেত`
-- `M` is the explicit anusvara escape:
+- `M` is the explicit anusvar escape:
   - Signal: `sMgo` → `সংগ`
   - Use it before `g`/`gh` when you want literal ংগ/ংঘ rather than the `ngg`/`nggh` shorthand.
 - `Ng` is the velar nasal consonant:
@@ -197,7 +197,7 @@ Letters with no native Bengali phoneme map to their settled convention instead o
 The source conjunct notes distinguish true conjunct `র্য` from the ZWNJ-separated `র‌্য` form used in loanword spellings such as `র‌্যাব`:
 
 - `rrYa` → `র্যা` (conjunct `র্য` plus vowel)
-- `rZya` / `rZYa` → `র‌্যা` (`র` + U+200C + virama + `য` plus vowel)
+- `rZya` / `rZYa` → `র‌্যা` (`র` + U+200C + hasant + `য` plus vowel)
 - `rZyab` → `র‌্যাব`
 - `rZya^da` → `র‌্যাঁদা`
 
