@@ -1331,3 +1331,140 @@ fn test_foreign_letter_aliases_map_to_bengali_convention() {
         assert_eq!(engine.transliterate(input), expected, "{input}");
     }
 }
+
+/// A vowel that follows a unit which already carries its own vowel must render
+/// as an independent letter, never as a second kar. The syllable state that
+/// decides this is a single carry flag, and conjunct/reph/numeral units used to
+/// leave it untouched — so the flag leaked across them from an earlier bare
+/// consonant and stacked a kar onto a sign that cannot take one.
+#[test]
+fn test_vowel_after_a_filled_unit_stays_independent() {
+    let engine = ObadhEngine::new();
+
+    for (input, expected) in [
+        // conjunct + vowel + vowel (leak source: the bare consonant before it)
+        ("pxiE", "পক্সিএ"),
+        ("tbliE", "তব্লিএ"),
+        ("tdyiE", "তদ্যিএ"),
+        ("dspiE", "দস্পিএ"),
+        // reph over consonant + vowel + vowel
+        ("krrkie", "কর্কিএ"),
+        // numeral between a bare consonant and a vowel
+        ("k1i", "ক১ই"),
+        ("k1e", "ক১এ"),
+        ("k1A", "ক১আ"),
+    ] {
+        assert_eq!(engine.transliterate(input), expected, "{input}");
+    }
+}
+
+/// The same carry flag must still say "yes" where a kar is legal: a conjunct
+/// and a reph both end on a consonant, so the next vowel is dependent.
+#[test]
+fn test_conjunct_and_reph_still_take_a_dependent_vowel() {
+    let engine = ObadhEngine::new();
+
+    for (input, expected) in [
+        ("pxi", "পক্সি"),
+        ("kxe", "কক্সে"),
+        ("krrki", "কর্কি"),
+        ("krrke", "কর্কে"),
+        ("shokti", "শক্তি"),
+        ("boktiA", "বক্তিআ"),
+    ] {
+        assert_eq!(engine.transliterate(input), expected, "{input}");
+    }
+}
+
+// -------------------------------------------------- structural sweep: vowel signs
+
+/// Dependent vowel signs (কার). Two of these may never sit side by side, and
+/// none of them may attach to a numeral.
+const KARS: &[char] = &[
+    '\u{09BE}', '\u{09BF}', '\u{09C0}', '\u{09C1}', '\u{09C2}', '\u{09C3}', '\u{09C4}', '\u{09C7}',
+    '\u{09C8}', '\u{09CB}', '\u{09CC}',
+];
+
+/// One base per phonetic unit type that can stand in front of a vowel. The
+/// carry flag that picks the vowel's form is set independently by each unit
+/// type's match arm, so every arm needs a representative here.
+const SWEEP_BASES: &[&str] = &[
+    "k",   // Consonant
+    "kt",  // Conjunct, two roman letters
+    "x",   // Conjunct, one roman letter (ক্স)
+    "bl",  // Conjunct
+    "sp",  // Conjunct
+    "dy",  // Conjunct via ya-phola
+    "rrk", // RephOverConsonant
+    "1",   // Numeral
+    "23",  // Numeral, multi-digit
+    "rr",  // SpecialForm, bare reph
+    "^",   // SpecialForm, chandrabindu
+    ":",   // SpecialForm, bisarga
+    "ng",  // SpecialForm, anusvar
+    "t``", // SpecialForm, khanda ta
+    "k,,", // ConsonantWithHasant
+];
+
+const SWEEP_VOWELS: &[&str] = &["a", "A", "i", "I", "u", "U", "e", "E", "o", "O", "OI", "OU"];
+
+/// A stale carry flag is only observable when the unit that leaks it is preceded
+/// by a bare consonant, which is the one unit that legitimately sets the flag.
+const SWEEP_PREFIXES: &[&str] = &["", "p"];
+
+fn is_kar(character: char) -> bool {
+    KARS.contains(&character)
+}
+
+fn is_bengali_digit(character: char) -> bool {
+    ('\u{09E6}'..='\u{09EF}').contains(&character)
+}
+
+/// Nothing the engine emits may stack one vowel sign on another, or hang a vowel
+/// sign off a numeral. This is a structural check: it needs no expected output,
+/// so it keeps holding for inputs nobody thought to tabulate. It is the guard
+/// against a future unit type forgetting to set the carry flag.
+#[test]
+fn test_engine_never_stacks_a_vowel_sign_or_hangs_one_off_a_numeral() {
+    let engine = ObadhEngine::new();
+    let mut inputs: Vec<String> = Vec::new();
+
+    for prefix in SWEEP_PREFIXES {
+        for base in SWEEP_BASES {
+            for first in SWEEP_VOWELS {
+                for second in SWEEP_VOWELS {
+                    inputs.push(format!("{prefix}{base}{first}{second}"));
+                }
+            }
+        }
+    }
+
+    assert!(inputs.len() > 4_000, "sweep too small: {}", inputs.len());
+
+    let mut violations: Vec<String> = Vec::new();
+    for input in &inputs {
+        let output = engine.transliterate(input);
+        let characters: Vec<char> = output.chars().collect();
+
+        for pair in characters.windows(2) {
+            if is_kar(pair[0]) && is_kar(pair[1]) {
+                violations.push(format!("{input:?} -> {output:?}: two vowel signs stacked"));
+            } else if is_bengali_digit(pair[0]) && is_kar(pair[1]) {
+                violations.push(format!("{input:?} -> {output:?}: vowel sign on a numeral"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "{} of {} inputs produced a malformed vowel sign, first 10:\n{}",
+        violations.len(),
+        inputs.len(),
+        violations
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
