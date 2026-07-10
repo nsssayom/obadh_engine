@@ -35,13 +35,13 @@
 
 use fst::automaton::Automaton;
 
-const NUKTA: char = '\u{09BC}';
+const PHOTA: char = '\u{09BC}';
 
-/// Class for a base consonant. `nukta` is true when the following combining nukta
+/// Class for a base consonant. `phota` is true when the following combining phota
 /// (U+09BC) was seen, forming ড়/ঢ়/য় in NFC-decomposed text; the precomposed forms
 /// (U+09DC/U+09DD/U+09DF) are matched directly.
-fn consonant_class(ch: char, nukta: bool) -> Option<u8> {
-    if nukta {
+fn consonant_class(ch: char, phota: bool) -> Option<u8> {
+    if phota {
         return Some(match ch {
             'ড' => b'R', // ড় [ɽ]
             'ঢ' => b'R', // ঢ় [ɽ]
@@ -104,11 +104,11 @@ pub fn consonant_skeleton(word: &str) -> String {
     let mut skeleton = Vec::with_capacity(word.len() / 3 + 1);
     let mut chars = word.chars().peekable();
     while let Some(ch) = chars.next() {
-        let nukta = chars.peek() == Some(&NUKTA);
-        if nukta {
-            chars.next(); // consume the combining nukta
+        let phota = chars.peek() == Some(&PHOTA);
+        if phota {
+            chars.next(); // consume the combining phota
         }
-        if let Some(class) = consonant_class(ch, nukta) {
+        if let Some(class) = consonant_class(ch, phota) {
             skeleton.push(class);
         }
     }
@@ -129,7 +129,7 @@ pub struct SkeletonMatch {
 
 /// An [`fst::Automaton`] accepting exactly the lexicon words whose consonant skeleton equals
 /// `target`. It reads skeleton-mates straight from the main lexicon fst — no separate index.
-/// Vowels, vowel-signs, hasant and other marks are skipped; a combining nukta folds into the
+/// Vowels, vowel-signs, hasant and other marks are skipped; a combining phota folds into the
 /// consonant it follows, mirroring [`consonant_skeleton`] byte-for-byte.
 ///
 /// Matching is *exact*: the word's full consonant sequence must equal `target` (a word with
@@ -152,10 +152,10 @@ impl SkeletonAutomaton {
         })
     }
 
-    /// Commit a held consonant `ch` (optionally folded with a following nukta): advance if it
+    /// Commit a held consonant `ch` (optionally folded with a following phota): advance if it
     /// matches the next expected class, otherwise kill the branch.
-    fn commit(&self, mut state: SkeletonState, ch: char, nukta: bool) -> SkeletonState {
-        match consonant_class(ch, nukta) {
+    fn commit(&self, mut state: SkeletonState, ch: char, phota: bool) -> SkeletonState {
+        match consonant_class(ch, phota) {
             Some(class) => {
                 if state.matched < self.target.len() && class == self.target[state.matched] {
                     state.matched += 1;
@@ -173,21 +173,21 @@ impl SkeletonAutomaton {
 
     /// Advance the match on a fully decoded character.
     fn on_char(&self, mut state: SkeletonState, ch: char) -> SkeletonState {
-        if ch == NUKTA {
-            // Fold into the held consonant, if any; a floating nukta is ignored.
+        if ch == PHOTA {
+            // Fold into the held consonant, if any; a floating phota is ignored.
             if let Some(held) = state.held.take() {
                 return self.commit(state, held, true);
             }
             return state;
         }
-        // A non-nukta char first commits any held consonant (no nukta followed it)...
+        // A non-phota char first commits any held consonant (no phota followed it)...
         if let Some(held) = state.held.take() {
             state = self.commit(state, held, false);
             if state.dead {
                 return state;
             }
         }
-        // ...then either holds this consonant (a nukta may still follow) or skips a
+        // ...then either holds this consonant (a phota may still follow) or skips a
         // vowel / vowel-sign / hasant / other mark.
         if consonant_class(ch, false).is_some() {
             state.held = Some(ch);
@@ -195,7 +195,7 @@ impl SkeletonAutomaton {
         state
     }
 
-    /// The class the held consonant would commit to at word end (no trailing nukta), if any.
+    /// The class the held consonant would commit to at word end (no trailing phota), if any.
     fn trailing_matched(&self, state: &SkeletonState) -> Option<usize> {
         match state.held {
             None => Some(state.matched),
@@ -218,7 +218,7 @@ impl SkeletonAutomaton {
 pub struct SkeletonState {
     /// Consonant classes committed so far (index into `target`).
     matched: usize,
-    /// A consonant awaiting a possible following nukta before it is committed.
+    /// A consonant awaiting a possible following phota before it is committed.
     held: Option<char>,
     /// Partial UTF-8 bytes of the character currently being decoded.
     pending: [u8; 4],
@@ -420,8 +420,8 @@ mod tests {
     }
 
     #[test]
-    fn automaton_folds_nukta_like_the_skeleton() {
-        // বড় (ব + ড + nukta) and its vowelled forms share skeleton bR.
+    fn automaton_folds_phota_like_the_skeleton() {
+        // বড় (ব + ড + phota) and its vowelled forms share skeleton bR.
         assert!(automaton_accepts("বড়", "বড়"));
         assert!(automaton_accepts("বড়", "বড়ি"));
         // র (rhotic) must NOT match ড় (flap): distinct phonemes.

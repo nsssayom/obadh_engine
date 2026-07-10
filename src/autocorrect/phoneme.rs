@@ -91,7 +91,7 @@ fn phoneme_distance(a: Phoneme, b: Phoneme) -> u16 {
     place + manner + voice + aspiration
 }
 
-/// Map a Bengali base consonant (single scalar; handle nukta via [`consonant_distance`])
+/// Map a Bengali base consonant (single scalar; handle phota via [`consonant_distance`])
 /// to its phoneme, folding same-IPA graphemes (শ/ষ, জ/য, ণ/ন) to one value.
 fn base_phoneme(ch: char) -> Option<Phoneme> {
     use Manner::*;
@@ -148,10 +148,10 @@ fn base_phoneme(ch: char) -> Option<Phoneme> {
     }
 }
 
-/// Distance between two Bengali consonants given as `(char, has_nukta)`. Returns `None`
+/// Distance between two Bengali consonants given as `(char, has_phota)`. Returns `None`
 /// if either is not a mapped consonant. Identical phonemes → 0; nearby → small; far → large.
 pub fn consonant_distance(a: (char, bool), b: (char, bool)) -> Option<u16> {
-    Some(phoneme_distance(nukta_phoneme(a)?, nukta_phoneme(b)?))
+    Some(phoneme_distance(phota_phoneme(a)?, phota_phoneme(b)?))
 }
 
 /// Single-codepoint Bengali base consonants, for enumerating near-phoneme neighbours.
@@ -163,7 +163,7 @@ const BASE_CONSONANTS: &[char] = &[
 /// Base consonants whose phoneme is within `max_distance` of `ch` (a different grapheme),
 /// each paired with the distance, nearest first. Distance 0 is included (শ↔ষ, জ↔য, ণ↔ন),
 /// so genuine same-sound spelling confusions are enumerated alongside graded near ones.
-/// Only single-codepoint consonants are produced (nukta forms are handled by the caller).
+/// Only single-codepoint consonants are produced (phota forms are handled by the caller).
 pub fn near_consonants(ch: char, max_distance: u16) -> Vec<(char, u16)> {
     let Some(source) = base_phoneme(ch) else {
         return Vec::new();
@@ -184,8 +184,8 @@ pub fn near_consonants(ch: char, max_distance: u16) -> Vec<(char, u16)> {
     near
 }
 
-fn nukta_phoneme((ch, nukta): (char, bool)) -> Option<Phoneme> {
-    if nukta {
+fn phota_phoneme((ch, phota): (char, bool)) -> Option<Phoneme> {
+    if phota {
         return match ch {
             'ড' | 'ঢ' => Some(Phoneme {
                 place: Place::PostAlveolar,
@@ -240,8 +240,8 @@ mod tests {
     }
 
     #[test]
-    fn nukta_letters_map_to_flap() {
-        // ড় (ড + nukta) is [ɽ], close to র [ɾ], far from ড [ɖ] stop.
+    fn phota_letters_map_to_flap() {
+        // ড় (ড + phota) is [ɽ], close to র [ɾ], far from ড [ɖ] stop.
         let r_flap = consonant_distance(('র', false), ('ড', true)).unwrap();
         let stop_flap = consonant_distance(('ড', false), ('ড', true)).unwrap();
         assert!(r_flap < stop_flap, "ড় should be closer to র than to ড");

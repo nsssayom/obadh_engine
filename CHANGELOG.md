@@ -18,7 +18,7 @@ Releases before `0.7.0` predate this file; see the git history and tags for thos
   `kota` → কতা.
 
   `ন্স` is a **loanword-only** cluster. Native and tatsama Bangla writes the same sequence with
-  anusvara — ধ্বংস, হংস, বংশ — and those are unaffected.
+  anusvar — ধ্বংস, হংস, বংশ — and those are unaffected.
 
 ### Changed
 
@@ -45,7 +45,7 @@ Releases before `0.7.0` predate this file; see the git history and tags for thos
   missing conjunct. It also pins the inherent-vowel break, the `,,` explicit-hasant escape for
   all 1,024 pairs, the Unicode khanda-ta ligature rule (ত renders as ৎ except before
   ত/থ/ন/ব/ম/য/র), and a well-formedness sweep asserting the engine never emits a dotted circle,
-  a dangling hasant, a hasant before a matra, a doubled hasant, or a hasant on a non-joining sign.
+  a dangling hasant, a hasant before a kar, a doubled hasant, or a hasant on a non-joining sign.
 
 ### Notes
 

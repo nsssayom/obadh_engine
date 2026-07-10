@@ -95,7 +95,7 @@ The same vowel-sequence rules compose after consonants by using the dependent fo
 | Modification | Roman Input | Bengali Output |
 |--------------|-------------|----------------|
 | Nasalization | vowel + `^` | vowel + ঁ |
-| Visarga | `:` | ঃ |
+| Bisarga | `:` | ঃ |
 
 ## 4. Consonant + Vowel Combinations
 

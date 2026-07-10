@@ -555,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn repairs_bare_ng_to_velar_and_anusvara_ga_routes() {
+    fn repairs_bare_ng_to_velar_and_anusvar_ga_routes() {
         let repairs = roman_repair_beam("songit", RomanRepairOptions::default());
 
         assert!(repairs.iter().any(|repair| {

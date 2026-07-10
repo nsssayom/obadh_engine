@@ -24,7 +24,7 @@ impl WordScanHints {
             }
         }
 
-        if previous.is_some_and(is_anusvara_ng_signal) && is_velar_nasal_conjunct_tail(unit) {
+        if previous.is_some_and(is_anusvar_ng_signal) && is_velar_nasal_conjunct_tail(unit) {
             self.has_velar_nasal_conjunct_alias_candidate = true;
         }
 
@@ -79,7 +79,7 @@ fn is_khanda_ta_signal(unit: &PhoneticUnit) -> bool {
     unit.unit_type == PhoneticUnitType::SpecialForm && matches!(unit.text.as_str(), "t``" | "T``")
 }
 
-fn is_anusvara_ng_signal(unit: &PhoneticUnit) -> bool {
+fn is_anusvar_ng_signal(unit: &PhoneticUnit) -> bool {
     unit.unit_type == PhoneticUnitType::SpecialForm && unit.text == "ng"
 }
 
