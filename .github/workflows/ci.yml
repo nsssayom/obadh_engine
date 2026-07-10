@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The crate is warning-free on the pinned toolchain in every feature
+  # combination below, so warnings are treated as errors.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # data/autocorrect and data/autosuggest are Git-LFS submodules holding
+          # the FST and n-gram artifacts. The test suite must pass without them:
+          # it reads only the in-repo data/rules files, and the CLI tests write
+          # their own temp fixtures. Not checking them out keeps that honest.
+          submodules: false
+
+      # The toolchain (1.89.0) and the wasm32 target both come from
+      # rust-toolchain.toml; rustup installs them on the first cargo call.
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Core tests
+        run: cargo test --locked
+
+      - name: CLI tests
+        run: cargo test --locked --features cli
+
+      - name: WASM target check
+        run: >
+          cargo check --locked --target wasm32-unknown-unknown
+          --no-default-features --features wasm --lib
+
+      - name: Benchmarks compile
+        run: cargo bench --locked --bench hot_path --no-run
