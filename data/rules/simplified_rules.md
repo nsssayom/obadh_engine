@@ -91,6 +91,21 @@ Bengali has its own numerals that are mapped directly from Latin numerals:
 - A vowel typed after an explicit dead consonant is independent, not a dependent kar on that dead consonant:
   - Signal: `k,,a` → `ক্আ`
   - Signal: `k,,i` → `ক্ই`
+- A hasant suppresses the **inherent** vowel, so it needs a consonant to sit on. The inherent
+  vowel is still a valid target, but once an explicit kar has been written there is nothing left
+  to suppress and the signal is dropped:
+  - Signal: `ko,,` → `ক্`
+  - Signal: `ka,,` → `কা`
+  - Signal: `kOI,,` → `কৈ`
+  - Signal: `ka,,k` → `কাক`
+- The same holds after any other sign that cannot carry a hasant — chandrabindu, anusvar,
+  bisarga, khanda ta, a numeral, or a hasant already in place:
+  - Signal: `k^,,` → `কঁ`
+  - Signal: `kng,,` → `কং`
+  - Signal: `k:,,` → `কঃ`
+  - Signal: <code>kt``,,</code> → `কৎ`
+  - Signal: `k1,,` → `ক১`
+  - Signal: `rr,,` → `র্`
 - Khanda-ta composes with reph without a separate word rule:
   - Signal: <code>t``</code> → `ৎ`
   - Signal: <code>rrt``</code> → `র্ৎ`
