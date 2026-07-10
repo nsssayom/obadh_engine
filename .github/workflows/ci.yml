@@ -21,7 +21,7 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # data/autocorrect and data/autosuggest are Git-LFS submodules holding
           # the FST and n-gram artifacts. The test suite must pass without them:
