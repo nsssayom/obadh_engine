@@ -23,6 +23,9 @@ impl Transliterator {
         self.tokenizer.tokenize_word_into(word, phonetic_units);
 
         let mut previous_unit_accepts_dependent_vowel = false;
+        // `result` may already hold earlier words; the hasant rule below only
+        // looks at what this word has rendered so far.
+        let word_start = result.len();
 
         let unit_count = phonetic_units.len();
         for (unit_index, unit) in phonetic_units.iter().enumerate() {
@@ -94,7 +97,9 @@ impl Transliterator {
                 }
                 PhoneticUnitType::ConsonantWithHasant => {
                     if unit.text == ",," {
-                        result.push_str(HASANT);
+                        if hasant_can_attach(&result[word_start..]) {
+                            result.push_str(HASANT);
+                        }
                     } else {
                         result.push_str(&unit.text);
                     }
@@ -272,4 +277,30 @@ impl Transliterator {
             }
         }
     }
+}
+
+/// A hasant suppresses a consonant's inherent vowel, so it can only attach to a
+/// consonant.
+///
+/// `rendered_word` is what this word has emitted so far. When it is empty the
+/// `,,` signal is the documented standalone marker and renders on its own.
+/// Otherwise the hasant is dropped unless it has a consonant to sit on: Bangla
+/// has no cluster that stacks a hasant on a kar, on a chandrabindu, anusvar,
+/// bisarga or khanda ta, on a numeral, or on another hasant.
+fn hasant_can_attach(rendered_word: &str) -> bool {
+    match rendered_word.chars().next_back() {
+        None => true,
+        Some(character) => bears_hasant(character),
+    }
+}
+
+/// Whether a rendered Bengali character can carry a hasant: ক..হ, the phota that
+/// completes ড়/ঢ়/য়, and those three in their precomposed forms.
+///
+/// Khanda ta (ৎ) is excluded — it is already a dead consonant.
+fn bears_hasant(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0995}'..='\u{09B9}' | '\u{09BC}' | '\u{09DC}' | '\u{09DD}' | '\u{09DF}'
+    )
 }
