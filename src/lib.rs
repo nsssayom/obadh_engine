@@ -7,6 +7,7 @@ pub mod autocorrect;
 pub mod autosuggest;
 pub mod definitions;
 pub mod engine;
+pub mod fingerprint;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
@@ -91,6 +92,7 @@ pub use autosuggest::{
 };
 pub use engine::{PhoneticUnit, PhoneticUnitType, Token, TokenType, Tokenizer};
 pub use engine::{SanitizeResult, Sanitizer};
+pub use fingerprint::{artifact_fingerprint, verify_artifact_fingerprint, FingerprintMismatch};
 #[cfg(feature = "wasm")]
 pub use wasm::ObadhaWasm;
 

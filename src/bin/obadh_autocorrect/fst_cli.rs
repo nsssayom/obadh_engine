@@ -35,6 +35,10 @@ pub struct FstInspectReport {
     input: String,
     entries: usize,
     artifact_bytes: u64,
+    /// Content fingerprint for the crate ↔ artifact compatibility table. Printing
+    /// this is how a release records which `bn.fst` revision a crate version was
+    /// built against.
+    artifact_fingerprint: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,6 +125,7 @@ pub fn inspect_fst_lexicon(
         input: input.display().to_string(),
         entries: map.len(),
         artifact_bytes: fs::metadata(input)?.len(),
+        artifact_fingerprint: map.artifact_fingerprint(),
     })
 }
 

@@ -1635,19 +1635,9 @@ fn scorer_i32_from_token_id(token_id: u32) -> Result<i32, AutosuggestArtifactErr
 }
 
 fn compute_artifact_fingerprint(bytes: &[u8]) -> u64 {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-
-    let mut hash = OFFSET;
-    for byte in bytes {
-        hash = (hash ^ u64::from(*byte)).wrapping_mul(PRIME);
-    }
-
-    if hash == 0 {
-        1
-    } else {
-        hash
-    }
+    // Canonical FNV-1a shared with the autocorrect artifacts, so a fingerprint is
+    // comparable across every artifact type. See `crate::fingerprint`.
+    crate::fingerprint::artifact_fingerprint(bytes)
 }
 
 fn copy_model_context_ids(

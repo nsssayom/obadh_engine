@@ -21,6 +21,7 @@ pub struct LoanwordLexicon<D: AsRef<[u8]> = Vec<u8>> {
     ranges: Vec<LoanwordRange>,
     values: Vec<LoanwordValue>,
     bangla: Vec<u8>,
+    fingerprint: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +110,7 @@ impl LoanwordLexicon<Vec<u8>> {
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, LoanwordArtifactError> {
+        let fingerprint = crate::fingerprint::artifact_fingerprint(&bytes);
         if bytes.len() < HEADER_LEN {
             return Err(LoanwordArtifactError::TruncatedHeader);
         }
@@ -172,11 +174,20 @@ impl LoanwordLexicon<Vec<u8>> {
             ranges,
             values,
             bangla,
+            fingerprint,
         })
     }
 }
 
 impl<D: AsRef<[u8]>> LoanwordLexicon<D> {
+    /// Content fingerprint of the loanword artifact bytes this lexicon was loaded
+    /// from, for the same stale-artifact check as
+    /// [`FstLexicon::artifact_fingerprint`](crate::FstLexicon::artifact_fingerprint).
+    /// Captured at load over the whole artifact image. See [`crate::fingerprint`].
+    pub fn artifact_fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
     pub fn len(&self) -> usize {
         self.values.len()
     }
