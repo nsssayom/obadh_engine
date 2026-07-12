@@ -5,6 +5,8 @@
 
 pub mod autocorrect;
 pub mod autosuggest;
+#[cfg(all(feature = "cabi", not(target_arch = "wasm32")))]
+pub mod cabi;
 pub mod definitions;
 pub mod engine;
 pub mod fingerprint;

@@ -423,6 +423,11 @@ impl Default for FstSuggestOptions {
     }
 }
 
+/// Maximum edit cost for a candidate to be applied as a silent auto-replacement.
+/// One edit — a single typo — keeps the gate conservative. Tunable; not a public
+/// contract.
+const AUTO_REPLACE_MAX_EDIT_COST: u16 = 1;
+
 #[derive(Debug, Serialize)]
 pub struct FstSuggestResult {
     pub baseline: String,
@@ -433,6 +438,38 @@ pub struct FstSuggestResult {
     pub returned_candidates: usize,
     pub truncated: bool,
     pub candidates: Vec<FstCandidate>,
+}
+
+impl FstSuggestResult {
+    /// The correction confident enough to apply without asking, or `None` to
+    /// merely suggest.
+    ///
+    /// This is the engine-owned auto-insert gate for the FST runtime path — the
+    /// mmap equivalent of the heap [`AutocorrectEngine::decide`](crate::AutocorrectEngine::decide)
+    /// `replacement`. It is deliberately *structural*, not a score threshold, so
+    /// it stays explainable rather than becoming a per-downstream magic number:
+    ///
+    /// - the baseline must not itself be an exact lexicon word
+    ///   ([`exact_frequency`](Self::exact_frequency) is `None`) — a real word the
+    ///   user typed is never overridden;
+    /// - the top candidate must differ from the baseline;
+    /// - its channel must be [`auto-replace eligible`](FstCandidateSource::is_auto_replace_eligible)
+    ///   (a confident edit or exact repair, never a completion or heuristic guess);
+    /// - and its edit cost must be at most one.
+    pub fn auto_replacement(&self) -> Option<&FstCandidate> {
+        if self.exact_frequency.is_some() {
+            return None;
+        }
+        let top = self.candidates.first()?;
+        if top.text == self.baseline {
+            return None;
+        }
+        if top.source.is_auto_replace_eligible() && top.edit_cost <= AUTO_REPLACE_MAX_EDIT_COST {
+            Some(top)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -481,6 +518,28 @@ impl FstCandidateSource {
             Self::EnglishLoanwordExact => "fst_english_loanword_exact",
             Self::EnglishLoanwordFuzzy => "fst_english_loanword_fuzzy",
         }
+    }
+
+    /// Whether a top candidate from this channel may be applied as a silent
+    /// auto-replacement, as opposed to merely being suggested.
+    ///
+    /// Eligible: confident edits and exact repairs that resolve to a real lexicon
+    /// word — weighted edit, diacritic, vowel-length, exact roman-repair, exact
+    /// loanword. Excluded: completions (prefix, stem-suffix), which extend rather
+    /// than correct, and heuristic recovery (skeleton vowel-drop,
+    /// consonant-confusion, fuzzy loanword), which may suggest but must never
+    /// silently overwrite what the user typed. This mirrors the heap
+    /// [`AutocorrectEngine::decide`](crate::AutocorrectEngine::decide) gate, which
+    /// auto-replaces only a `LexiconEdit`.
+    pub fn is_auto_replace_eligible(self) -> bool {
+        matches!(
+            self,
+            Self::EditDistance
+                | Self::DiacriticEdit
+                | Self::OrthographicVowelLengthEdit
+                | Self::RomanRepairExact
+                | Self::EnglishLoanwordExact
+        )
     }
 
     /// Provenance authority for dedup. The skeleton and consonant-confusion channels are
@@ -1061,7 +1120,8 @@ fn is_utf8_continuation(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions,
+        FstCandidate, FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline,
+        FstSuggestOptions, FstSuggestResult,
     };
 
     #[test]
@@ -1659,6 +1719,102 @@ mod tests {
                 .expect("fixture key should insert");
         }
         FstLexicon::from_map(builder.into_map())
+    }
+
+    fn gate_candidate(text: &str, source: FstCandidateSource, edit_cost: u16) -> FstCandidate {
+        FstCandidate {
+            text: text.to_string(),
+            source,
+            edit_cost,
+            frequency: 100,
+            score: 900,
+            roman_repair: None,
+            roman_repair_kind: None,
+            roman_repair_cost: None,
+        }
+    }
+
+    fn gate_result(
+        baseline: &str,
+        exact_frequency: Option<u64>,
+        candidates: Vec<FstCandidate>,
+    ) -> FstSuggestResult {
+        FstSuggestResult {
+            baseline: baseline.to_string(),
+            exact_frequency,
+            max_distance: 1,
+            max_edit_cost: None,
+            candidate_count: candidates.len(),
+            returned_candidates: candidates.len(),
+            truncated: false,
+            candidates,
+        }
+    }
+
+    #[test]
+    fn auto_replacement_applies_only_a_confident_single_edit_over_a_non_word() {
+        // A confident single edit over a baseline that is not itself a word: replace.
+        let result = gate_result(
+            "বামলা",
+            None,
+            vec![gate_candidate("বাংলা", FstCandidateSource::EditDistance, 1)],
+        );
+        assert_eq!(
+            result.auto_replacement().map(|candidate| candidate.text.as_str()),
+            Some("বাংলা")
+        );
+
+        // Baseline is itself a real lexicon word: never override it.
+        let result = gate_result(
+            "বাংলা",
+            Some(10_000),
+            vec![gate_candidate("বাংলা", FstCandidateSource::Exact, 0)],
+        );
+        assert!(result.auto_replacement().is_none());
+
+        // Top is a completion, not a correction: suggest only.
+        let result = gate_result(
+            "বাং",
+            None,
+            vec![gate_candidate("বাংলা", FstCandidateSource::PrefixCompletion, 0)],
+        );
+        assert!(result.auto_replacement().is_none());
+
+        // Top is a heuristic recovery guess: suggest only.
+        let result = gate_result(
+            "বমলা",
+            None,
+            vec![gate_candidate("বাংলা", FstCandidateSource::SkeletonVowelDrop, 1)],
+        );
+        assert!(result.auto_replacement().is_none());
+
+        // A confident edit but more than one edit away: suggest only.
+        let result = gate_result(
+            "বকমলা",
+            None,
+            vec![gate_candidate("বাংলা", FstCandidateSource::EditDistance, 2)],
+        );
+        assert!(result.auto_replacement().is_none());
+
+        // Top equals the baseline: nothing to replace.
+        let result = gate_result(
+            "বাংলা",
+            None,
+            vec![gate_candidate("বাংলা", FstCandidateSource::EditDistance, 0)],
+        );
+        assert!(result.auto_replacement().is_none());
+    }
+
+    #[test]
+    fn auto_replacement_wires_through_a_real_suggest_call() {
+        // End-to-end: a real lexicon word must report itself as exact and never
+        // auto-replace, proving the gate reads the live suggest result.
+        let lexicon = test_lexicon([("বাংলা", 10_000)]);
+        let result = lexicon
+            .suggest("বাংলা", FstSuggestOptions::default())
+            .expect("suggest should succeed");
+        assert!(result.exact_frequency.is_some());
+        assert!(result.auto_replacement().is_none());
     }
 
     /// Isolated timing of the skeleton automaton walk on the real 845k-word bn.fst. Ignored
