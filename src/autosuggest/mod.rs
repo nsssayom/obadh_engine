@@ -9,7 +9,10 @@
 //! softmax.
 
 mod adaptive;
-mod artifact;
+// `pub(crate)` so the `#[cfg(test)] test_support` fixture builder is reachable
+// from crate-level tests (e.g. the C ABI e2e tests). No item is re-exported at
+// the crate root, so the public API is unchanged.
+pub(crate) mod artifact;
 mod generator;
 mod lm;
 mod open_vocab;
