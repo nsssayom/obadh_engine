@@ -141,3 +141,47 @@ fn autocorrect_suggests_prefix_completions_from_lexicon_frequency() {
     assert_eq!(kemon.features.source_id, 4);
     assert_eq!(kemon.edit_cost.0, 0);
 }
+
+#[test]
+fn loanword_artifact_fingerprint_is_stable_and_verifiable() {
+    use obadh_engine::{
+        artifact_fingerprint, build_loanword_bytes, verify_artifact_fingerprint, LoanwordEntry,
+        LoanwordLexicon,
+    };
+
+    let bytes = build_loanword_bytes([
+        LoanwordEntry {
+            english: "license".to_string(),
+            bangla: "লাইসেন্স".to_string(),
+            frequency: 100,
+        },
+        LoanwordEntry {
+            english: "server".to_string(),
+            bangla: "সার্ভার".to_string(),
+            frequency: 90,
+        },
+    ])
+    .expect("loanword bytes should build");
+
+    // The loaded lexicon reports the same fingerprint as the raw artifact bytes.
+    let expected = artifact_fingerprint(&bytes);
+    let lexicon = LoanwordLexicon::from_bytes(bytes.clone()).expect("lexicon should load");
+    assert_eq!(lexicon.artifact_fingerprint(), expected);
+    assert_ne!(expected, 0);
+
+    // Verify passes on the true fingerprint and fails loudly on a wrong one,
+    // reporting both sides — the stale-artifact signal a downstream gates on.
+    assert!(verify_artifact_fingerprint(&bytes, expected).is_ok());
+    let error = verify_artifact_fingerprint(&bytes, expected ^ 1).unwrap_err();
+    assert_eq!(error.actual, expected);
+    assert_eq!(error.expected, expected ^ 1);
+
+    // A different loanword set fingerprints differently.
+    let other = build_loanword_bytes([LoanwordEntry {
+        english: "license".to_string(),
+        bangla: "লাইসেন্স".to_string(),
+        frequency: 100,
+    }])
+    .expect("loanword bytes should build");
+    assert_ne!(artifact_fingerprint(&other), expected);
+}

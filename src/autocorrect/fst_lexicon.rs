@@ -81,6 +81,15 @@ impl<D: AsRef<[u8]>> FstLexicon<D> {
         Self { map }
     }
 
+    /// Content fingerprint of the backing FST bytes. A downstream pinning
+    /// `bn.fst` compares this against the value published for its crate version
+    /// to catch a stale or mismatched artifact. Matches
+    /// [`AutosuggestLm::artifact_fingerprint`](crate::AutosuggestLm::artifact_fingerprint).
+    /// See [`crate::fingerprint`].
+    pub fn artifact_fingerprint(&self) -> u64 {
+        crate::fingerprint::artifact_fingerprint(self.map.as_fst().as_bytes())
+    }
+
     /// Lexicon words sharing `baseline`'s consonant skeleton, highest-frequency first, up to
     /// `limit`. This reads skeleton-mates directly out of the lexicon fst via
     /// [`SkeletonAutomaton`] — no separate index — so it always sees the full vocabulary with
