@@ -6,6 +6,75 @@ Semantic Versioning (with the `0.x` caveat that the minor version carries breaki
 
 Releases before `0.7.0` predate this file; see the git history and tags for those.
 
+## [0.8.0]
+
+Downstream-integration release, driven by feedback from an iOS keyboard built on the engine. Four
+additions that expose what the layered architecture already computes, at the boundary — plus a
+stable C ABI so native integrators stop hand-rolling one each. **Every change is additive; the
+existing Rust public API and every artifact format are unchanged**, and the deterministic
+transliteration core is byte-for-byte identical.
+
+### Added
+
+- **A stable, versioned C ABI (`cabi` feature, off by default).** Native downstreams (iOS/Android
+  keyboards) had no C ABI and each hand-rolled one, re-deriving the buffer and lifetime edges
+  differently. The `cabi` feature exposes a header (`include/obadh.h`) the engine owns: deterministic
+  transliteration, the autocorrect decision/suggest/membership/fingerprint surface, and the
+  autosuggest commit/suggest/membership/snapshot/fingerprint surface, behind opaque handles. Writers
+  are snprintf-style (return the needed length, copy only if it fits); string lists are
+  count + length-prefixed records with no in-band delimiter (so a candidate may contain any bytes and
+  an empty string is faithful). The ABI version is independent of crate semver. An executable test
+  keeps the header in sync with the exports. The autosuggest neural/scorer handoff is deliberately
+  left out until it settles. ([#23](https://github.com/nsssayom/obadh_engine/issues/23))
+
+- **Personal-model membership query and commit-strength hint.** `PersonalAutosuggest::committed_text_weight`
+  / `is_text_established` and the session-level `established_weight` / `is_word_established` answer
+  "has the user established this word?" from the personal overlay, so a downstream can stop
+  maintaining a parallel on-device store to protect names and slang from auto-correction. The measure
+  is **post-decay** (counts halve in `decay_counts`), the honest signal rather than a raw ever-seen
+  flag. `CommitStrength` (Committed / CorrectionRejected / ManuallyAdded) lets the caller classify a
+  commit's intent; the engine owns the class → weight mapping.
+  ([#21](https://github.com/nsssayom/obadh_engine/issues/21))
+
+- **Artifact content fingerprints.** `FstLexicon` / `LoanwordLexicon` / `AutosuggestLm` expose
+  `artifact_fingerprint()`, and `verify_artifact_fingerprint(bytes, expected)` fails loudly with a
+  `FingerprintMismatch` so a stale pinned artifact fails fast at load instead of degrading silently. A
+  content hash, not a per-format header field, so it is uniform across three unrelated binary formats
+  and needs no format change. `obadh-autocorrect inspect-fst-lexicon` now prints the fingerprint for
+  the crate ↔ artifact compatibility table below.
+  ([#22](https://github.com/nsssayom/obadh_engine/issues/22))
+
+- **An engine-owned auto-insert gate on the FST runtime path.** `FstSuggestResult::auto_replacement()`
+  returns the correction confident enough to apply without asking — the baseline is not itself an
+  exact word, the top candidate is an auto-replace-eligible channel
+  (`FstCandidateSource::is_auto_replace_eligible`: a confident edit or exact repair, never a
+  completion or heuristic guess), and its edit cost is at most one. Structural, not a score threshold,
+  so it stays explainable. This is the mmap-path equivalent of the heap
+  `AutocorrectEngine::decide` gate, which the keyboard could not reach.
+  ([#23](https://github.com/nsssayom/obadh_engine/issues/23),
+  [#20](https://github.com/nsssayom/obadh_engine/issues/20))
+
+- **Reference-free property tests, structural sweeps, and CI** — carried in from 0.7.1 and extended;
+  the `--features cabi` suite now runs in CI as well.
+
+### Documentation
+
+- **`AutocorrectEngine::decide` and the auto-insert gate are now documented**, with a doctest showing
+  `replacement.is_some()` as the "should replace" signal and `suggest` as the lossy wrapper that
+  discards it. The `roman_input` / `auto_replace_roman_input` interaction — which suppresses
+  auto-replacement by default — is spelled out, since it is the usual surprise when migrating an
+  app-side gate onto the engine's. ([#20](https://github.com/nsssayom/obadh_engine/issues/20))
+
+### Notes
+
+- `transliterate` (strict) and `transliterate_tokens` (best-effort) still disagree on **unsupported**
+  input; unchanged here and pinned by a test, tracked in
+  [#16](https://github.com/nsssayom/obadh_engine/issues/16).
+- **Artifact compatibility.** `0.8.0` is built and tested against the `data/autocorrect` and
+  `data/autosuggest` submodule revisions pinned in this commit. Downstreams pinning artifacts should
+  verify with `artifact_fingerprint()`; run `obadh-autocorrect inspect-fst-lexicon --input <bn.fst>`
+  against the resolved submodule to record the exact fingerprints for a private compatibility table.
+
 ## [0.7.1]
 
 A patch release: three orthography fixes in the deterministic core, a terminology sweep, and the
