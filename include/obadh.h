@@ -86,6 +86,19 @@ size_t obadh_autocorrect_suggest(const ObadhAutocorrect *autocorrect,
                                  const uint8_t *roman, size_t roman_len,
                                  size_t limit, uint8_t *out, size_t cap);
 
+/* Active-typing candidate bar for `roman`: the deterministic baseline first,
+ * then corrections. The baseline is always present so the user can keep what
+ * they typed even when it is not a lexicon word. Packed string list. */
+size_t obadh_compose_suggestions(const ObadhAutocorrect *autocorrect,
+                                 const uint8_t *roman, size_t roman_len,
+                                 size_t limit, uint8_t *out, size_t cap);
+
+/* Alternative spellings for an already-composed Bengali `word` (a re-correction
+ * menu for a committed word). Input is Bengali. Packed string list. */
+size_t obadh_autocorrect_word_alternatives(const ObadhAutocorrect *autocorrect,
+                                           const uint8_t *word, size_t word_len,
+                                           size_t limit, uint8_t *out, size_t cap);
+
 /* Auto-insert gate. Returns 1 if a correction is confident enough to apply
  * without asking, else 0. When 1, the replacement text is written snprintf-style
  * to out/cap and its needed length to *needed_len; when 0, *needed_len is 0. */
@@ -117,9 +130,16 @@ int32_t obadh_autosuggest_is_word_established(const ObadhAutosuggest *autosugges
                                               const uint8_t *word, size_t word_len,
                                               uint32_t min_weight);
 
-/* Next-word suggestions for the current context as a packed string list. */
+/* Next-word suggestions for the current session context as a packed string list.
+ * Merges the personal overlay's learned words with the model's. */
 size_t obadh_autosuggest_suggest(ObadhAutosuggest *autosuggest, size_t limit,
                                  uint8_t *out, size_t cap);
+
+/* Stateless next-word suggestions for an explicit Bengali `context` string.
+ * Model-only — does not use or update the session's learned state. */
+size_t obadh_autosuggest_suggest_for_context(const ObadhAutosuggest *autosuggest,
+                                             const uint8_t *context, size_t context_len,
+                                             size_t limit, uint8_t *out, size_t cap);
 
 void obadh_autosuggest_clear_session(ObadhAutosuggest *autosuggest);
 void obadh_autosuggest_clear_personal(ObadhAutosuggest *autosuggest);

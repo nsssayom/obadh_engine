@@ -40,7 +40,7 @@ use crate::autocorrect::{
 };
 use crate::autosuggest::{
     AutosuggestLm, AutosuggestOptions, AutosuggestSession, CommitStrength,
-    PersonalAutosuggestConfig,
+    PersonalAutosuggestConfig, PersonalAutosuggestTextSuggestion,
 };
 use crate::ObadhEngine;
 
@@ -299,6 +299,70 @@ impl ObadhAutocorrect {
             )
             .ok()
     }
+
+    /// Ranked correction candidates for a Roman input, best first.
+    fn suggest_texts(&self, roman: &str, limit: usize) -> Vec<String> {
+        let limit = limit.clamp(1, AUTOCORRECT_RESPONSE_LIMIT);
+        match self.suggest_result(roman) {
+            Some(result) => result
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.text)
+                .take(limit)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The active-typing candidate bar: the deterministic baseline first, then
+    /// corrections, deduplicated. The baseline is always present so the user can
+    /// keep exactly what they typed even when it is not a lexicon word.
+    fn compose_texts(&self, roman: &str, limit: usize) -> Vec<String> {
+        if roman.trim().is_empty() {
+            return Vec::new();
+        }
+        let limit = limit.clamp(1, AUTOCORRECT_RESPONSE_LIMIT);
+        let mut candidates = Vec::with_capacity(limit);
+        candidates.push(self.engine.transliterate(roman));
+        for candidate in self.suggest_texts(roman, limit.saturating_sub(1)) {
+            if candidates.len() >= limit {
+                break;
+            }
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+        candidates
+    }
+
+    /// Alternative spellings for an already-composed Bengali word (a re-correction
+    /// menu). The input is Bengali, and only the lexicon is consulted — no Roman
+    /// repairs or loanword folding.
+    fn word_alternatives_texts(&self, word: &str, limit: usize) -> Vec<String> {
+        if word.trim().is_empty() {
+            return Vec::new();
+        }
+        let limit = limit.clamp(1, AUTOCORRECT_RESPONSE_LIMIT);
+        let options = FstSuggestOptions {
+            max_distance: FST_MAX_LEVENSHTEIN_DISTANCE,
+            max_candidates: AUTOCORRECT_POOL_LIMIT,
+            response_candidates: limit,
+            max_prefix_candidates: limit,
+            ..FstSuggestOptions::default()
+        };
+        match self
+            .lexicon
+            .suggest_with_repaired_baselines_and_loanwords(word, &[], &[], options)
+        {
+            Ok(result) => result
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.text)
+                .take(limit)
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
 }
 
 /// Ranked correction candidates for `roman`, best first, as a packed string list
@@ -316,17 +380,45 @@ pub unsafe extern "C" fn obadh_autocorrect_suggest(
     else {
         return 0;
     };
-    let Some(result) = autocorrect.suggest_result(roman) else {
+    write_str_list(&autocorrect.suggest_texts(roman, limit), out, cap)
+}
+
+/// Active-typing candidate bar for `roman`: the deterministic baseline first,
+/// then corrections, as a packed string list. The baseline is always present so
+/// the user can keep what they typed even when it is not a lexicon word.
+/// snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_compose_suggestions(
+    autocorrect: *const ObadhAutocorrect,
+    roman: *const u8,
+    roman_len: usize,
+    limit: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let (Some(autocorrect), Some(roman)) = (autocorrect.as_ref(), input_str(roman, roman_len))
+    else {
         return 0;
     };
-    let limit = limit.clamp(1, AUTOCORRECT_RESPONSE_LIMIT);
-    let candidates: Vec<String> = result
-        .candidates
-        .into_iter()
-        .map(|candidate| candidate.text)
-        .take(limit)
-        .collect();
-    write_str_list(&candidates, out, cap)
+    write_str_list(&autocorrect.compose_texts(roman, limit), out, cap)
+}
+
+/// Alternative spellings for an already-composed Bengali `word`, as a packed
+/// string list — a re-correction menu for a committed word. Input is Bengali.
+/// snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_word_alternatives(
+    autocorrect: *const ObadhAutocorrect,
+    word: *const u8,
+    word_len: usize,
+    limit: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let (Some(autocorrect), Some(word)) = (autocorrect.as_ref(), input_str(word, word_len)) else {
+        return 0;
+    };
+    write_str_list(&autocorrect.word_alternatives_texts(word, limit), out, cap)
 }
 
 /// The engine's auto-insert gate for `roman`. Returns 1 if a correction is
@@ -485,8 +577,89 @@ pub unsafe extern "C" fn obadh_autosuggest_is_word_established(
     i32::from(autosuggest.session.is_word_established(word, min_weight))
 }
 
+impl ObadhAutosuggest {
+    /// Next-word suggestions for the current session context, merging the
+    /// personal overlay's learned words with the model's: learned words matching
+    /// the current context first, then model candidates, then learned words with
+    /// no context, all deduplicated. Without this merge the user's learned
+    /// out-of-vocabulary words would never surface.
+    fn session_suggestions(&mut self, limit: usize) -> Vec<String> {
+        self.session.set_options(AutosuggestOptions {
+            max_candidates: limit,
+        });
+        if self.session.suggest().is_err() {
+            return Vec::new();
+        }
+        self.session.suggest_personal_text();
+
+        let personal = self.session.personal_text_suggestions().to_vec();
+        let model: Vec<String> = self
+            .session
+            .candidates()
+            .iter()
+            .map(|candidate| candidate.text.to_string())
+            .collect();
+
+        let mut values = Vec::with_capacity(limit);
+        self.push_personal(&personal, true, limit, &mut values);
+        for candidate in model {
+            if values.len() >= limit {
+                break;
+            }
+            if !values.contains(&candidate) {
+                values.push(candidate);
+            }
+        }
+        self.push_personal(&personal, false, limit, &mut values);
+        values
+    }
+
+    fn push_personal(
+        &self,
+        suggestions: &[PersonalAutosuggestTextSuggestion],
+        contextual: bool,
+        limit: usize,
+        values: &mut Vec<String>,
+    ) {
+        for suggestion in suggestions {
+            if values.len() >= limit {
+                break;
+            }
+            if (suggestion.context_len > 0) != contextual {
+                continue;
+            }
+            if let Some(text) = self.session.personal_text_suggestion_text(*suggestion) {
+                let text = text.to_string();
+                if !values.contains(&text) {
+                    values.push(text);
+                }
+            }
+        }
+    }
+
+    /// Stateless model suggestions for an explicit context string, without
+    /// touching or requiring the session's learned state.
+    fn context_suggestions(&self, context: &str, limit: usize) -> Vec<String> {
+        match self._lm.suggest_for_text(
+            context,
+            AutosuggestOptions {
+                max_candidates: limit,
+            },
+        ) {
+            Ok(result) => result
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.text.to_string())
+                .take(limit)
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
 /// Next-word suggestions for the current session context, as a packed string
-/// list (see the module docs). `limit` caps the count. snprintf-style.
+/// list (see the module docs). Merges the personal overlay's learned words with
+/// the model's. `limit` caps the count. snprintf-style.
 #[no_mangle]
 pub unsafe extern "C" fn obadh_autosuggest_suggest(
     autosuggest: *mut ObadhAutosuggest,
@@ -497,21 +670,35 @@ pub unsafe extern "C" fn obadh_autosuggest_suggest(
     let Some(autosuggest) = autosuggest.as_mut() else {
         return 0;
     };
-    let limit = limit.clamp(1, 16);
-    autosuggest.session.set_options(AutosuggestOptions {
-        max_candidates: limit,
-    });
-    if autosuggest.session.suggest().is_err() {
+    write_str_list(
+        &autosuggest.session_suggestions(limit.clamp(1, 16)),
+        out,
+        cap,
+    )
+}
+
+/// Stateless next-word suggestions for an explicit Bengali `context` string, as a
+/// packed string list. Model-only — it does not use or update the session's
+/// learned state. snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_suggest_for_context(
+    autosuggest: *const ObadhAutosuggest,
+    context: *const u8,
+    context_len: usize,
+    limit: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let (Some(autosuggest), Some(context)) =
+        (autosuggest.as_ref(), input_str(context, context_len))
+    else {
         return 0;
-    }
-    let suggestions: Vec<String> = autosuggest
-        .session
-        .candidates()
-        .iter()
-        .map(|candidate| candidate.text.to_string())
-        .take(limit)
-        .collect();
-    write_str_list(&suggestions, out, cap)
+    };
+    write_str_list(
+        &autosuggest.context_suggestions(context, limit.clamp(1, 16)),
+        out,
+        cap,
+    )
 }
 
 /// Clear the session's typing context (but keep learned personal words).
@@ -672,6 +859,134 @@ mod tests {
             );
         }
     }
+
+    fn write_temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("obadh_cabi_{name}"));
+        std::fs::write(&path, bytes).expect("temp write");
+        path
+    }
+
+    fn temp_fst(name: &str, entries: &[(&str, u64)]) -> std::path::PathBuf {
+        let mut sorted = entries.to_vec();
+        sorted.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+        let mut builder = fst::MapBuilder::memory();
+        for (word, frequency) in sorted {
+            builder.insert(word.as_bytes(), frequency).expect("insert");
+        }
+        write_temp(name, builder.into_map().as_fst().as_bytes())
+    }
+
+    #[test]
+    fn autocorrect_compose_puts_the_baseline_first_and_word_alternatives_work() {
+        let path = temp_fst("ac.fst", &[("বাংলা", 10_000), ("বাংলাদেশ", 8_000)]);
+        let path_bytes = path.to_str().unwrap().as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(path_bytes.as_ptr(), path_bytes.len(), ptr::null(), 0)
+        };
+        assert!(!autocorrect.is_null());
+
+        unsafe {
+            // Membership + fingerprint through the ABI.
+            let word = "বাংলা".as_bytes();
+            assert_eq!(
+                obadh_autocorrect_is_lexicon_word(autocorrect, word.as_ptr(), word.len()),
+                1
+            );
+            assert_ne!(obadh_autocorrect_fingerprint(autocorrect), 0);
+
+            // Compose always leads with the deterministic baseline.
+            let roman = b"bangla";
+            let packed = read_sized(|out, cap| {
+                obadh_compose_suggestions(autocorrect, roman.as_ptr(), roman.len(), 5, out, cap)
+            });
+            let composed = parse_str_list(&packed);
+            let baseline = ObadhEngine::new().transliterate("bangla");
+            assert_eq!(composed.first(), Some(&baseline));
+
+            // Word alternatives for a real Bengali word return candidates.
+            let alternatives = read_sized(|out, cap| {
+                obadh_autocorrect_word_alternatives(
+                    autocorrect,
+                    word.as_ptr(),
+                    word.len(),
+                    5,
+                    out,
+                    cap,
+                )
+            });
+            assert!(!parse_str_list(&alternatives).is_empty());
+
+            obadh_autocorrect_free(autocorrect);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn autosuggest_learns_a_word_and_surfaces_it_through_the_abi() {
+        use crate::autosuggest::artifact::test_support::{build_fixture, Row};
+
+        let tokens = ["<pad>", "<bos>", "<unk>", "আমি", "আজ", "ভাত", "খাই"];
+        let fixture = build_fixture(
+            &tokens,
+            &[(5, 100, 100), (6, 90, 90)],
+            &[Row {
+                context: vec![3],
+                candidates: vec![(6, 20, 20), (5, 10, 10)],
+            }],
+        );
+        let path = write_temp("as.bin", &fixture);
+        let path_bytes = path.to_str().unwrap().as_bytes();
+
+        let autosuggest = unsafe { obadh_autosuggest_open(path_bytes.as_ptr(), path_bytes.len()) };
+        assert!(!autosuggest.is_null());
+
+        unsafe {
+            let name = "নাসির".as_bytes();
+            // Not established yet.
+            assert_eq!(
+                obadh_autosuggest_established_weight(autosuggest, name.as_ptr(), name.len()),
+                0
+            );
+            // A manually-added commit establishes it with the mapped weight.
+            assert_eq!(
+                obadh_autosuggest_commit(
+                    autosuggest,
+                    name.as_ptr(),
+                    name.len(),
+                    OBADH_COMMIT_MANUALLY_ADDED_CODE
+                ),
+                1
+            );
+            assert_eq!(
+                obadh_autosuggest_established_weight(autosuggest, name.as_ptr(), name.len()),
+                u32::from(CommitStrength::ManuallyAdded.weight())
+            );
+            assert_eq!(
+                obadh_autosuggest_is_word_established(autosuggest, name.as_ptr(), name.len(), 2),
+                1
+            );
+
+            // Session suggest (with the personal merge) and stateless context
+            // suggest both return without error.
+            let _ = read_sized(|out, cap| obadh_autosuggest_suggest(autosuggest, 5, out, cap));
+            let context = "আমি".as_bytes();
+            let _ = read_sized(|out, cap| {
+                obadh_autosuggest_suggest_for_context(
+                    autosuggest,
+                    context.as_ptr(),
+                    context.len(),
+                    5,
+                    out,
+                    cap,
+                )
+            });
+
+            obadh_autosuggest_free(autosuggest);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    const OBADH_COMMIT_MANUALLY_ADDED_CODE: u32 = 2;
 
     /// Executable contract: the shipped C header must declare every exported
     /// symbol and pin the same ABI version, so the header cannot drift from the
