@@ -176,6 +176,16 @@ produces a Bengali baseline. The autocorrect runtime then retrieves valid
 lexicon candidates from compact FST artifacts and ranks them through bounded,
 explainable channels.
 
+`AutocorrectEngine::decide` returns an `AutocorrectDecision { input, candidates,
+replacement }`. The `replacement` field is the auto-insert gate:
+`replacement.is_some()` means a correction is confident enough to apply without
+asking (a lexicon edit that beats the baseline by a margin — never a prefix or
+skeleton guess). `suggest` is a convenience wrapper that returns only
+`candidates` and discards this gate, so downstreams gating auto-insert should
+call `decide`. Note that a request built from `autocorrect_request(roman)`
+carries the roman buffer, which suppresses auto-replacement by default — set
+`AutocorrectConfig::auto_replace_roman_input` for true auto-insert.
+
 Runtime channels:
 
 - exact deterministic baseline lookup
