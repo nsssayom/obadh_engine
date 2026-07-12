@@ -44,6 +44,9 @@ jobs:
       - name: CLI tests
         run: cargo test --locked --features cli
 
+      - name: C ABI tests
+        run: cargo test --locked --features cabi
+
       - name: WASM target check
         run: >
           cargo check --locked --target wasm32-unknown-unknown

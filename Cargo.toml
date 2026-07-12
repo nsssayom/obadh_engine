@@ -82,6 +82,10 @@ wasm-bindgen-test = "0.3.37" # For testing WASM
 [features]
 default = []
 cli = ["dep:clap", "dep:unicode-normalization", "dep:zip"]
+# Stable C ABI for native downstreams (iOS/Android keyboards). Off by default so
+# the default library pays nothing for it. Native only — it loads artifacts via
+# memory-mapping, which is `cfg(not(wasm32))`.
+cabi = []
 wasm = [
     "dep:console_error_panic_hook",
     "dep:serde-wasm-bindgen",

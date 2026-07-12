@@ -1,0 +1,707 @@
+//! Stable C ABI for native downstreams (iOS/Android keyboards).
+//!
+//! Enabled by the `cabi` feature (off by default). Every entry point is
+//! `extern "C"` with a versioned, C-friendly contract so the FFI surface is the
+//! engine's to evolve rather than being re-derived, subtly differently, in each
+//! downstream.
+//!
+//! # Conventions
+//!
+//! **Sizing (snprintf-style).** Every function that writes bytes takes an output
+//! pointer and capacity and *returns the number of bytes the result needs*. It
+//! copies only when the buffer is large enough. A caller passes a small stack
+//! scratch, and reallocates and calls again only if the return exceeds the
+//! capacity — a single crossing in the common case.
+//!
+//! **String lists (count + length-prefixed records, no delimiter).** A list is
+//! packed into one buffer as little-endian `[u32 count]` followed by `count`
+//! records of `[u32 byte_len][utf8 bytes]`. There is no in-band separator, so a
+//! candidate may contain any bytes (including a newline) without corrupting the
+//! framing, and an empty string is represented faithfully.
+//!
+//! **Handles.** Opaque pointers created by `*_open` / `*_new` and released by the
+//! matching `*_free`. A handle must not be used after it is freed, and a single
+//! handle must not be used from multiple threads concurrently (there is no
+//! internal locking; the caller owns synchronization).
+//!
+//! **UTF-8.** Inputs are `(ptr, len)` UTF-8 byte spans; invalid UTF-8 makes the
+//! call a no-op (returns 0 / false / null). A zero length is the empty string.
+
+#![allow(clippy::missing_safety_doc)]
+
+use std::fs::File;
+use std::path::Path;
+use std::slice;
+
+use crate::autocorrect::{
+    key_slip_repaired_outputs, roman_repaired_outputs, FstLexicon, FstLoanwordMatch,
+    FstRepairedBaseline, FstSuggestOptions, FstSuggestResult, LoanwordLexicon,
+    LoanwordSearchOptions, RomanRepairOptions, FST_MAX_LEVENSHTEIN_DISTANCE,
+};
+use crate::autosuggest::{
+    AutosuggestLm, AutosuggestOptions, AutosuggestSession, CommitStrength,
+    PersonalAutosuggestConfig,
+};
+use crate::ObadhEngine;
+
+/// Version of this C ABI contract. Bumped when the ABI changes in a way a
+/// compiled downstream must notice; independent of the crate's semver so
+/// additive symbols do not force downstreams to rebuild.
+pub const OBADH_ABI_VERSION: u32 = 1;
+
+const AUTOCORRECT_POOL_LIMIT: usize = 24;
+const AUTOCORRECT_RESPONSE_LIMIT: usize = 8;
+
+// --------------------------------------------------------------- marshalling
+
+/// Borrow a UTF-8 string from a raw `(ptr, len)` span. `None` on invalid UTF-8;
+/// a zero length is the empty string (pointer may be null).
+unsafe fn input_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
+    if len == 0 {
+        return Some("");
+    }
+    if ptr.is_null() {
+        return None;
+    }
+    std::str::from_utf8(slice::from_raw_parts(ptr, len)).ok()
+}
+
+/// snprintf-style writer: copy `bytes` into `out`/`cap` only if they fit, and
+/// always return the number of bytes needed.
+unsafe fn write_bytes(bytes: &[u8], out: *mut u8, cap: usize) -> usize {
+    if !out.is_null() && cap >= bytes.len() {
+        slice::from_raw_parts_mut(out, cap)[..bytes.len()].copy_from_slice(bytes);
+    }
+    bytes.len()
+}
+
+/// Pack a list of strings into `[u32 count][ (u32 len)(bytes) ... ]` and write it
+/// with [`write_bytes`]. Returns the total bytes needed.
+unsafe fn write_str_list(items: &[String], out: *mut u8, cap: usize) -> usize {
+    let mut packed = Vec::with_capacity(4 + items.iter().map(|s| 4 + s.len()).sum::<usize>());
+    packed.extend_from_slice(&(items.len() as u32).to_le_bytes());
+    for item in items {
+        packed.extend_from_slice(&(item.len() as u32).to_le_bytes());
+        packed.extend_from_slice(item.as_bytes());
+    }
+    write_bytes(&packed, out, cap)
+}
+
+// -------------------------------------------------------------------- version
+
+/// The C ABI contract version. See [`OBADH_ABI_VERSION`].
+#[no_mangle]
+pub extern "C" fn obadh_abi_version() -> u32 {
+    OBADH_ABI_VERSION
+}
+
+/// The crate version string (e.g. `"0.8.0"`), snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_engine_version(out: *mut u8, cap: usize) -> usize {
+    write_bytes(env!("CARGO_PKG_VERSION").as_bytes(), out, cap)
+}
+
+// ------------------------------------------------------- deterministic engine
+
+/// Create a deterministic transliteration engine handle. Free with
+/// [`obadh_engine_free`].
+#[no_mangle]
+pub extern "C" fn obadh_engine_new() -> *mut ObadhEngine {
+    Box::into_raw(Box::new(ObadhEngine::new()))
+}
+
+/// Release an engine handle created by [`obadh_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn obadh_engine_free(engine: *mut ObadhEngine) {
+    if !engine.is_null() {
+        drop(Box::from_raw(engine));
+    }
+}
+
+/// Transliterate Roman input to Bengali (strict: unsupported input is returned
+/// unchanged). snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_transliterate(
+    engine: *const ObadhEngine,
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let (Some(engine), Some(input)) = (engine.as_ref(), input_str(input, input_len)) else {
+        return 0;
+    };
+    write_bytes(engine.transliterate(input).as_bytes(), out, cap)
+}
+
+/// Transliterate Roman input to Bengali after dropping unsupported characters.
+/// snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_transliterate_lenient(
+    engine: *const ObadhEngine,
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let (Some(engine), Some(input)) = (engine.as_ref(), input_str(input, input_len)) else {
+        return 0;
+    };
+    write_bytes(engine.transliterate_lenient(input).as_bytes(), out, cap)
+}
+
+// ------------------------------------------------------------------ autocorrect
+
+/// Active-word autocorrect over the memory-mapped FST lexicon. Owns its own
+/// deterministic engine, so suggest/decision calls need only this handle.
+pub struct ObadhAutocorrect {
+    engine: ObadhEngine,
+    lexicon: FstLexicon<memmap2::Mmap>,
+    loanwords: Option<LoanwordLexicon<Vec<u8>>>,
+}
+
+unsafe fn mmap_fst_lexicon(path: &str) -> Option<FstLexicon<memmap2::Mmap>> {
+    let file = File::open(Path::new(path)).ok()?;
+    let mmap = memmap2::MmapOptions::new().map(&file).ok()?;
+    Some(FstLexicon::from_map(fst::Map::new(mmap).ok()?))
+}
+
+/// Open an autocorrect handle from a `bn.fst` path and an optional loanword FST
+/// path (pass length 0 to omit). Returns null on failure. Free with
+/// [`obadh_autocorrect_free`].
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_open(
+    fst_path: *const u8,
+    fst_path_len: usize,
+    loanword_path: *const u8,
+    loanword_path_len: usize,
+) -> *mut ObadhAutocorrect {
+    let Some(fst_path) = input_str(fst_path, fst_path_len) else {
+        return std::ptr::null_mut();
+    };
+    let Some(lexicon) = mmap_fst_lexicon(fst_path) else {
+        return std::ptr::null_mut();
+    };
+    let loanwords = match input_str(loanword_path, loanword_path_len) {
+        Some(path) if !path.is_empty() => match std::fs::read(path) {
+            Ok(bytes) => match LoanwordLexicon::from_bytes(bytes) {
+                Ok(loanwords) => Some(loanwords),
+                Err(_) => return std::ptr::null_mut(),
+            },
+            Err(_) => return std::ptr::null_mut(),
+        },
+        Some(_) => None,
+        None => return std::ptr::null_mut(),
+    };
+    Box::into_raw(Box::new(ObadhAutocorrect {
+        engine: ObadhEngine::new(),
+        lexicon,
+        loanwords,
+    }))
+}
+
+/// Release an autocorrect handle.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_free(autocorrect: *mut ObadhAutocorrect) {
+    if !autocorrect.is_null() {
+        drop(Box::from_raw(autocorrect));
+    }
+}
+
+/// Content fingerprint of the loaded lexicon FST, for the crate ↔ artifact
+/// compatibility check. See [`crate::fingerprint`].
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_fingerprint(
+    autocorrect: *const ObadhAutocorrect,
+) -> u64 {
+    match autocorrect.as_ref() {
+        Some(autocorrect) => autocorrect.lexicon.artifact_fingerprint(),
+        None => 0,
+    }
+}
+
+/// Whether `word` is an exact entry in the lexicon. 1 if present, 0 if absent or
+/// on invalid input. A real word must never be auto-corrected.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_is_lexicon_word(
+    autocorrect: *const ObadhAutocorrect,
+    word: *const u8,
+    word_len: usize,
+) -> i32 {
+    let (Some(autocorrect), Some(word)) = (autocorrect.as_ref(), input_str(word, word_len)) else {
+        return 0;
+    };
+    i32::from(autocorrect.lexicon.exact_frequency(word).is_some())
+}
+
+impl ObadhAutocorrect {
+    /// Full FST suggest result for a Roman input: deterministic baseline, Roman
+    /// repairs, QWERTY key-slip repairs, and loanword matches folded into one
+    /// ranked result. Mirrors the reference runtime wiring.
+    fn suggest_result(&self, roman: &str) -> Option<FstSuggestResult> {
+        if roman.trim().is_empty() {
+            return None;
+        }
+        let baseline = self.engine.transliterate(roman);
+
+        let mut repairs =
+            roman_repaired_outputs(roman, &baseline, RomanRepairOptions::default(), |text| {
+                self.engine.transliterate(text)
+            });
+        repairs.extend(key_slip_repaired_outputs(
+            roman,
+            &baseline,
+            self.lexicon.exact_frequency(&baseline),
+            |text| self.engine.transliterate(text),
+            |word| self.lexicon.exact_frequency(word).is_some(),
+        ));
+        let repaired_baselines = repairs
+            .iter()
+            .map(|repair| FstRepairedBaseline {
+                roman_input: repair.roman_input.as_str(),
+                bangla_output: repair.bangla_output.as_str(),
+                repair_kind: repair.repair_kind,
+                repair_cost: repair.repair_cost,
+            })
+            .collect::<Vec<_>>();
+
+        let loanword_suggestions = match &self.loanwords {
+            Some(loanwords) => loanwords
+                .suggestions(roman, LoanwordSearchOptions::for_input(roman))
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let loanword_matches = loanword_suggestions
+            .iter()
+            .map(|entry| FstLoanwordMatch {
+                roman_input: roman,
+                roman_repair: entry.english.as_str(),
+                bangla_output: entry.bangla.as_str(),
+                frequency: entry.frequency,
+                repair_kind: entry.kind.as_str(),
+                repair_cost: entry.edit_cost,
+            })
+            .collect::<Vec<_>>();
+
+        let options = FstSuggestOptions {
+            max_distance: FST_MAX_LEVENSHTEIN_DISTANCE,
+            max_candidates: AUTOCORRECT_POOL_LIMIT,
+            response_candidates: AUTOCORRECT_RESPONSE_LIMIT,
+            max_prefix_candidates: AUTOCORRECT_RESPONSE_LIMIT,
+            ..FstSuggestOptions::default()
+        };
+        self.lexicon
+            .suggest_with_repaired_baselines_and_loanwords(
+                &baseline,
+                &repaired_baselines,
+                &loanword_matches,
+                options,
+            )
+            .ok()
+    }
+}
+
+/// Ranked correction candidates for `roman`, best first, as a packed string list
+/// (see the module docs). `limit` caps the number returned. snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_suggest(
+    autocorrect: *const ObadhAutocorrect,
+    roman: *const u8,
+    roman_len: usize,
+    limit: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let (Some(autocorrect), Some(roman)) = (autocorrect.as_ref(), input_str(roman, roman_len))
+    else {
+        return 0;
+    };
+    let Some(result) = autocorrect.suggest_result(roman) else {
+        return 0;
+    };
+    let limit = limit.clamp(1, AUTOCORRECT_RESPONSE_LIMIT);
+    let candidates: Vec<String> = result
+        .candidates
+        .into_iter()
+        .map(|candidate| candidate.text)
+        .take(limit)
+        .collect();
+    write_str_list(&candidates, out, cap)
+}
+
+/// The engine's auto-insert gate for `roman`. Returns 1 if a correction is
+/// confident enough to apply without asking (a confident single-edit lexicon
+/// word over a non-word baseline), 0 otherwise. When 1, the replacement text is
+/// written snprintf-style to `out`/`cap` and its needed length to `*needed_len`;
+/// when 0, `*needed_len` is set to 0. See [`FstSuggestResult::auto_replacement`].
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_should_replace(
+    autocorrect: *const ObadhAutocorrect,
+    roman: *const u8,
+    roman_len: usize,
+    out: *mut u8,
+    cap: usize,
+    needed_len: *mut usize,
+) -> i32 {
+    if let Some(needed_len) = needed_len.as_mut() {
+        *needed_len = 0;
+    }
+    let (Some(autocorrect), Some(roman)) = (autocorrect.as_ref(), input_str(roman, roman_len))
+    else {
+        return 0;
+    };
+    let Some(result) = autocorrect.suggest_result(roman) else {
+        return 0;
+    };
+    let Some(replacement) = result.auto_replacement() else {
+        return 0;
+    };
+    let written = write_bytes(replacement.text.as_bytes(), out, cap);
+    if let Some(needed_len) = needed_len.as_mut() {
+        *needed_len = written;
+    }
+    1
+}
+
+// ------------------------------------------------------------------ autosuggest
+
+/// Next-word autosuggest over committed Bengali, with the on-device personal
+/// overlay.
+///
+/// The session borrows the LM. The LM is boxed (heap-stable address) and the
+/// borrow is extended to `'static`; `session` is declared before `lm` so it is
+/// dropped first, ending the borrow before the LM is freed. This makes the
+/// self-reference sound.
+pub struct ObadhAutosuggest {
+    session: AutosuggestSession<'static, memmap2::Mmap>,
+    _lm: Box<AutosuggestLm<memmap2::Mmap>>,
+}
+
+/// Open an autosuggest handle from an n-gram artifact path. Returns null on
+/// failure. Free with [`obadh_autosuggest_free`].
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_open(
+    path: *const u8,
+    path_len: usize,
+) -> *mut ObadhAutosuggest {
+    let Some(path) = input_str(path, path_len) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(lm) = AutosuggestLm::from_path(path) else {
+        return std::ptr::null_mut();
+    };
+    let lm = Box::new(lm);
+    // SAFETY: `lm` is boxed, so its address is stable for the box's lifetime, and
+    // `session` (declared first) is dropped before `_lm`, so the borrow never
+    // outlives the LM.
+    let lm_ref: &'static AutosuggestLm<memmap2::Mmap> =
+        &*(lm.as_ref() as *const AutosuggestLm<memmap2::Mmap>);
+    let session = AutosuggestSession::with_personal_config(
+        lm_ref,
+        PersonalAutosuggestConfig::default(),
+        AutosuggestOptions { max_candidates: 8 },
+    );
+    Box::into_raw(Box::new(ObadhAutosuggest { session, _lm: lm }))
+}
+
+/// Release an autosuggest handle.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_free(autosuggest: *mut ObadhAutosuggest) {
+    if !autosuggest.is_null() {
+        drop(Box::from_raw(autosuggest));
+    }
+}
+
+/// Content fingerprint of the loaded n-gram artifact. See [`crate::fingerprint`].
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_fingerprint(
+    autosuggest: *const ObadhAutosuggest,
+) -> u64 {
+    match autosuggest.as_ref() {
+        Some(autosuggest) => autosuggest._lm.artifact_fingerprint(),
+        None => 0,
+    }
+}
+
+fn commit_strength_from_code(code: u32) -> CommitStrength {
+    match code {
+        1 => CommitStrength::CorrectionRejected,
+        2 => CommitStrength::ManuallyAdded,
+        _ => CommitStrength::Committed,
+    }
+}
+
+/// Commit a token into the session context, learning it into the personal
+/// overlay. `strength` is 0 = ordinary commit, 1 = correction-rejected,
+/// 2 = manually-added (see `CommitStrength`); any other value is treated as 0.
+/// Returns 1 if the token was learned, 0 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_commit(
+    autosuggest: *mut ObadhAutosuggest,
+    token: *const u8,
+    token_len: usize,
+    strength: u32,
+) -> i32 {
+    let (Some(autosuggest), Some(token)) = (autosuggest.as_mut(), input_str(token, token_len))
+    else {
+        return 0;
+    };
+    let learned = autosuggest
+        .session
+        .commit_token_with_strength(token, commit_strength_from_code(strength))
+        .unwrap_or(false);
+    i32::from(learned)
+}
+
+/// Post-decay evidence that the user has established `word` as their own
+/// vocabulary. 0 if never committed. See
+/// [`AutosuggestSession::established_weight`](crate::AutosuggestSession::established_weight).
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_established_weight(
+    autosuggest: *const ObadhAutosuggest,
+    word: *const u8,
+    word_len: usize,
+) -> u32 {
+    let (Some(autosuggest), Some(word)) = (autosuggest.as_ref(), input_str(word, word_len)) else {
+        return 0;
+    };
+    u32::from(autosuggest.session.established_weight(word))
+}
+
+/// Whether the user has established `word` with at least `min_weight` post-decay
+/// evidence. A downstream protecting learned words from auto-correction gates on
+/// this. Returns 1 or 0.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_is_word_established(
+    autosuggest: *const ObadhAutosuggest,
+    word: *const u8,
+    word_len: usize,
+    min_weight: u32,
+) -> i32 {
+    let (Some(autosuggest), Some(word)) = (autosuggest.as_ref(), input_str(word, word_len)) else {
+        return 0;
+    };
+    let min_weight = min_weight.min(u32::from(u16::MAX)) as u16;
+    i32::from(autosuggest.session.is_word_established(word, min_weight))
+}
+
+/// Next-word suggestions for the current session context, as a packed string
+/// list (see the module docs). `limit` caps the count. snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_suggest(
+    autosuggest: *mut ObadhAutosuggest,
+    limit: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let Some(autosuggest) = autosuggest.as_mut() else {
+        return 0;
+    };
+    let limit = limit.clamp(1, 16);
+    autosuggest.session.set_options(AutosuggestOptions {
+        max_candidates: limit,
+    });
+    if autosuggest.session.suggest().is_err() {
+        return 0;
+    }
+    let suggestions: Vec<String> = autosuggest
+        .session
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.text.to_string())
+        .take(limit)
+        .collect();
+    write_str_list(&suggestions, out, cap)
+}
+
+/// Clear the session's typing context (but keep learned personal words).
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_clear_session(autosuggest: *mut ObadhAutosuggest) {
+    if let Some(autosuggest) = autosuggest.as_mut() {
+        autosuggest.session.clear_context();
+    }
+}
+
+/// Clear the on-device personal overlay (learned words).
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_clear_personal(autosuggest: *mut ObadhAutosuggest) {
+    if let Some(autosuggest) = autosuggest.as_mut() {
+        autosuggest.session.personal_mut().clear();
+    }
+}
+
+/// Export the personal overlay as a compact snapshot, snprintf-style. Persist it
+/// and restore with [`obadh_autosuggest_import_personal`].
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_export_personal(
+    autosuggest: *const ObadhAutosuggest,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let Some(autosuggest) = autosuggest.as_ref() else {
+        return 0;
+    };
+    let mut bytes = Vec::with_capacity(autosuggest.session.personal_snapshot_len());
+    autosuggest.session.write_personal_snapshot_into(&mut bytes);
+    write_bytes(&bytes, out, cap)
+}
+
+/// Import a personal-overlay snapshot produced by
+/// [`obadh_autosuggest_export_personal`]. Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autosuggest_import_personal(
+    autosuggest: *mut ObadhAutosuggest,
+    input: *const u8,
+    input_len: usize,
+) -> i32 {
+    if input.is_null() || input_len == 0 {
+        return 0;
+    }
+    let Some(autosuggest) = autosuggest.as_mut() else {
+        return 0;
+    };
+    let bytes = slice::from_raw_parts(input, input_len);
+    i32::from(autosuggest.session.import_personal_snapshot(bytes).is_ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr;
+
+    /// Read a value back through the snprintf-style contract: call once with a
+    /// null buffer to learn the length, allocate, call again to fill it.
+    unsafe fn read_sized(mut writer: impl FnMut(*mut u8, usize) -> usize) -> Vec<u8> {
+        let needed = writer(ptr::null_mut(), 0);
+        let mut buffer = vec![0_u8; needed];
+        let written = writer(buffer.as_mut_ptr(), buffer.len());
+        assert_eq!(written, needed);
+        buffer
+    }
+
+    fn parse_str_list(bytes: &[u8]) -> Vec<String> {
+        let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+        let mut offset = 4;
+        let mut items = Vec::with_capacity(count);
+        for _ in 0..count {
+            let len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+            items.push(String::from_utf8(bytes[offset..offset + len].to_vec()).unwrap());
+            offset += len;
+        }
+        items
+    }
+
+    #[test]
+    fn abi_version_is_pinned() {
+        assert_eq!(obadh_abi_version(), OBADH_ABI_VERSION);
+    }
+
+    #[test]
+    fn engine_transliterates_through_the_snprintf_contract() {
+        let engine = obadh_engine_new();
+        let input = b"ami";
+        let output = unsafe {
+            read_sized(|out, cap| {
+                obadh_transliterate(engine, input.as_ptr(), input.len(), out, cap)
+            })
+        };
+        assert_eq!(String::from_utf8(output).unwrap(), "আমি");
+        unsafe { obadh_engine_free(engine) };
+    }
+
+    #[test]
+    fn engine_version_matches_the_crate() {
+        let bytes = unsafe { read_sized(|out, cap| obadh_engine_version(out, cap)) };
+        assert_eq!(String::from_utf8(bytes).unwrap(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn str_list_round_trips_including_empty_and_newline() {
+        // The count+length framing must survive an empty string and a candidate
+        // that contains the newline a delimiter-join would have split on.
+        let items = vec!["আমি".to_string(), String::new(), "ভাত\nখাই".to_string()];
+        let bytes = unsafe { read_sized(|out, cap| write_str_list(&items, out, cap)) };
+        assert_eq!(parse_str_list(&bytes), items);
+    }
+
+    #[test]
+    fn input_str_handles_empty_null_and_invalid() {
+        unsafe {
+            assert_eq!(input_str(ptr::null(), 0), Some(""));
+            assert_eq!(input_str(ptr::null(), 4), None);
+            let valid = b"hi";
+            assert_eq!(input_str(valid.as_ptr(), valid.len()), Some("hi"));
+            let invalid = [0xff_u8, 0xfe];
+            assert_eq!(input_str(invalid.as_ptr(), invalid.len()), None);
+        }
+    }
+
+    #[test]
+    fn opening_a_missing_artifact_returns_null_not_a_crash() {
+        let path = b"/nonexistent/obadh/bn.fst";
+        let autocorrect =
+            unsafe { obadh_autocorrect_open(path.as_ptr(), path.len(), ptr::null(), 0) };
+        assert!(autocorrect.is_null());
+        let autosuggest = unsafe { obadh_autosuggest_open(path.as_ptr(), path.len()) };
+        assert!(autosuggest.is_null());
+        // Freeing null is a safe no-op.
+        unsafe {
+            obadh_autocorrect_free(ptr::null_mut());
+            obadh_autosuggest_free(ptr::null_mut());
+            obadh_engine_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn null_handles_are_safe_no_ops() {
+        let word = b"word";
+        unsafe {
+            assert_eq!(
+                obadh_transliterate(ptr::null(), word.as_ptr(), word.len(), ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                obadh_autocorrect_is_lexicon_word(ptr::null(), word.as_ptr(), word.len()),
+                0
+            );
+            assert_eq!(obadh_autocorrect_fingerprint(ptr::null()), 0);
+            assert_eq!(
+                obadh_autosuggest_established_weight(ptr::null(), word.as_ptr(), word.len()),
+                0
+            );
+        }
+    }
+
+    /// Executable contract: the shipped C header must declare every exported
+    /// symbol and pin the same ABI version, so the header cannot drift from the
+    /// Rust surface.
+    #[test]
+    fn c_header_matches_the_exported_surface() {
+        let source = include_str!("cabi.rs");
+        let header = include_str!("../include/obadh.h");
+
+        let marker = "extern \"C\" fn ";
+        let mut missing = Vec::new();
+        for line in source.lines() {
+            let Some(index) = line.find(marker) else {
+                continue;
+            };
+            let name: String = line[index + marker.len()..]
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect();
+            if name.starts_with("obadh_") && !header.contains(&name) {
+                missing.push(name);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "C header is missing declarations for: {missing:?}"
+        );
+        assert!(
+            header.contains(&format!("#define OBADH_ABI_VERSION {OBADH_ABI_VERSION}")),
+            "C header ABI version does not match OBADH_ABI_VERSION"
+        );
+    }
+}
