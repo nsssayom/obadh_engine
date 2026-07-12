@@ -6,6 +6,34 @@ Semantic Versioning (with the `0.x` caveat that the minor version carries breaki
 
 Releases before `0.7.0` predate this file; see the git history and tags for those.
 
+## [0.8.1]
+
+A patch on the `0.8.0` C ABI, from a gap analysis against the iOS keyboard's `ObadhBridge` surface —
+one bug fix and three additive functions. The ABI version stays `1` (no signature changes), and the
+deterministic core is untouched.
+
+### Fixed
+
+- **`obadh_autosuggest_suggest` now surfaces the user's learned words.** It returned only the model's
+  candidates and never consulted the personal overlay, so learned out-of-vocabulary words — the whole
+  point of the overlay — never appeared. It now merges like the reference bridge: learned words
+  matching the current context first, then model candidates, then learned words with no context, all
+  deduplicated.
+
+### Added
+
+- **`obadh_compose_suggestions`** — the active-typing candidate bar: the deterministic baseline first,
+  then corrections. The baseline is always present so the user can keep exactly what they typed even
+  when it is not a lexicon word. (`obadh_autocorrect_suggest` returns corrections only.)
+- **`obadh_autocorrect_word_alternatives`** — alternative spellings for an already-composed *Bengali*
+  word, a re-correction menu; lexicon-only, no Roman repairs.
+- **`obadh_autosuggest_suggest_for_context`** — stateless model suggestions for an explicit context
+  string, without using or updating the session's learned state.
+
+The C ABI now exports 26 symbols. Autosuggest's internal `artifact` module became `pub(crate)` so the
+C-ABI end-to-end tests can build fixtures; nothing is re-exported at the crate root, so the Rust
+public API is unchanged.
+
 ## [0.8.0]
 
 Downstream-integration release, driven by feedback from an iOS keyboard built on the engine. Four
