@@ -928,6 +928,81 @@ mod tests {
     }
 
     #[test]
+    fn detailed_wire_format_is_exhaustive_and_exact() {
+        use crate::autocorrect::FstCandidateSource::*;
+
+        // Every source variant, with a mix of present / absent roman_repair_cost,
+        // an empty text, and multi-byte text — all round-tripping the frozen
+        // layout exactly.
+        let sources = [
+            (Exact, 0u8),
+            (EditDistance, 1),
+            (DiacriticEdit, 2),
+            (OrthographicVowelLengthEdit, 3),
+            (PrefixCompletion, 4),
+            (StemSuffixCompletion, 5),
+            (SkeletonVowelDrop, 6),
+            (ConsonantConfusion, 7),
+            (RomanRepairExact, 8),
+            (EnglishLoanwordExact, 9),
+            (EnglishLoanwordFuzzy, 10),
+        ];
+        let candidates: Vec<FstCandidate> = sources
+            .iter()
+            .enumerate()
+            .map(|(i, (source, _))| FstCandidate {
+                text: if i == 0 {
+                    String::new()
+                } else {
+                    format!("শব্দ{i}")
+                },
+                source: *source,
+                edit_cost: i as u16,
+                frequency: (i as u64) * 1000,
+                score: 0,
+                roman_repair: None,
+                roman_repair_kind: None,
+                // odd indices carry a roman repair cost; even ones do not (→ 0xFFFF)
+                roman_repair_cost: if i % 2 == 1 { Some(i as u16) } else { None },
+            })
+            .collect();
+
+        let bytes = unsafe { read_sized(|out, cap| write_detailed_list(&candidates, out, cap)) };
+        let records = parse_detailed_list(&bytes);
+        assert_eq!(records.len(), candidates.len());
+        for (i, (record, candidate)) in records.iter().zip(&candidates).enumerate() {
+            assert_eq!(record.text, candidate.text, "text {i}");
+            assert_eq!(record.source, sources[i].1, "stable code {i}");
+            assert_eq!(record.edit_cost, candidate.edit_cost, "edit_cost {i}");
+            assert_eq!(record.frequency, candidate.frequency, "frequency {i}");
+            let expected_rrc = candidate.roman_repair_cost.unwrap_or(0xFFFF);
+            assert_eq!(
+                record.roman_repair_cost, expected_rrc,
+                "roman_repair_cost {i}"
+            );
+        }
+
+        // Empty list is a bare count of 0.
+        let empty = unsafe { read_sized(|out, cap| write_detailed_list(&[], out, cap)) };
+        assert_eq!(empty, 0u32.to_le_bytes());
+        assert!(parse_detailed_list(&empty).is_empty());
+
+        // snprintf contract: a too-small buffer writes nothing and still returns
+        // the full needed length.
+        let needed = unsafe { write_detailed_list(&candidates, ptr::null_mut(), 0) };
+        let mut small = vec![0u8; needed - 1];
+        let reported = unsafe { write_detailed_list(&candidates, small.as_mut_ptr(), small.len()) };
+        assert_eq!(
+            reported, needed,
+            "too-small buffer still reports needed length"
+        );
+        assert!(
+            small.iter().all(|&b| b == 0),
+            "too-small buffer is not written"
+        );
+    }
+
+    #[test]
     fn suggest_detailed_records_parse_with_sane_fields() {
         let path = temp_fst("detailed.fst", &[("বাংলা", 137381), ("বাংলাদেশ", 8000)]);
         let path_bytes = path.to_str().unwrap().as_bytes();
@@ -1009,6 +1084,104 @@ mod tests {
             assert!(top.frequency > 100_000, "বাংলা is a very common word");
             obadh_autocorrect_free(autocorrect);
         }
+    }
+
+    /// Real-data robustness sweep: drive `suggest_detailed` over a large, diverse
+    /// input set against the shipped 845k-word `bn.fst` and assert every packed
+    /// buffer parses cleanly, every source code is in range, and nothing panics.
+    /// Skips when the submodules are unresolved (CI), runs locally.
+    #[test]
+    fn suggest_detailed_is_robust_over_real_bn_fst() {
+        let fst_path = "data/autocorrect/models/bn.fst";
+        let loan_path = "data/autocorrect/models/en_bn_loanwords.fst";
+        if !std::path::Path::new(fst_path).exists() {
+            eprintln!("skip: {fst_path} not resolved");
+            return;
+        }
+        let fst_bytes = fst_path.as_bytes();
+        let loan_bytes = loan_path.as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(
+                fst_bytes.as_ptr(),
+                fst_bytes.len(),
+                loan_bytes.as_ptr(),
+                loan_bytes.len(),
+            )
+        };
+        assert!(!autocorrect.is_null());
+
+        // Curated typos + edge cases + a fixed-seed pseudo-random roman soup.
+        let mut inputs: Vec<String> = vec![
+            "".into(),
+            " ".into(),
+            "   ".into(),
+            "a".into(),
+            "banhla".into(),
+            "manus".into(),
+            "bondu".into(),
+            "sriti".into(),
+            "computer".into(),
+            "bigyan".into(),
+            "123".into(),
+            "!!!".into(),
+            "a,b,c".into(),
+            "কম্পিউটার".into(),
+            "日本".into(),
+            "aaaaaaaaaaaaaaaa".into(),
+        ];
+        let alphabet: &[u8] = b"aAiIuUeEoOkgcjtTdDnpbmyrlshHNzwxRSC.,-0123456789 ";
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..600 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let len = 1 + (state >> 40) as usize % 16;
+            let word: String = (0..len)
+                .map(|_| {
+                    state = state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    alphabet[(state >> 40) as usize % alphabet.len()] as char
+                })
+                .collect();
+            inputs.push(word);
+        }
+
+        let mut total_records = 0usize;
+        for input in &inputs {
+            let bytes = input.as_bytes();
+            let packed = unsafe {
+                read_sized(|out, cap| {
+                    obadh_autocorrect_suggest_detailed(
+                        autocorrect,
+                        bytes.as_ptr(),
+                        bytes.len(),
+                        5,
+                        out,
+                        cap,
+                    )
+                })
+            };
+            if packed.is_empty() {
+                continue; // whitespace/empty inputs return 0 bytes
+            }
+            // parse_detailed_list panics on any framing overrun, so a clean parse
+            // is itself the assertion that the packed layout is well-formed.
+            let records = parse_detailed_list(&packed);
+            for record in &records {
+                assert!(
+                    record.source <= 10,
+                    "{input:?}: bad source {}",
+                    record.source
+                );
+            }
+            total_records += records.len();
+        }
+        assert!(
+            total_records > 0,
+            "the sweep should produce some corrections"
+        );
+        unsafe { obadh_autocorrect_free(autocorrect) };
     }
 
     #[test]
