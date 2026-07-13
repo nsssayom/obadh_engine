@@ -483,6 +483,29 @@ impl FstCandidateSource {
         }
     }
 
+    /// Stable numeric code for the C ABI (`obadh_autocorrect_suggest_detailed`).
+    ///
+    /// **Frozen and append-only:** a downstream branches on these values, so a
+    /// code is never renumbered and a new channel only ever takes the next
+    /// unused number. Callers must treat an unknown code conservatively (not
+    /// eligible for auto-replace), which lets a future channel be added without
+    /// a coordinated release.
+    pub fn stable_code(self) -> u8 {
+        match self {
+            Self::Exact => 0,
+            Self::EditDistance => 1,
+            Self::DiacriticEdit => 2,
+            Self::OrthographicVowelLengthEdit => 3,
+            Self::PrefixCompletion => 4,
+            Self::StemSuffixCompletion => 5,
+            Self::SkeletonVowelDrop => 6,
+            Self::ConsonantConfusion => 7,
+            Self::RomanRepairExact => 8,
+            Self::EnglishLoanwordExact => 9,
+            Self::EnglishLoanwordFuzzy => 10,
+        }
+    }
+
     /// Provenance authority for dedup. The skeleton and consonant-confusion channels are
     /// heuristic recovery generators (0); every direct channel — exact, edit, roman-repair,
     /// loanword — is authoritative (1). When two channels yield the same word, the word keeps
@@ -1660,6 +1683,27 @@ mod tests {
                 .expect("fixture key should insert");
         }
         FstLexicon::from_map(builder.into_map())
+    }
+
+    #[test]
+    fn stable_source_codes_are_frozen() {
+        // These codes are a C ABI contract; renumbering breaks every downstream.
+        use FstCandidateSource::*;
+        for (source, code) in [
+            (Exact, 0),
+            (EditDistance, 1),
+            (DiacriticEdit, 2),
+            (OrthographicVowelLengthEdit, 3),
+            (PrefixCompletion, 4),
+            (StemSuffixCompletion, 5),
+            (SkeletonVowelDrop, 6),
+            (ConsonantConfusion, 7),
+            (RomanRepairExact, 8),
+            (EnglishLoanwordExact, 9),
+            (EnglishLoanwordFuzzy, 10),
+        ] {
+            assert_eq!(source.stable_code(), code, "{source:?}");
+        }
     }
 
     /// Isolated timing of the skeleton automaton walk on the real 845k-word bn.fst. Ignored

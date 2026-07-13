@@ -176,15 +176,37 @@ produces a Bengali baseline. The autocorrect runtime then retrieves valid
 lexicon candidates from compact FST artifacts and ranks them through bounded,
 explainable channels.
 
-`AutocorrectEngine::decide` returns an `AutocorrectDecision { input, candidates,
-replacement }`. The `replacement` field is the auto-insert gate:
-`replacement.is_some()` means a correction is confident enough to apply without
-asking (a lexicon edit that beats the baseline by a margin — never a prefix or
-skeleton guess). `suggest` is a convenience wrapper that returns only
-`candidates` and discards this gate, so downstreams gating auto-insert should
-call `decide`. Note that a request built from `autocorrect_request(roman)`
-carries the roman buffer, which suppresses auto-replacement by default — set
-`AutocorrectConfig::auto_replace_roman_input` for true auto-insert.
+### Auto-insert is client-owned
+
+The runtime (the memory-mapped `FstLexicon` path, and the C ABI over it) is a
+**candidate generator**, not an auto-insert policy. Whether to *silently apply* a
+correction depends on the lexicon's frequency data and on product choices
+(protected words, tap-to-keep, how aggressive to be) — things the engine cannot
+test in CI and that differ per keyboard. So the engine does not ship an
+auto-insert gate; it exposes the signals a client needs and lets the client own
+the decision. (`AutocorrectEngine::decide`/`AutocorrectDecision` remains as a
+heap-lexicon convenience for non-runtime use, but it is not the mmap runtime
+path.)
+
+The signal surface is `obadh_autocorrect_suggest_detailed` (C ABI), which returns
+each correction with its `source`, `edit_cost`, `roman_repair_cost`, and
+`frequency`. A sound reference gate over a **non-word** baseline
+(`obadh_autocorrect_is_lexicon_word` returns 0), applied to the top correction:
+
+- `source` is a confident channel — `edit_distance`, `diacritic_edit`,
+  `orthographic_vowel_length`, `roman_repair_exact`, `english_loanword_exact`, or
+  a single `consonant_confusion`; an **unknown** code is treated as not eligible;
+- the effective cost — `roman_repair_cost` if present, else `edit_cost` — is
+  within your tolerance (roman key-slips can exceed 1);
+- `frequency` clears a floor (this alone rejects the common false positives,
+  which are low-frequency words), and optionally exceeds the baseline word's
+  frequency by a ratio (so a much-more-common correction can override a *rare*
+  real-word baseline);
+- the word is not user-protected.
+
+Every clause maps to one exposed field. Ranking quality (whether the intended
+word is ranked first) is the engine's own workstream and improves this for every
+client.
 
 Runtime channels:
 

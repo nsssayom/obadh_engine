@@ -19,6 +19,15 @@
 //! candidate may contain any bytes (including a newline) without corrupting the
 //! framing, and an empty string is represented faithfully.
 //!
+//! **Detailed candidate lists (`obadh_autocorrect_suggest_detailed`).** Same
+//! `[u32 count]` framing, but each record carries the provenance a client gate
+//! needs, all little-endian:
+//! `[u32 text_len][text utf8][u8 source][u16 edit_cost][u16 roman_repair_cost][u64 frequency]`.
+//! `source` is [`FstCandidateSource::stable_code`](crate::FstCandidateSource::stable_code)
+//! (frozen, append-only); `roman_repair_cost` is `0xFFFF` when the candidate is a
+//! native-side edit (no roman repair); `frequency` is the lexicon frequency of
+//! the candidate word.
+//!
 //! **Handles.** Opaque pointers created by `*_open` / `*_new` and released by the
 //! matching `*_free`. A handle must not be used after it is freed, and a single
 //! handle must not be used from multiple threads concurrently (there is no
@@ -34,7 +43,7 @@ use std::path::Path;
 use std::slice;
 
 use crate::autocorrect::{
-    key_slip_repaired_outputs, roman_repaired_outputs, FstLexicon, FstLoanwordMatch,
+    key_slip_repaired_outputs, roman_repaired_outputs, FstCandidate, FstLexicon, FstLoanwordMatch,
     FstRepairedBaseline, FstSuggestOptions, FstSuggestResult, LoanwordLexicon,
     LoanwordSearchOptions, RomanRepairOptions, FST_MAX_LEVENSHTEIN_DISTANCE,
 };
@@ -47,7 +56,7 @@ use crate::ObadhEngine;
 /// Version of this C ABI contract. Bumped when the ABI changes in a way a
 /// compiled downstream must notice; independent of the crate's semver so
 /// additive symbols do not force downstreams to rebuild.
-pub const OBADH_ABI_VERSION: u32 = 1;
+pub const OBADH_ABI_VERSION: u32 = 2;
 
 const AUTOCORRECT_POOL_LIMIT: usize = 24;
 const AUTOCORRECT_RESPONSE_LIMIT: usize = 8;
@@ -83,6 +92,22 @@ unsafe fn write_str_list(items: &[String], out: *mut u8, cap: usize) -> usize {
     for item in items {
         packed.extend_from_slice(&(item.len() as u32).to_le_bytes());
         packed.extend_from_slice(item.as_bytes());
+    }
+    write_bytes(&packed, out, cap)
+}
+
+/// Pack detailed candidate records (see the module docs) and write them with
+/// [`write_bytes`]. `0xFFFF` marks a candidate with no roman repair cost.
+unsafe fn write_detailed_list(candidates: &[FstCandidate], out: *mut u8, cap: usize) -> usize {
+    let mut packed = Vec::with_capacity(4 + candidates.len() * 21);
+    packed.extend_from_slice(&(candidates.len() as u32).to_le_bytes());
+    for candidate in candidates {
+        packed.extend_from_slice(&(candidate.text.len() as u32).to_le_bytes());
+        packed.extend_from_slice(candidate.text.as_bytes());
+        packed.push(candidate.source.stable_code());
+        packed.extend_from_slice(&candidate.edit_cost.to_le_bytes());
+        packed.extend_from_slice(&candidate.roman_repair_cost.unwrap_or(0xFFFF).to_le_bytes());
+        packed.extend_from_slice(&candidate.frequency.to_le_bytes());
     }
     write_bytes(&packed, out, cap)
 }
@@ -381,6 +406,32 @@ pub unsafe extern "C" fn obadh_autocorrect_suggest(
         return 0;
     };
     write_str_list(&autocorrect.suggest_texts(roman, limit), out, cap)
+}
+
+/// Ranked correction candidates for `roman` with full per-candidate provenance —
+/// `{text, source, edit_cost, roman_repair_cost, frequency}` — as a packed
+/// detailed record list (see the module docs). Corrections only, mirroring
+/// [`obadh_autocorrect_suggest`]. This is the surface a client builds its own
+/// auto-insert gate on. snprintf-style.
+#[no_mangle]
+pub unsafe extern "C" fn obadh_autocorrect_suggest_detailed(
+    autocorrect: *const ObadhAutocorrect,
+    roman: *const u8,
+    roman_len: usize,
+    limit: usize,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let (Some(autocorrect), Some(roman)) = (autocorrect.as_ref(), input_str(roman, roman_len))
+    else {
+        return 0;
+    };
+    let Some(result) = autocorrect.suggest_result(roman) else {
+        return 0;
+    };
+    let limit = limit.clamp(1, AUTOCORRECT_RESPONSE_LIMIT);
+    let candidates: Vec<FstCandidate> = result.candidates.into_iter().take(limit).collect();
+    write_detailed_list(&candidates, out, cap)
 }
 
 /// Active-typing candidate bar for `roman`: the deterministic baseline first,
@@ -686,6 +737,44 @@ mod tests {
         buffer
     }
 
+    struct DetailedRecord {
+        text: String,
+        source: u8,
+        edit_cost: u16,
+        roman_repair_cost: u16,
+        frequency: u64,
+    }
+
+    fn parse_detailed_list(bytes: &[u8]) -> Vec<DetailedRecord> {
+        let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+        let mut offset = 4;
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
+            let text_len =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+            let text = String::from_utf8(bytes[offset..offset + text_len].to_vec()).unwrap();
+            offset += text_len;
+            let source = bytes[offset];
+            offset += 1;
+            let edit_cost = u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
+            offset += 2;
+            let roman_repair_cost =
+                u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
+            offset += 2;
+            let frequency = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            out.push(DetailedRecord {
+                text,
+                source,
+                edit_cost,
+                roman_repair_cost,
+                frequency,
+            });
+        }
+        out
+    }
+
     fn parse_str_list(bytes: &[u8]) -> Vec<String> {
         let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
         let mut offset = 4;
@@ -836,6 +925,90 @@ mod tests {
             obadh_autocorrect_free(autocorrect);
         }
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn suggest_detailed_records_parse_with_sane_fields() {
+        let path = temp_fst("detailed.fst", &[("বাংলা", 137381), ("বাংলাদেশ", 8000)]);
+        let path_bytes = path.to_str().unwrap().as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(path_bytes.as_ptr(), path_bytes.len(), ptr::null(), 0)
+        };
+        assert!(!autocorrect.is_null());
+        unsafe {
+            // A near-miss of বাংলা yields at least one correction record; the
+            // frozen fields must parse and be internally consistent.
+            let roman = b"bangla";
+            let packed = read_sized(|out, cap| {
+                obadh_autocorrect_suggest_detailed(
+                    autocorrect,
+                    roman.as_ptr(),
+                    roman.len(),
+                    5,
+                    out,
+                    cap,
+                )
+            });
+            let records = parse_detailed_list(&packed);
+            assert!(!records.is_empty());
+            for record in &records {
+                assert!(!record.text.is_empty());
+                assert!(record.source <= 10, "unknown source code {}", record.source);
+                // 0xFFFF means "no roman repair"; any other value is a real cost.
+                let _ = (record.edit_cost, record.roman_repair_cost, record.frequency);
+            }
+            obadh_autocorrect_free(autocorrect);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Real-data guard: pins `suggest_detailed` against the shipped `bn.fst`.
+    /// Skips when the submodule artifacts are not resolved (e.g. in CI), so it
+    /// runs locally where the data is present. This is the exact case the 0.8.2
+    /// gate fix missed: `banhla` → বাংলা is `roman_repair_exact` with roman cost
+    /// **2** (not 1) and a very high frequency — a client gate needs all three.
+    #[test]
+    fn suggest_detailed_banhla_on_real_bn_fst() {
+        let fst_path = "data/autocorrect/models/bn.fst";
+        let loan_path = "data/autocorrect/models/en_bn_loanwords.fst";
+        if !std::path::Path::new(fst_path).exists() {
+            eprintln!("skip: {fst_path} not resolved");
+            return;
+        }
+        let fst_bytes = fst_path.as_bytes();
+        let loan_bytes = loan_path.as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(
+                fst_bytes.as_ptr(),
+                fst_bytes.len(),
+                loan_bytes.as_ptr(),
+                loan_bytes.len(),
+            )
+        };
+        assert!(!autocorrect.is_null());
+        unsafe {
+            let roman = b"banhla";
+            let packed = read_sized(|out, cap| {
+                obadh_autocorrect_suggest_detailed(
+                    autocorrect,
+                    roman.as_ptr(),
+                    roman.len(),
+                    5,
+                    out,
+                    cap,
+                )
+            });
+            let records = parse_detailed_list(&packed);
+            let top = &records[0];
+            assert_eq!(top.text, "বাংলা");
+            assert_eq!(top.source, 8, "expected roman_repair_exact"); // stable code
+            assert_eq!(
+                top.roman_repair_cost, 2,
+                "the real roman-side cost is 2, not 1"
+            );
+            assert!(top.frequency > 100_000, "বাংলা is a very common word");
+            obadh_autocorrect_free(autocorrect);
+        }
     }
 
     #[test]

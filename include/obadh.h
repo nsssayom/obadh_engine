@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OBADH_ABI_VERSION 1
+#define OBADH_ABI_VERSION 2
 
 /* Opaque handles. */
 typedef struct ObadhEngine ObadhEngine;
@@ -80,6 +80,25 @@ int32_t obadh_autocorrect_is_lexicon_word(const ObadhAutocorrect *autocorrect,
 size_t obadh_autocorrect_suggest(const ObadhAutocorrect *autocorrect,
                                  const uint8_t *roman, size_t roman_len,
                                  size_t limit, uint8_t *out, size_t cap);
+
+/* Ranked corrections for `roman` with full provenance, as a packed record list:
+ *   [uint32 count]
+ *     per candidate:
+ *       [uint32 text_len][text utf8]
+ *       [uint8  source]              // FstCandidateSource code, frozen/append-only:
+ *                                    //  0 exact  1 edit_distance  2 diacritic_edit
+ *                                    //  3 orthographic_vowel_length  4 prefix_completion
+ *                                    //  5 stem_suffix_completion  6 skeleton_vowel_drop
+ *                                    //  7 consonant_confusion  8 roman_repair_exact
+ *                                    //  9 english_loanword_exact  10 english_loanword_fuzzy
+ *                                    // treat an UNKNOWN code as not-auto-replaceable.
+ *       [uint16 edit_cost]           // Bangla-side edit distance
+ *       [uint16 roman_repair_cost]   // 0xFFFF = none (native-side edit)
+ *       [uint64 frequency]           // lexicon frequency of the candidate word
+ * The field a client builds its own auto-insert gate on. snprintf-style. */
+size_t obadh_autocorrect_suggest_detailed(const ObadhAutocorrect *autocorrect,
+                                          const uint8_t *roman, size_t roman_len,
+                                          size_t limit, uint8_t *out, size_t cap);
 
 /* Active-typing candidate bar for `roman`: the deterministic baseline first,
  * then corrections. The baseline is always present so the user can keep what
