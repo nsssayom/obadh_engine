@@ -1736,4 +1736,43 @@ mod tests {
             );
         }
     }
+
+    /// The cabi `word_frequency` accessor returns `exact_frequency(word).unwrap_or(0)`
+    /// and treats `0` as "not a lexicon word". That is only unambiguous if no real
+    /// entry is stored with frequency 0. Prove it against the shipped 845k-word
+    /// artifact by streaming every entry, and pin the rare-baseline counts the
+    /// client ratio gate is designed around. Skips when the submodule is not
+    /// resolved (CI), runs locally.
+    #[test]
+    fn no_lexicon_entry_has_frequency_zero_on_real_bn_fst() {
+        use fst::Streamer;
+        let path = "data/autocorrect/models/bn.fst";
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("skip: {path} not resolved");
+            return;
+        };
+        let lexicon = FstLexicon::from_bytes(bytes).expect("load fst");
+
+        // Every stored frequency is >= 1, so `word_frequency`'s 0 return means
+        // exactly "absent" — the presence bit the removed is_lexicon_word gave.
+        let mut stream = lexicon.map.stream();
+        let mut entries = 0u64;
+        let mut min_frequency = u64::MAX;
+        while let Some((_key, frequency)) = stream.next() {
+            entries += 1;
+            min_frequency = min_frequency.min(frequency);
+        }
+        assert!(entries > 800_000, "sanity: streamed {entries} entries");
+        assert!(
+            min_frequency >= 1,
+            "an entry has frequency 0; word_frequency's zero sentinel would be ambiguous"
+        );
+
+        // Rare real-word baselines whose common correction the client overrides by
+        // ratio (verified via `suggest-fst`): মানুস 49 → মানুষ, বন্দু 25 → বন্ধু.
+        assert_eq!(lexicon.exact_frequency("মানুস"), Some(49));
+        assert_eq!(lexicon.exact_frequency("বন্দু"), Some(25));
+        // A non-word baseline is None → the accessor's 0.
+        assert_eq!(lexicon.exact_frequency("অআইঈউ"), None);
+    }
 }

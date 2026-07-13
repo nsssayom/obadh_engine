@@ -214,20 +214,36 @@ exposes them through `obadh_autocorrect_suggest_detailed`.
 Whether to *silently apply* a correction is a client decision: it depends on the
 lexicon's frequency data and on product choices — protected words, tap-to-keep,
 how aggressive to be. The runtime supplies the signals; the client owns the
-policy. A sound reference policy applies the top correction over a non-word
-baseline (`obadh_autocorrect_is_lexicon_word` returns 0) when:
+policy. The reference policy keys every clause on an exposed field and splits on
+whether the baseline the user typed is itself a lexicon word —
+`obadh_autocorrect_word_frequency(baseline)`, `0` for a non-word.
+
+**Non-word baseline** (`word_frequency(baseline) == 0`) — apply the top
+correction when:
 
 - `source` is a confident channel — weighted edit, diacritic, vowel-length,
   exact roman repair, exact loanword, or a single consonant confusion; an
   unrecognized `source` code is treated as not eligible;
 - the effective cost — `roman_repair_cost` if present, else `edit_cost` — is
   within tolerance;
-- `frequency` clears a floor, and optionally exceeds the baseline word's
-  frequency by a ratio, so a much-more-common correction can override a rare
-  real-word baseline;
+- the correction's `frequency` clears a floor;
 - the word is not user-protected.
 
-Each clause maps to one exposed field.
+**Rare real-word baseline** (`word_frequency(baseline) > 0`) — the typed word is
+real, so replace it only on a strong frequency signal:
+
+- `source` is a confident channel (as above);
+- the top correction's `frequency` exceeds `word_frequency(baseline)` by a ratio
+  — `মানুস` (49) → `মানুষ` (95278), `বন্দু` (25) → `বন্ধু` (21081) — so a
+  much-more-common word overrides a rare dictionary entry, reaching the স/ষ, দ/ধ
+  consonant-confusion class the non-word path cannot;
+- the effective cost is within a *looser* bound than the non-word path, since a
+  large frequency ratio is the dominant evidence (`মানুস` → `মানুষ` is a one-key
+  Roman slip but a multi-edit Bangla change);
+- the word is not user-protected.
+
+Both frequencies — the correction's (`suggest_detailed`) and the baseline's
+(`word_frequency`) — read the one lexicon table, so the ratio is well-defined.
 
 Inspect artifacts:
 
@@ -338,7 +354,7 @@ the matching `*_free`:
 | Area | Functions |
 | --- | --- |
 | Deterministic | `obadh_transliterate`, `obadh_transliterate_lenient` |
-| Autocorrect | `obadh_autocorrect_open`, `obadh_autocorrect_suggest`, `obadh_autocorrect_suggest_detailed`, `obadh_compose_suggestions`, `obadh_autocorrect_word_alternatives`, `obadh_autocorrect_is_lexicon_word`, `obadh_autocorrect_fingerprint` |
+| Autocorrect | `obadh_autocorrect_open`, `obadh_autocorrect_suggest`, `obadh_autocorrect_suggest_detailed`, `obadh_compose_suggestions`, `obadh_autocorrect_word_alternatives`, `obadh_autocorrect_word_frequency`, `obadh_autocorrect_fingerprint` |
 | Autosuggest | `obadh_autosuggest_open`, `obadh_autosuggest_commit`, `obadh_autosuggest_suggest`, `obadh_autosuggest_suggest_for_context`, personal-overlay `clear` / snapshot `export` / `import`, `obadh_autosuggest_fingerprint` |
 | Version | `obadh_abi_version`, `obadh_engine_version` |
 

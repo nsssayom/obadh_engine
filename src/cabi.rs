@@ -245,18 +245,28 @@ pub unsafe extern "C" fn obadh_autocorrect_fingerprint(
     }
 }
 
-/// Whether `word` is an exact entry in the lexicon. 1 if present, 0 if absent or
-/// on invalid input. A real word must never be auto-corrected.
+/// The lexicon frequency of `word` — the stored count, on the same scale as
+/// `obadh_autocorrect_suggest_detailed`'s per-candidate `frequency` (both read
+/// the one `exact_frequency` table). Returns 0 when `word` is not an exact
+/// lexicon entry, or on invalid input; presence is therefore `> 0`.
+///
+/// This is the baseline-side signal a client auto-insert gate needs: a rare but
+/// real baseline (`> 0`) is replaced only when the top correction's `frequency`
+/// exceeds it by the client's ratio (`মানুস` 49 → `মানুষ` 95278); a non-word
+/// baseline (`0`) takes the frequency-floor path instead. Subsumes the former
+/// `is_lexicon_word` — presence is the `> 0` case, so no separate boolean is
+/// kept. (No lexicon entry has frequency 0; see the `fst_lexicon` invariant
+/// test, so the 0 return is unambiguous.)
 #[no_mangle]
-pub unsafe extern "C" fn obadh_autocorrect_is_lexicon_word(
+pub unsafe extern "C" fn obadh_autocorrect_word_frequency(
     autocorrect: *const ObadhAutocorrect,
     word: *const u8,
     word_len: usize,
-) -> i32 {
+) -> u64 {
     let (Some(autocorrect), Some(word)) = (autocorrect.as_ref(), input_str(word, word_len)) else {
         return 0;
     };
-    i32::from(autocorrect.lexicon.exact_frequency(word).is_some())
+    autocorrect.lexicon.exact_frequency(word).unwrap_or(0)
 }
 
 impl ObadhAutocorrect {
@@ -858,7 +868,7 @@ mod tests {
                 0
             );
             assert_eq!(
-                obadh_autocorrect_is_lexicon_word(ptr::null(), word.as_ptr(), word.len()),
+                obadh_autocorrect_word_frequency(ptr::null(), word.as_ptr(), word.len()),
                 0
             );
             assert_eq!(obadh_autocorrect_fingerprint(ptr::null()), 0);
@@ -892,11 +902,17 @@ mod tests {
         assert!(!autocorrect.is_null());
 
         unsafe {
-            // Membership + fingerprint through the ABI.
+            // Frequency lookup (subsumes membership) + fingerprint through the ABI.
             let word = "বাংলা".as_bytes();
             assert_eq!(
-                obadh_autocorrect_is_lexicon_word(autocorrect, word.as_ptr(), word.len()),
-                1
+                obadh_autocorrect_word_frequency(autocorrect, word.as_ptr(), word.len()),
+                10_000
+            );
+            // A non-entry is 0 (the presence bit the old is_lexicon_word gave).
+            let absent = "নেই".as_bytes();
+            assert_eq!(
+                obadh_autocorrect_word_frequency(autocorrect, absent.as_ptr(), absent.len()),
+                0
             );
             assert_ne!(obadh_autocorrect_fingerprint(autocorrect), 0);
 
@@ -924,6 +940,33 @@ mod tests {
 
             obadh_autocorrect_free(autocorrect);
         }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn word_frequency_reports_counts_presence_and_zero_for_absent_or_invalid() {
+        let path = temp_fst("wordfreq.fst", &[("মানুস", 49), ("মানুষ", 95_278)]);
+        let path_bytes = path.to_str().unwrap().as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(path_bytes.as_ptr(), path_bytes.len(), ptr::null(), 0)
+        };
+        assert!(!autocorrect.is_null());
+        let freq =
+            |w: &str| unsafe { obadh_autocorrect_word_frequency(autocorrect, w.as_ptr(), w.len()) };
+        // Exact counts, on the same scale suggest_detailed reports (one table).
+        assert_eq!(freq("মানুস"), 49);
+        assert_eq!(freq("মানুষ"), 95_278);
+        // The ratio a client gate keys on: rare real baseline vs common correction.
+        assert!(freq("মানুষ") / freq("মানুস") >= 100);
+        // Absent word → 0 (the presence bit the removed is_lexicon_word gave).
+        assert_eq!(freq("নেই"), 0);
+        // Invalid UTF-8 input is a no-op → 0, never a panic.
+        let bad = [0xFF, 0xFEu8];
+        assert_eq!(
+            unsafe { obadh_autocorrect_word_frequency(autocorrect, bad.as_ptr(), bad.len()) },
+            0
+        );
+        unsafe { obadh_autocorrect_free(autocorrect) };
         let _ = std::fs::remove_file(path);
     }
 

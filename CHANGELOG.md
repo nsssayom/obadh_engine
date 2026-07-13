@@ -31,6 +31,9 @@ are high-frequency. That belongs in a client that has the data, not an engine th
   `obadh_autosuggest_is_word_established` / `_established_weight` and the `strength` parameter on
   `obadh_autosuggest_commit`. The keyboard owns learned-word protection client-side, so these had no
   consumer.
+- **`obadh_autocorrect_is_lexicon_word`** — subsumed by the new `obadh_autocorrect_word_frequency`
+  (presence is `> 0`), which also returns the count the client gate's frequency ratio needs. Keeping
+  both would leave a redundant boolean with no unique consumer.
 
 ### Added
 
@@ -40,6 +43,12 @@ are high-frequency. That belongs in a client that has the data, not an engine th
   reject the low-frequency false positives and override a rare-word baseline. `source` is a **frozen,
   append-only** numeric code (`FstCandidateSource::stable_code`); an unknown code must be treated as
   not auto-replaceable.
+- **`obadh_autocorrect_word_frequency`** — the lexicon frequency of any word (`0` = not an entry),
+  on the same scale as `suggest_detailed`'s per-candidate `frequency` (both read one table). It
+  supplies the *baseline* side of the ratio the gate needs: a rare real-word baseline (`মানুস`, 49)
+  is replaced only when the top correction (`মানুষ`, 95278) is far more frequent — the স/ষ, দ/ধ
+  consonant-confusion class where the typo is itself a rare dictionary word. It **replaces**
+  `is_lexicon_word`: presence is the `> 0` case, so no redundant boolean remains.
 - A **reference client-gate policy** in the README (prose, not a shipped symbol), so downstreams copy
   a sound gate instead of inventing one — the anti-fragmentation cost of client-owned policy without
   the engine carrying untestable code.
@@ -54,6 +63,9 @@ are high-frequency. That belongs in a client that has the data, not an engine th
   `obadh_autocorrect_suggest_detailed` and apply a client policy over the returned candidates — see
   *Auto-insert policy* in the README. The detailed records now carry `frequency`, which is what makes
   the decision correct; the removed gate had no access to it at the boundary.
+- **Membership check.** Replace `obadh_autocorrect_is_lexicon_word(w) == 1` with
+  `obadh_autocorrect_word_frequency(w) > 0`. The accessor also returns the count, which the
+  rare-real-word override (`word_frequency(baseline)` vs the correction's `frequency`) needs.
 - **Learned-word protection.** `obadh_autosuggest_is_word_established` / `_established_weight` are
   gone; track established words in the client. `obadh_autosuggest_suggest` continues to surface
   learned words in its own suggestions.

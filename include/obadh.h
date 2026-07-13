@@ -4,6 +4,12 @@
  * Built when the crate is compiled with the `cabi` feature (native targets only).
  * Link the resulting cdylib/staticlib and include this header.
  *
+ * This header is the authoritative *signature*; the project README is the
+ * authoritative *behavior* — the linguistic rules, per-function semantics, and a
+ * copy-ready client-side auto-insert policy built on suggest_detailed +
+ * word_frequency. See its "C ABI", "Autocorrect", and "Autosuggest" sections:
+ *   https://github.com/nsssayom/obadh_engine#c-abi
+ *
  * Conventions
  * -----------
  * Sizing (snprintf-style): every function that writes bytes takes an output
@@ -71,8 +77,12 @@ void              obadh_autocorrect_free(ObadhAutocorrect *autocorrect);
 /* Content fingerprint of the loaded lexicon FST (crate <-> artifact check). */
 uint64_t obadh_autocorrect_fingerprint(const ObadhAutocorrect *autocorrect);
 
-/* 1 if `word` is an exact lexicon entry, else 0. A real word is never corrected. */
-int32_t obadh_autocorrect_is_lexicon_word(const ObadhAutocorrect *autocorrect,
+/* Lexicon frequency of `word`: the stored count, on the same scale as
+ * suggest_detailed's per-candidate `frequency` (one table). 0 if `word` is not an
+ * exact entry (or on invalid input), so presence is `> 0`. This is the baseline
+ * signal for a client auto-insert gate's frequency-ratio override; it subsumes a
+ * plain membership check. No entry is stored with frequency 0. */
+uint64_t obadh_autocorrect_word_frequency(const ObadhAutocorrect *autocorrect,
                                           const uint8_t *word, size_t word_len);
 
 /* Ranked correction candidates for `roman` as a packed string list (see header
