@@ -25,10 +25,10 @@ pub(crate) use adaptive::{
     AutosuggestRepetitionHistory,
 };
 pub use adaptive::{
-    AutosuggestSession, CommitStrength, PersonalAutosuggest, PersonalAutosuggestConfig,
-    PersonalAutosuggestContext, PersonalAutosuggestError, PersonalAutosuggestSnapshotError,
-    PersonalAutosuggestSuggestion, PersonalAutosuggestTextSuggestion,
-    DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES, DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT,
+    AutosuggestSession, PersonalAutosuggest, PersonalAutosuggestConfig, PersonalAutosuggestContext,
+    PersonalAutosuggestError, PersonalAutosuggestSnapshotError, PersonalAutosuggestSuggestion,
+    PersonalAutosuggestTextSuggestion, DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES,
+    DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT,
 };
 pub use artifact::AutosuggestArtifactError;
 pub use generator::{

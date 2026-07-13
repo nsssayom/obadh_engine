@@ -19,6 +19,15 @@
 //! candidate may contain any bytes (including a newline) without corrupting the
 //! framing, and an empty string is represented faithfully.
 //!
+//! **Detailed candidate lists (`obadh_autocorrect_suggest_detailed`).** Same
+//! `[u32 count]` framing, but each record carries the provenance a client gate
+//! needs, all little-endian:
+//! `[u32 text_len][text utf8][u8 source][u16 edit_cost][u16 roman_repair_cost][u64 frequency]`.
+//! `source` is [`FstCandidateSource::stable_code`](crate::FstCandidateSource::stable_code)
+//! (frozen, append-only); `roman_repair_cost` is `0xFFFF` when the candidate is a
+//! native-side edit (no roman repair); `frequency` is the lexicon frequency of
+//! the candidate word.
+//!
 //! **Handles.** Opaque pointers created by `*_open` / `*_new` and released by the
 //! matching `*_free`. A handle must not be used after it is freed, and a single
 //! handle must not be used from multiple threads concurrently (there is no
@@ -34,20 +43,20 @@ use std::path::Path;
 use std::slice;
 
 use crate::autocorrect::{
-    key_slip_repaired_outputs, roman_repaired_outputs, FstLexicon, FstLoanwordMatch,
+    key_slip_repaired_outputs, roman_repaired_outputs, FstCandidate, FstLexicon, FstLoanwordMatch,
     FstRepairedBaseline, FstSuggestOptions, FstSuggestResult, LoanwordLexicon,
     LoanwordSearchOptions, RomanRepairOptions, FST_MAX_LEVENSHTEIN_DISTANCE,
 };
 use crate::autosuggest::{
-    AutosuggestLm, AutosuggestOptions, AutosuggestSession, CommitStrength,
-    PersonalAutosuggestConfig, PersonalAutosuggestTextSuggestion,
+    AutosuggestLm, AutosuggestOptions, AutosuggestSession, PersonalAutosuggestConfig,
+    PersonalAutosuggestTextSuggestion,
 };
 use crate::ObadhEngine;
 
 /// Version of this C ABI contract. Bumped when the ABI changes in a way a
 /// compiled downstream must notice; independent of the crate's semver so
 /// additive symbols do not force downstreams to rebuild.
-pub const OBADH_ABI_VERSION: u32 = 1;
+pub const OBADH_ABI_VERSION: u32 = 2;
 
 const AUTOCORRECT_POOL_LIMIT: usize = 24;
 const AUTOCORRECT_RESPONSE_LIMIT: usize = 8;
@@ -83,6 +92,22 @@ unsafe fn write_str_list(items: &[String], out: *mut u8, cap: usize) -> usize {
     for item in items {
         packed.extend_from_slice(&(item.len() as u32).to_le_bytes());
         packed.extend_from_slice(item.as_bytes());
+    }
+    write_bytes(&packed, out, cap)
+}
+
+/// Pack detailed candidate records (see the module docs) and write them with
+/// [`write_bytes`]. `0xFFFF` marks a candidate with no roman repair cost.
+unsafe fn write_detailed_list(candidates: &[FstCandidate], out: *mut u8, cap: usize) -> usize {
+    let mut packed = Vec::with_capacity(4 + candidates.len() * 21);
+    packed.extend_from_slice(&(candidates.len() as u32).to_le_bytes());
+    for candidate in candidates {
+        packed.extend_from_slice(&(candidate.text.len() as u32).to_le_bytes());
+        packed.extend_from_slice(candidate.text.as_bytes());
+        packed.push(candidate.source.stable_code());
+        packed.extend_from_slice(&candidate.edit_cost.to_le_bytes());
+        packed.extend_from_slice(&candidate.roman_repair_cost.unwrap_or(0xFFFF).to_le_bytes());
+        packed.extend_from_slice(&candidate.frequency.to_le_bytes());
     }
     write_bytes(&packed, out, cap)
 }
@@ -220,18 +245,28 @@ pub unsafe extern "C" fn obadh_autocorrect_fingerprint(
     }
 }
 
-/// Whether `word` is an exact entry in the lexicon. 1 if present, 0 if absent or
-/// on invalid input. A real word must never be auto-corrected.
+/// The lexicon frequency of `word` — the stored count, on the same scale as
+/// `obadh_autocorrect_suggest_detailed`'s per-candidate `frequency` (both read
+/// the one `exact_frequency` table). Returns 0 when `word` is not an exact
+/// lexicon entry, or on invalid input; presence is therefore `> 0`.
+///
+/// This is the baseline-side signal a client auto-insert gate needs: a rare but
+/// real baseline (`> 0`) is replaced only when the top correction's `frequency`
+/// exceeds it by the client's ratio (`মানুস` 49 → `মানুষ` 95278); a non-word
+/// baseline (`0`) takes the frequency-floor path instead. Subsumes the former
+/// `is_lexicon_word` — presence is the `> 0` case, so no separate boolean is
+/// kept. (No lexicon entry has frequency 0; see the `fst_lexicon` invariant
+/// test, so the 0 return is unambiguous.)
 #[no_mangle]
-pub unsafe extern "C" fn obadh_autocorrect_is_lexicon_word(
+pub unsafe extern "C" fn obadh_autocorrect_word_frequency(
     autocorrect: *const ObadhAutocorrect,
     word: *const u8,
     word_len: usize,
-) -> i32 {
+) -> u64 {
     let (Some(autocorrect), Some(word)) = (autocorrect.as_ref(), input_str(word, word_len)) else {
         return 0;
     };
-    i32::from(autocorrect.lexicon.exact_frequency(word).is_some())
+    autocorrect.lexicon.exact_frequency(word).unwrap_or(0)
 }
 
 impl ObadhAutocorrect {
@@ -365,10 +400,13 @@ impl ObadhAutocorrect {
     }
 }
 
-/// Ranked correction candidates for `roman`, best first, as a packed string list
-/// (see the module docs). `limit` caps the number returned. snprintf-style.
+/// Ranked correction candidates for `roman` with full per-candidate provenance —
+/// `{text, source, edit_cost, roman_repair_cost, frequency}` — as a packed
+/// detailed record list (see the module docs). Corrections only; the baseline is
+/// not included (use [`obadh_compose_suggestions`] for a baseline-first bar).
+/// This is the surface a client builds its own auto-insert gate on. snprintf-style.
 #[no_mangle]
-pub unsafe extern "C" fn obadh_autocorrect_suggest(
+pub unsafe extern "C" fn obadh_autocorrect_suggest_detailed(
     autocorrect: *const ObadhAutocorrect,
     roman: *const u8,
     roman_len: usize,
@@ -380,7 +418,12 @@ pub unsafe extern "C" fn obadh_autocorrect_suggest(
     else {
         return 0;
     };
-    write_str_list(&autocorrect.suggest_texts(roman, limit), out, cap)
+    let Some(result) = autocorrect.suggest_result(roman) else {
+        return 0;
+    };
+    let limit = limit.clamp(1, AUTOCORRECT_RESPONSE_LIMIT);
+    let candidates: Vec<FstCandidate> = result.candidates.into_iter().take(limit).collect();
+    write_detailed_list(&candidates, out, cap)
 }
 
 /// Active-typing candidate bar for `roman`: the deterministic baseline first,
@@ -419,40 +462,6 @@ pub unsafe extern "C" fn obadh_autocorrect_word_alternatives(
         return 0;
     };
     write_str_list(&autocorrect.word_alternatives_texts(word, limit), out, cap)
-}
-
-/// The engine's auto-insert gate for `roman`. Returns 1 if a correction is
-/// confident enough to apply without asking (a confident single-edit lexicon
-/// word over a non-word baseline), 0 otherwise. When 1, the replacement text is
-/// written snprintf-style to `out`/`cap` and its needed length to `*needed_len`;
-/// when 0, `*needed_len` is set to 0. See [`FstSuggestResult::auto_replacement`].
-#[no_mangle]
-pub unsafe extern "C" fn obadh_autocorrect_should_replace(
-    autocorrect: *const ObadhAutocorrect,
-    roman: *const u8,
-    roman_len: usize,
-    out: *mut u8,
-    cap: usize,
-    needed_len: *mut usize,
-) -> i32 {
-    if let Some(needed_len) = needed_len.as_mut() {
-        *needed_len = 0;
-    }
-    let (Some(autocorrect), Some(roman)) = (autocorrect.as_ref(), input_str(roman, roman_len))
-    else {
-        return 0;
-    };
-    let Some(result) = autocorrect.suggest_result(roman) else {
-        return 0;
-    };
-    let Some(replacement) = result.auto_replacement() else {
-        return 0;
-    };
-    let written = write_bytes(replacement.text.as_bytes(), out, cap);
-    if let Some(needed_len) = needed_len.as_mut() {
-        *needed_len = written;
-    }
-    1
 }
 
 // ------------------------------------------------------------------ autosuggest
@@ -515,66 +524,20 @@ pub unsafe extern "C" fn obadh_autosuggest_fingerprint(
     }
 }
 
-fn commit_strength_from_code(code: u32) -> CommitStrength {
-    match code {
-        1 => CommitStrength::CorrectionRejected,
-        2 => CommitStrength::ManuallyAdded,
-        _ => CommitStrength::Committed,
-    }
-}
-
 /// Commit a token into the session context, learning it into the personal
-/// overlay. `strength` is 0 = ordinary commit, 1 = correction-rejected,
-/// 2 = manually-added (see `CommitStrength`); any other value is treated as 0.
-/// Returns 1 if the token was learned, 0 otherwise.
+/// overlay. Returns 1 if the token was learned, 0 otherwise.
 #[no_mangle]
 pub unsafe extern "C" fn obadh_autosuggest_commit(
     autosuggest: *mut ObadhAutosuggest,
     token: *const u8,
     token_len: usize,
-    strength: u32,
 ) -> i32 {
     let (Some(autosuggest), Some(token)) = (autosuggest.as_mut(), input_str(token, token_len))
     else {
         return 0;
     };
-    let learned = autosuggest
-        .session
-        .commit_token_with_strength(token, commit_strength_from_code(strength))
-        .unwrap_or(false);
+    let learned = autosuggest.session.commit_token(token).unwrap_or(false);
     i32::from(learned)
-}
-
-/// Post-decay evidence that the user has established `word` as their own
-/// vocabulary. 0 if never committed. See
-/// [`AutosuggestSession::established_weight`](crate::AutosuggestSession::established_weight).
-#[no_mangle]
-pub unsafe extern "C" fn obadh_autosuggest_established_weight(
-    autosuggest: *const ObadhAutosuggest,
-    word: *const u8,
-    word_len: usize,
-) -> u32 {
-    let (Some(autosuggest), Some(word)) = (autosuggest.as_ref(), input_str(word, word_len)) else {
-        return 0;
-    };
-    u32::from(autosuggest.session.established_weight(word))
-}
-
-/// Whether the user has established `word` with at least `min_weight` post-decay
-/// evidence. A downstream protecting learned words from auto-correction gates on
-/// this. Returns 1 or 0.
-#[no_mangle]
-pub unsafe extern "C" fn obadh_autosuggest_is_word_established(
-    autosuggest: *const ObadhAutosuggest,
-    word: *const u8,
-    word_len: usize,
-    min_weight: u32,
-) -> i32 {
-    let (Some(autosuggest), Some(word)) = (autosuggest.as_ref(), input_str(word, word_len)) else {
-        return 0;
-    };
-    let min_weight = min_weight.min(u32::from(u16::MAX)) as u16;
-    i32::from(autosuggest.session.is_word_established(word, min_weight))
 }
 
 impl ObadhAutosuggest {
@@ -766,6 +729,44 @@ mod tests {
         buffer
     }
 
+    struct DetailedRecord {
+        text: String,
+        source: u8,
+        edit_cost: u16,
+        roman_repair_cost: u16,
+        frequency: u64,
+    }
+
+    fn parse_detailed_list(bytes: &[u8]) -> Vec<DetailedRecord> {
+        let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+        let mut offset = 4;
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
+            let text_len =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+            let text = String::from_utf8(bytes[offset..offset + text_len].to_vec()).unwrap();
+            offset += text_len;
+            let source = bytes[offset];
+            offset += 1;
+            let edit_cost = u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
+            offset += 2;
+            let roman_repair_cost =
+                u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
+            offset += 2;
+            let frequency = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            out.push(DetailedRecord {
+                text,
+                source,
+                edit_cost,
+                roman_repair_cost,
+                frequency,
+            });
+        }
+        out
+    }
+
     fn parse_str_list(bytes: &[u8]) -> Vec<String> {
         let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
         let mut offset = 4;
@@ -849,14 +850,11 @@ mod tests {
                 0
             );
             assert_eq!(
-                obadh_autocorrect_is_lexicon_word(ptr::null(), word.as_ptr(), word.len()),
+                obadh_autocorrect_word_frequency(ptr::null(), word.as_ptr(), word.len()),
                 0
             );
             assert_eq!(obadh_autocorrect_fingerprint(ptr::null()), 0);
-            assert_eq!(
-                obadh_autosuggest_established_weight(ptr::null(), word.as_ptr(), word.len()),
-                0
-            );
+            assert_eq!(obadh_autosuggest_fingerprint(ptr::null()), 0);
         }
     }
 
@@ -886,11 +884,17 @@ mod tests {
         assert!(!autocorrect.is_null());
 
         unsafe {
-            // Membership + fingerprint through the ABI.
+            // Frequency lookup (subsumes membership) + fingerprint through the ABI.
             let word = "বাংলা".as_bytes();
             assert_eq!(
-                obadh_autocorrect_is_lexicon_word(autocorrect, word.as_ptr(), word.len()),
-                1
+                obadh_autocorrect_word_frequency(autocorrect, word.as_ptr(), word.len()),
+                10_000
+            );
+            // A non-entry is 0 (the presence bit the old is_lexicon_word gave).
+            let absent = "নেই".as_bytes();
+            assert_eq!(
+                obadh_autocorrect_word_frequency(autocorrect, absent.as_ptr(), absent.len()),
+                0
             );
             assert_ne!(obadh_autocorrect_fingerprint(autocorrect), 0);
 
@@ -922,6 +926,290 @@ mod tests {
     }
 
     #[test]
+    fn word_frequency_reports_counts_presence_and_zero_for_absent_or_invalid() {
+        let path = temp_fst("wordfreq.fst", &[("মানুস", 49), ("মানুষ", 95_278)]);
+        let path_bytes = path.to_str().unwrap().as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(path_bytes.as_ptr(), path_bytes.len(), ptr::null(), 0)
+        };
+        assert!(!autocorrect.is_null());
+        let freq =
+            |w: &str| unsafe { obadh_autocorrect_word_frequency(autocorrect, w.as_ptr(), w.len()) };
+        // Exact counts, on the same scale suggest_detailed reports (one table).
+        assert_eq!(freq("মানুস"), 49);
+        assert_eq!(freq("মানুষ"), 95_278);
+        // The ratio a client gate keys on: rare real baseline vs common correction.
+        assert!(freq("মানুষ") / freq("মানুস") >= 100);
+        // Absent word → 0 (the presence bit the removed is_lexicon_word gave).
+        assert_eq!(freq("নেই"), 0);
+        // Invalid UTF-8 input is a no-op → 0, never a panic.
+        let bad = [0xFF, 0xFEu8];
+        assert_eq!(
+            unsafe { obadh_autocorrect_word_frequency(autocorrect, bad.as_ptr(), bad.len()) },
+            0
+        );
+        unsafe { obadh_autocorrect_free(autocorrect) };
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn detailed_wire_format_is_exhaustive_and_exact() {
+        use crate::autocorrect::FstCandidateSource::*;
+
+        // Every source variant, with a mix of present / absent roman_repair_cost,
+        // an empty text, and multi-byte text — all round-tripping the frozen
+        // layout exactly.
+        let sources = [
+            (Exact, 0u8),
+            (EditDistance, 1),
+            (DiacriticEdit, 2),
+            (OrthographicVowelLengthEdit, 3),
+            (PrefixCompletion, 4),
+            (StemSuffixCompletion, 5),
+            (SkeletonVowelDrop, 6),
+            (ConsonantConfusion, 7),
+            (RomanRepairExact, 8),
+            (EnglishLoanwordExact, 9),
+            (EnglishLoanwordFuzzy, 10),
+        ];
+        let candidates: Vec<FstCandidate> = sources
+            .iter()
+            .enumerate()
+            .map(|(i, (source, _))| FstCandidate {
+                text: if i == 0 {
+                    String::new()
+                } else {
+                    format!("শব্দ{i}")
+                },
+                source: *source,
+                edit_cost: i as u16,
+                frequency: (i as u64) * 1000,
+                score: 0,
+                roman_repair: None,
+                roman_repair_kind: None,
+                // odd indices carry a roman repair cost; even ones do not (→ 0xFFFF)
+                roman_repair_cost: if i % 2 == 1 { Some(i as u16) } else { None },
+            })
+            .collect();
+
+        let bytes = unsafe { read_sized(|out, cap| write_detailed_list(&candidates, out, cap)) };
+        let records = parse_detailed_list(&bytes);
+        assert_eq!(records.len(), candidates.len());
+        for (i, (record, candidate)) in records.iter().zip(&candidates).enumerate() {
+            assert_eq!(record.text, candidate.text, "text {i}");
+            assert_eq!(record.source, sources[i].1, "stable code {i}");
+            assert_eq!(record.edit_cost, candidate.edit_cost, "edit_cost {i}");
+            assert_eq!(record.frequency, candidate.frequency, "frequency {i}");
+            let expected_rrc = candidate.roman_repair_cost.unwrap_or(0xFFFF);
+            assert_eq!(
+                record.roman_repair_cost, expected_rrc,
+                "roman_repair_cost {i}"
+            );
+        }
+
+        // Empty list is a bare count of 0.
+        let empty = unsafe { read_sized(|out, cap| write_detailed_list(&[], out, cap)) };
+        assert_eq!(empty, 0u32.to_le_bytes());
+        assert!(parse_detailed_list(&empty).is_empty());
+
+        // snprintf contract: a too-small buffer writes nothing and still returns
+        // the full needed length.
+        let needed = unsafe { write_detailed_list(&candidates, ptr::null_mut(), 0) };
+        let mut small = vec![0u8; needed - 1];
+        let reported = unsafe { write_detailed_list(&candidates, small.as_mut_ptr(), small.len()) };
+        assert_eq!(
+            reported, needed,
+            "too-small buffer still reports needed length"
+        );
+        assert!(
+            small.iter().all(|&b| b == 0),
+            "too-small buffer is not written"
+        );
+    }
+
+    #[test]
+    fn suggest_detailed_records_parse_with_sane_fields() {
+        let path = temp_fst("detailed.fst", &[("বাংলা", 137381), ("বাংলাদেশ", 8000)]);
+        let path_bytes = path.to_str().unwrap().as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(path_bytes.as_ptr(), path_bytes.len(), ptr::null(), 0)
+        };
+        assert!(!autocorrect.is_null());
+        unsafe {
+            // A near-miss of বাংলা yields at least one correction record; the
+            // frozen fields must parse and be internally consistent.
+            let roman = b"bangla";
+            let packed = read_sized(|out, cap| {
+                obadh_autocorrect_suggest_detailed(
+                    autocorrect,
+                    roman.as_ptr(),
+                    roman.len(),
+                    5,
+                    out,
+                    cap,
+                )
+            });
+            let records = parse_detailed_list(&packed);
+            assert!(!records.is_empty());
+            for record in &records {
+                assert!(!record.text.is_empty());
+                assert!(record.source <= 10, "unknown source code {}", record.source);
+                // 0xFFFF means "no roman repair"; any other value is a real cost.
+                let _ = (record.edit_cost, record.roman_repair_cost, record.frequency);
+            }
+            obadh_autocorrect_free(autocorrect);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Real-data guard: pins `suggest_detailed` against the shipped `bn.fst`.
+    /// Skips when the submodule artifacts are not resolved (e.g. in CI), so it
+    /// runs locally where the data is present. This is the exact case the 0.8.2
+    /// gate fix missed: `banhla` → বাংলা is `roman_repair_exact` with roman cost
+    /// **2** (not 1) and a very high frequency — a client gate needs all three.
+    #[test]
+    fn suggest_detailed_banhla_on_real_bn_fst() {
+        let fst_path = "data/autocorrect/models/bn.fst";
+        let loan_path = "data/autocorrect/models/en_bn_loanwords.fst";
+        if !std::path::Path::new(fst_path).exists() {
+            eprintln!("skip: {fst_path} not resolved");
+            return;
+        }
+        let fst_bytes = fst_path.as_bytes();
+        let loan_bytes = loan_path.as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(
+                fst_bytes.as_ptr(),
+                fst_bytes.len(),
+                loan_bytes.as_ptr(),
+                loan_bytes.len(),
+            )
+        };
+        assert!(!autocorrect.is_null());
+        unsafe {
+            let roman = b"banhla";
+            let packed = read_sized(|out, cap| {
+                obadh_autocorrect_suggest_detailed(
+                    autocorrect,
+                    roman.as_ptr(),
+                    roman.len(),
+                    5,
+                    out,
+                    cap,
+                )
+            });
+            let records = parse_detailed_list(&packed);
+            let top = &records[0];
+            assert_eq!(top.text, "বাংলা");
+            assert_eq!(top.source, 8, "expected roman_repair_exact"); // stable code
+            assert_eq!(
+                top.roman_repair_cost, 2,
+                "the real roman-side cost is 2, not 1"
+            );
+            assert!(top.frequency > 100_000, "বাংলা is a very common word");
+            obadh_autocorrect_free(autocorrect);
+        }
+    }
+
+    /// Real-data robustness sweep: drive `suggest_detailed` over a large, diverse
+    /// input set against the shipped 845k-word `bn.fst` and assert every packed
+    /// buffer parses cleanly, every source code is in range, and nothing panics.
+    /// Skips when the submodules are unresolved (CI), runs locally.
+    #[test]
+    fn suggest_detailed_is_robust_over_real_bn_fst() {
+        let fst_path = "data/autocorrect/models/bn.fst";
+        let loan_path = "data/autocorrect/models/en_bn_loanwords.fst";
+        if !std::path::Path::new(fst_path).exists() {
+            eprintln!("skip: {fst_path} not resolved");
+            return;
+        }
+        let fst_bytes = fst_path.as_bytes();
+        let loan_bytes = loan_path.as_bytes();
+        let autocorrect = unsafe {
+            obadh_autocorrect_open(
+                fst_bytes.as_ptr(),
+                fst_bytes.len(),
+                loan_bytes.as_ptr(),
+                loan_bytes.len(),
+            )
+        };
+        assert!(!autocorrect.is_null());
+
+        // Curated typos + edge cases + a fixed-seed pseudo-random roman soup.
+        let mut inputs: Vec<String> = vec![
+            "".into(),
+            " ".into(),
+            "   ".into(),
+            "a".into(),
+            "banhla".into(),
+            "manus".into(),
+            "bondu".into(),
+            "sriti".into(),
+            "computer".into(),
+            "bigyan".into(),
+            "123".into(),
+            "!!!".into(),
+            "a,b,c".into(),
+            "কম্পিউটার".into(),
+            "日本".into(),
+            "aaaaaaaaaaaaaaaa".into(),
+        ];
+        let alphabet: &[u8] = b"aAiIuUeEoOkgcjtTdDnpbmyrlshHNzwxRSC.,-0123456789 ";
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..600 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let len = 1 + (state >> 40) as usize % 16;
+            let word: String = (0..len)
+                .map(|_| {
+                    state = state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    alphabet[(state >> 40) as usize % alphabet.len()] as char
+                })
+                .collect();
+            inputs.push(word);
+        }
+
+        let mut total_records = 0usize;
+        for input in &inputs {
+            let bytes = input.as_bytes();
+            let packed = unsafe {
+                read_sized(|out, cap| {
+                    obadh_autocorrect_suggest_detailed(
+                        autocorrect,
+                        bytes.as_ptr(),
+                        bytes.len(),
+                        5,
+                        out,
+                        cap,
+                    )
+                })
+            };
+            if packed.is_empty() {
+                continue; // whitespace/empty inputs return 0 bytes
+            }
+            // parse_detailed_list panics on any framing overrun, so a clean parse
+            // is itself the assertion that the packed layout is well-formed.
+            let records = parse_detailed_list(&packed);
+            for record in &records {
+                assert!(
+                    record.source <= 10,
+                    "{input:?}: bad source {}",
+                    record.source
+                );
+            }
+            total_records += records.len();
+        }
+        assert!(
+            total_records > 0,
+            "the sweep should produce some corrections"
+        );
+        unsafe { obadh_autocorrect_free(autocorrect) };
+    }
+
+    #[test]
     fn autosuggest_learns_a_word_and_surfaces_it_through_the_abi() {
         use crate::autosuggest::artifact::test_support::{build_fixture, Row};
 
@@ -942,27 +1230,9 @@ mod tests {
 
         unsafe {
             let name = "নাসির".as_bytes();
-            // Not established yet.
+            // An out-of-vocabulary name is learned into the personal overlay.
             assert_eq!(
-                obadh_autosuggest_established_weight(autosuggest, name.as_ptr(), name.len()),
-                0
-            );
-            // A manually-added commit establishes it with the mapped weight.
-            assert_eq!(
-                obadh_autosuggest_commit(
-                    autosuggest,
-                    name.as_ptr(),
-                    name.len(),
-                    OBADH_COMMIT_MANUALLY_ADDED_CODE
-                ),
-                1
-            );
-            assert_eq!(
-                obadh_autosuggest_established_weight(autosuggest, name.as_ptr(), name.len()),
-                u32::from(CommitStrength::ManuallyAdded.weight())
-            );
-            assert_eq!(
-                obadh_autosuggest_is_word_established(autosuggest, name.as_ptr(), name.len(), 2),
+                obadh_autosuggest_commit(autosuggest, name.as_ptr(), name.len()),
                 1
             );
 
@@ -985,8 +1255,6 @@ mod tests {
         }
         let _ = std::fs::remove_file(path);
     }
-
-    const OBADH_COMMIT_MANUALLY_ADDED_CODE: u32 = 2;
 
     /// Executable contract: the shipped C header must declare every exported
     /// symbol and pin the same ABI version, so the header cannot drift from the

@@ -111,42 +111,6 @@ pub(crate) fn repetition_observation_for_raw_token<D: AsRef<[u8]>>(
     Ok((token_id, token.text.is_some(), token.boundary_after))
 }
 
-/// How strongly a committed word counts as user-established vocabulary.
-///
-/// The caller classifies the event — an ordinary commit, a rejected correction,
-/// an explicit add — which is a UI concern. The engine owns the mapping from
-/// class to evidence weight ([`CommitStrength::weight`]), a model concern, so
-/// the weights can be retuned centrally without every downstream picking its own
-/// scalar. This mirrors why the autocorrect ranking score is not exposed as a
-/// raw confidence: a free per-downstream number fragments and stops being
-/// explainable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommitStrength {
-    /// An ordinary commit. Weight 1 — identical to the pre-existing observe path,
-    /// so default commits are unchanged.
-    Committed,
-    /// The user rejected an offered correction to keep this word. Strong intent:
-    /// a single event establishes the word past the default suggestion threshold
-    /// ([`DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT`]).
-    CorrectionRejected,
-    /// The user added the word explicitly (e.g. a personal dictionary). Strongest.
-    ManuallyAdded,
-}
-
-impl CommitStrength {
-    /// Evidence weight this strength contributes to a personal entry. `Committed`
-    /// is 1, so an ordinary commit behaves exactly as before this method existed.
-    /// The larger weights are calibration points, not a public contract — a
-    /// downstream's measured frecency can retune them without changing this enum.
-    pub const fn weight(self) -> u16 {
-        match self {
-            CommitStrength::Committed => 1,
-            CommitStrength::CorrectionRejected => 3,
-            CommitStrength::ManuallyAdded => 4,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PersonalAutosuggestConfig {
     pub max_entries: usize,
@@ -343,51 +307,6 @@ impl<'lm, D: AsRef<[u8]>> AutosuggestSession<'lm, D> {
             .observe_resolved_token(token_id, had_text, boundary_after);
         self.clear_cached_suggestions();
         Ok(learned)
-    }
-
-    /// [`commit_token`](Self::commit_token) with an explicit [`CommitStrength`].
-    /// `CommitStrength::Committed` is identical to `commit_token`.
-    pub fn commit_token_with_strength(
-        &mut self,
-        raw_token: &str,
-        strength: CommitStrength,
-    ) -> Result<bool, AutosuggestArtifactError> {
-        let (token_id, had_text, boundary_after) =
-            repetition_observation_for_raw_token(self.lm, raw_token)?;
-        let learned = self
-            .personal
-            .observe_committed_token_with_personal_context_and_strength(
-                self.lm,
-                &mut self.context,
-                &mut self.personal_context,
-                raw_token,
-                strength,
-            )?;
-        self.repetition_history
-            .observe_resolved_token(token_id, had_text, boundary_after);
-        self.clear_cached_suggestions();
-        Ok(learned)
-    }
-
-    /// Cumulative post-decay evidence that the user has established `word` as
-    /// their own vocabulary, checking both the known-vocabulary and
-    /// out-of-vocabulary personal paths. Returns 0 for a word the user has never
-    /// committed. See [`PersonalAutosuggest::committed_text_weight`].
-    pub fn established_weight(&self, word: &str) -> u16 {
-        let text_weight = self.personal.committed_text_weight(word);
-        let token_weight = match self.lm.token_id(word) {
-            Ok(Some(id)) => self.personal.committed_token_weight(id),
-            _ => 0,
-        };
-        text_weight.max(token_weight)
-    }
-
-    /// Whether the user has established `word` with at least `min_weight`
-    /// post-decay evidence. A downstream protecting learned words from
-    /// auto-correction gates on this instead of maintaining a parallel store.
-    /// `min_weight` is clamped to at least 1.
-    pub fn is_word_established(&self, word: &str, min_weight: u16) -> bool {
-        self.established_weight(word) >= min_weight.max(1)
     }
 
     /// Commit a token ID that was already resolved against this session's LM.
@@ -763,10 +682,6 @@ pub struct PersonalAutosuggest {
     weakest_text_index: Option<usize>,
     model_fingerprint: u32,
     tick: u32,
-    /// Weight applied by the observe leaves for the commit in progress. Transient
-    /// (never serialized); defaults to 1 and is set only inside
-    /// [`PersonalAutosuggest::with_commit_weight`], which always restores it.
-    commit_weight: u16,
 }
 
 impl PersonalAutosuggest {
@@ -781,7 +696,6 @@ impl PersonalAutosuggest {
             weakest_text_index: None,
             model_fingerprint: 0,
             tick: 0,
-            commit_weight: 1,
         }
     }
 
@@ -1050,7 +964,6 @@ impl PersonalAutosuggest {
             weakest_text_index: None,
             model_fingerprint,
             tick: max_seen,
-            commit_weight: 1,
         };
         personal.rebuild_unigram_cache();
         personal.rebuild_text_unigram_cache();
@@ -1277,88 +1190,6 @@ impl PersonalAutosuggest {
             }
         };
         Ok(learned)
-    }
-
-    /// [`observe_committed_token`](Self::observe_committed_token) with an explicit
-    /// [`CommitStrength`]. `CommitStrength::Committed` is identical to the plain
-    /// method.
-    pub fn observe_committed_token_with_strength<D: AsRef<[u8]>>(
-        &mut self,
-        lm: &AutosuggestLm<D>,
-        context: &mut AutosuggestContext,
-        raw_token: &str,
-        strength: CommitStrength,
-    ) -> Result<bool, AutosuggestArtifactError> {
-        let mut personal_context = personal_context_from_static_context(*context);
-        self.observe_committed_token_with_personal_context_and_strength(
-            lm,
-            context,
-            &mut personal_context,
-            raw_token,
-            strength,
-        )
-    }
-
-    /// [`observe_committed_token_with_personal_context`](Self::observe_committed_token_with_personal_context)
-    /// with an explicit [`CommitStrength`].
-    ///
-    /// The strength sets the evidence weight the observe leaves apply for this one
-    /// commit, then the previous weight is restored — so the weight is a property
-    /// of the commit rather than something every observe path must thread.
-    pub fn observe_committed_token_with_personal_context_and_strength<D: AsRef<[u8]>>(
-        &mut self,
-        lm: &AutosuggestLm<D>,
-        context: &mut AutosuggestContext,
-        personal_context: &mut PersonalAutosuggestContext,
-        raw_token: &str,
-        strength: CommitStrength,
-    ) -> Result<bool, AutosuggestArtifactError> {
-        let previous = self.commit_weight;
-        self.commit_weight = strength.weight();
-        let result = self.observe_committed_token_with_personal_context(
-            lm,
-            context,
-            personal_context,
-            raw_token,
-        );
-        self.commit_weight = previous;
-        result
-    }
-
-    /// Cumulative post-decay evidence that the user has committed `text` as an
-    /// out-of-vocabulary word.
-    ///
-    /// This is the count of the context-free entry, which every commit bumps
-    /// exactly once by the commit's [`CommitStrength`] weight, so it reflects
-    /// total weighted commits. Counts decay in place
-    /// ([`decay_counts`](Self::decay_counts)), so this is already a *post-decay*
-    /// measure — the honest "has the user established this word" signal, not a
-    /// raw ever-seen flag that would immunize a one-off typo forever. Returns 0
-    /// if the word has no personal text evidence.
-    pub fn committed_text_weight(&self, text: &str) -> u16 {
-        self.text_entries
-            .iter()
-            .find(|entry| entry.context.is_empty() && entry.text == text)
-            .map_or(0, |entry| entry.count)
-    }
-
-    /// Post-decay evidence for a known-vocabulary token committed by the user,
-    /// keyed by its LM token ID. The text counterpart is
-    /// [`committed_text_weight`](Self::committed_text_weight); prefer the
-    /// session-level [`AutosuggestSession::established_weight`] when an LM is
-    /// available, since it checks both paths.
-    pub fn committed_token_weight(&self, token_id: u32) -> u16 {
-        self.entries
-            .iter()
-            .find(|entry| entry.context.is_empty() && entry.target_id == token_id)
-            .map_or(0, |entry| entry.count)
-    }
-
-    /// Whether the user has established `text` with at least `min_weight`
-    /// post-decay evidence. A downstream protecting names/slang from
-    /// auto-correction gates on this. `min_weight` is clamped to at least 1.
-    pub fn is_text_established(&self, text: &str, min_weight: u16) -> bool {
-        self.committed_text_weight(text) >= min_weight.max(1)
     }
 
     /// Observe a token ID that has already been resolved by the caller.
@@ -1733,11 +1564,10 @@ impl PersonalAutosuggest {
         let mut changed_unigram = None;
         let mut removed_unigram = None;
 
-        let weight = self.commit_weight;
         match self.find_entry(context, target_id) {
             Ok(index) => {
                 let entry = &mut self.entries[index];
-                entry.count = entry.count.saturating_add(weight);
+                entry.count = entry.count.saturating_add(1);
                 entry.last_seen = self.tick;
                 if entry.context.is_empty() {
                     changed_unigram = Some(*entry);
@@ -1750,7 +1580,7 @@ impl PersonalAutosuggest {
                 let entry = PersonalEntry {
                     context,
                     target_id,
-                    count: weight,
+                    count: 1,
                     last_seen: self.tick,
                 };
                 if self.entries.len() < self.config.max_entries {
@@ -1785,11 +1615,10 @@ impl PersonalAutosuggest {
     }
 
     fn observe_text_key(&mut self, context: PersonalContext, text: &str) {
-        let weight = self.commit_weight;
         match self.find_text_entry(context, text) {
             Ok(index) => {
                 let entry = &mut self.text_entries[index];
-                entry.count = entry.count.saturating_add(weight);
+                entry.count = entry.count.saturating_add(1);
                 entry.last_seen = self.tick;
                 if self.weakest_text_index == Some(index) {
                     self.weakest_text_index = None;
@@ -1799,7 +1628,7 @@ impl PersonalAutosuggest {
                 let entry = PersonalTextEntry {
                     context,
                     text: text.to_string(),
-                    count: weight,
+                    count: 1,
                     last_seen: self.tick,
                 };
                 if self.can_insert_text_entry(&entry) {
@@ -4607,104 +4436,5 @@ mod tests {
             suggestions.first().map(|suggestion| suggestion.token_id),
             lm.token_id("আজ").unwrap()
         );
-    }
-
-    #[test]
-    fn commit_strength_weights_are_ordered_and_committed_is_one() {
-        // `Committed` must stay 1 so the default observe path is unchanged; the
-        // stronger classes must be strictly heavier and above the default
-        // suggestion threshold in a single event.
-        assert_eq!(CommitStrength::Committed.weight(), 1);
-        assert!(
-            CommitStrength::CorrectionRejected.weight() >= DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT
-        );
-        assert!(
-            CommitStrength::ManuallyAdded.weight() >= CommitStrength::CorrectionRejected.weight()
-        );
-    }
-
-    #[test]
-    fn observe_committed_with_strength_sets_post_decay_membership_weight() {
-        let lm = fixture();
-        let mut personal = PersonalAutosuggest::new(PersonalAutosuggestConfig {
-            max_entries: 64,
-            min_count: 2,
-        });
-        let mut context = AutosuggestContext::new();
-
-        // An out-of-vocabulary name — stored on the personal *text* path.
-        let word = "রকিব";
-        assert_eq!(personal.committed_text_weight(word), 0);
-        assert!(!personal.is_text_established(word, 2));
-
-        personal
-            .observe_committed_token_with_strength(
-                &lm,
-                &mut context,
-                word,
-                CommitStrength::ManuallyAdded,
-            )
-            .expect("commit should succeed");
-        assert_eq!(
-            personal.committed_text_weight(word),
-            CommitStrength::ManuallyAdded.weight()
-        );
-        assert!(personal.is_text_established(word, 2));
-
-        // A following ordinary commit adds exactly 1 on top — proof the transient
-        // commit weight was restored to the default after the strong commit.
-        let mut next_context = AutosuggestContext::new();
-        personal
-            .observe_committed_token_with_strength(
-                &lm,
-                &mut next_context,
-                word,
-                CommitStrength::Committed,
-            )
-            .expect("commit should succeed");
-        assert_eq!(
-            personal.committed_text_weight(word),
-            CommitStrength::ManuallyAdded.weight() + 1
-        );
-
-        // Decay halves the evidence in place, so membership is post-decay.
-        personal.decay_counts();
-        assert_eq!(
-            personal.committed_text_weight(word),
-            (CommitStrength::ManuallyAdded.weight() + 1) / 2
-        );
-    }
-
-    #[test]
-    fn session_membership_gates_on_established_weight() {
-        let lm = fixture();
-        let mut session = AutosuggestSession::with_personal_config(
-            &lm,
-            PersonalAutosuggestConfig {
-                max_entries: 64,
-                min_count: 2,
-            },
-            AutosuggestOptions { max_candidates: 5 },
-        );
-
-        let name = "নাসির";
-        assert_eq!(session.established_weight(name), 0);
-        assert!(!session.is_word_established(name, 2));
-
-        // One ordinary commit is below the protection threshold...
-        session.commit_token(name).expect("commit should succeed");
-        assert_eq!(session.established_weight(name), 1);
-        assert!(!session.is_word_established(name, 2));
-
-        // ...but a rejected correction establishes it in a single event.
-        let kept = "সৌম";
-        session
-            .commit_token_with_strength(kept, CommitStrength::CorrectionRejected)
-            .expect("commit should succeed");
-        assert_eq!(
-            session.established_weight(kept),
-            CommitStrength::CorrectionRejected.weight()
-        );
-        assert!(session.is_word_established(kept, 2));
     }
 }

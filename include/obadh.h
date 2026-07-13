@@ -4,6 +4,12 @@
  * Built when the crate is compiled with the `cabi` feature (native targets only).
  * Link the resulting cdylib/staticlib and include this header.
  *
+ * This header is the authoritative *signature*; the project README is the
+ * authoritative *behavior* — the linguistic rules, per-function semantics, and a
+ * copy-ready client-side auto-insert policy built on suggest_detailed +
+ * word_frequency. See its "C ABI", "Autocorrect", and "Autosuggest" sections:
+ *   https://github.com/nsssayom/obadh_engine#c-abi
+ *
  * Conventions
  * -----------
  * Sizing (snprintf-style): every function that writes bytes takes an output
@@ -36,17 +42,12 @@
 extern "C" {
 #endif
 
-#define OBADH_ABI_VERSION 1
+#define OBADH_ABI_VERSION 2
 
 /* Opaque handles. */
 typedef struct ObadhEngine ObadhEngine;
 typedef struct ObadhAutocorrect ObadhAutocorrect;
 typedef struct ObadhAutosuggest ObadhAutosuggest;
-
-/* Commit strength codes for obadh_autosuggest_commit. */
-#define OBADH_COMMIT_ORDINARY            0u
-#define OBADH_COMMIT_CORRECTION_REJECTED 1u
-#define OBADH_COMMIT_MANUALLY_ADDED      2u
 
 /* ----------------------------------------------------------------- version */
 
@@ -76,15 +77,32 @@ void              obadh_autocorrect_free(ObadhAutocorrect *autocorrect);
 /* Content fingerprint of the loaded lexicon FST (crate <-> artifact check). */
 uint64_t obadh_autocorrect_fingerprint(const ObadhAutocorrect *autocorrect);
 
-/* 1 if `word` is an exact lexicon entry, else 0. A real word is never corrected. */
-int32_t obadh_autocorrect_is_lexicon_word(const ObadhAutocorrect *autocorrect,
+/* Lexicon frequency of `word`: the stored count, on the same scale as
+ * suggest_detailed's per-candidate `frequency` (one table). 0 if `word` is not an
+ * exact entry (or on invalid input), so presence is `> 0`. This is the baseline
+ * signal for a client auto-insert gate's frequency-ratio override; it subsumes a
+ * plain membership check. No entry is stored with frequency 0. */
+uint64_t obadh_autocorrect_word_frequency(const ObadhAutocorrect *autocorrect,
                                           const uint8_t *word, size_t word_len);
 
-/* Ranked correction candidates for `roman` as a packed string list (see header
- * notes). `limit` caps the count. snprintf-style. */
-size_t obadh_autocorrect_suggest(const ObadhAutocorrect *autocorrect,
-                                 const uint8_t *roman, size_t roman_len,
-                                 size_t limit, uint8_t *out, size_t cap);
+/* Ranked corrections for `roman` with full provenance, as a packed record list:
+ *   [uint32 count]
+ *     per candidate:
+ *       [uint32 text_len][text utf8]
+ *       [uint8  source]              // FstCandidateSource code, frozen/append-only:
+ *                                    //  0 exact  1 edit_distance  2 diacritic_edit
+ *                                    //  3 orthographic_vowel_length  4 prefix_completion
+ *                                    //  5 stem_suffix_completion  6 skeleton_vowel_drop
+ *                                    //  7 consonant_confusion  8 roman_repair_exact
+ *                                    //  9 english_loanword_exact  10 english_loanword_fuzzy
+ *                                    // treat an UNKNOWN code as not-auto-replaceable.
+ *       [uint16 edit_cost]           // Bangla-side edit distance
+ *       [uint16 roman_repair_cost]   // 0xFFFF = none (native-side edit)
+ *       [uint64 frequency]           // lexicon frequency of the candidate word
+ * The field a client builds its own auto-insert gate on. snprintf-style. */
+size_t obadh_autocorrect_suggest_detailed(const ObadhAutocorrect *autocorrect,
+                                          const uint8_t *roman, size_t roman_len,
+                                          size_t limit, uint8_t *out, size_t cap);
 
 /* Active-typing candidate bar for `roman`: the deterministic baseline first,
  * then corrections. The baseline is always present so the user can keep what
@@ -99,13 +117,6 @@ size_t obadh_autocorrect_word_alternatives(const ObadhAutocorrect *autocorrect,
                                            const uint8_t *word, size_t word_len,
                                            size_t limit, uint8_t *out, size_t cap);
 
-/* Auto-insert gate. Returns 1 if a correction is confident enough to apply
- * without asking, else 0. When 1, the replacement text is written snprintf-style
- * to out/cap and its needed length to *needed_len; when 0, *needed_len is 0. */
-int32_t obadh_autocorrect_should_replace(const ObadhAutocorrect *autocorrect,
-                                         const uint8_t *roman, size_t roman_len,
-                                         uint8_t *out, size_t cap, size_t *needed_len);
-
 /* ----------------------------------------------------------------- autosuggest */
 
 /* Open from an n-gram artifact path. Returns NULL on failure. */
@@ -115,20 +126,10 @@ void              obadh_autosuggest_free(ObadhAutosuggest *autosuggest);
 /* Content fingerprint of the loaded n-gram artifact. */
 uint64_t obadh_autosuggest_fingerprint(const ObadhAutosuggest *autosuggest);
 
-/* Commit a token, learning it into the personal overlay. `strength` is one of the
- * OBADH_COMMIT_* codes. Returns 1 if learned, else 0. */
+/* Commit a token, learning it into the personal overlay. Returns 1 if learned,
+ * else 0. */
 int32_t obadh_autosuggest_commit(ObadhAutosuggest *autosuggest,
-                                 const uint8_t *token, size_t token_len, uint32_t strength);
-
-/* Post-decay evidence that the user established `word` (0 if never committed). */
-uint32_t obadh_autosuggest_established_weight(const ObadhAutosuggest *autosuggest,
-                                              const uint8_t *word, size_t word_len);
-
-/* 1 if the user established `word` with at least `min_weight` post-decay evidence,
- * else 0. Gate for protecting learned words from auto-correction. */
-int32_t obadh_autosuggest_is_word_established(const ObadhAutosuggest *autosuggest,
-                                              const uint8_t *word, size_t word_len,
-                                              uint32_t min_weight);
+                                 const uint8_t *token, size_t token_len);
 
 /* Next-word suggestions for the current session context as a packed string list.
  * Merges the personal overlay's learned words with the model's. */

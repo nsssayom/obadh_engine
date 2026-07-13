@@ -6,6 +6,86 @@ Semantic Versioning (with the `0.x` caveat that the minor version carries breaki
 
 Releases before `0.7.0` predate this file; see the git history and tags for those.
 
+## [0.9.0]
+
+**Breaking (crate + C ABI, `cabi` version → 2).** A clean-up driven by the iOS keyboard downstream:
+the engine now exposes only what a client uses and what the engine can test. Auto-insert *policy*
+moves to the client; the engine keeps candidate generation, truthful provenance, and ranking. The
+deterministic transliteration core is unchanged.
+
+Why: two shipped auto-insert gates (0.8.0 heap-path, 0.8.2 roman-cost) were both wrong on the real
+`bn.fst` — a data-dependent decision the test suite structurally cannot validate (it runs without
+the artifacts). Validated against the real artifact, the discriminator turned out to be *frequency*,
+not a structural gate: the wrong corrections are low-frequency words and the missed-but-correct ones
+are high-frequency. That belongs in a client that has the data, not an engine that can't test it.
+
+### Removed
+
+- **The FST auto-insert gate.** `FstSuggestResult::auto_replacement`,
+  `FstCandidateSource::is_auto_replace_eligible`, `FstCandidate::auto_replace_cost`, and the C ABI
+  `obadh_autocorrect_should_replace`. (The heap `AutocorrectEngine::decide` / `AutocorrectDecision`
+  path — not the mmap runtime, not the C ABI — is retained as a non-runtime convenience.)
+- **The personal membership / commit-strength apparatus.** `CommitStrength`, `committed_text_weight`,
+  `committed_token_weight`, `is_text_established`, session `established_weight` / `is_word_established`,
+  `observe_committed_token_with_strength`, `commit_token_with_strength`; the C ABI
+  `obadh_autosuggest_is_word_established` / `_established_weight` and the `strength` parameter on
+  `obadh_autosuggest_commit`. The keyboard owns learned-word protection client-side, so these had no
+  consumer.
+- **`obadh_autocorrect_is_lexicon_word`** — subsumed by the new `obadh_autocorrect_word_frequency`
+  (presence is `> 0`), which also returns the count the client gate's frequency ratio needs. Keeping
+  both would leave a redundant boolean with no unique consumer.
+- **`obadh_autocorrect_suggest`** (the plain string-list corrections) — no consumer. The typing bar
+  uses `obadh_compose_suggestions` (baseline-first); the auto-insert gate uses
+  `obadh_autocorrect_suggest_detailed` (the same corrections, plus provenance). The bare-strings
+  variant sat between the two with no caller. The C ABI is now **23 symbols**.
+
+### Added
+
+- **`obadh_autocorrect_suggest_detailed`** — ranked corrections with full per-candidate provenance
+  (`text`, `source`, `edit_cost`, `roman_repair_cost`, `frequency`) as a packed record list. This is
+  the surface a client builds its own auto-insert gate on — `frequency` is the field that lets it
+  reject the low-frequency false positives and override a rare-word baseline. `source` is a **frozen,
+  append-only** numeric code (`FstCandidateSource::stable_code`); an unknown code must be treated as
+  not auto-replaceable.
+- **`obadh_autocorrect_word_frequency`** — the lexicon frequency of any word (`0` = not an entry),
+  on the same scale as `suggest_detailed`'s per-candidate `frequency` (both read one table). It
+  supplies the *baseline* side of the ratio the gate needs: a rare real-word baseline (`মানুস`, 49)
+  is replaced only when the top correction (`মানুষ`, 95278) is far more frequent — the স/ষ, দ/ধ
+  consonant-confusion class where the typo is itself a rare dictionary word. It **replaces**
+  `is_lexicon_word`: presence is the `> 0` case, so no redundant boolean remains.
+- A **reference client-gate policy** in the README (prose, not a shipped symbol), so downstreams copy
+  a sound gate instead of inventing one — the anti-fragmentation cost of client-owned policy without
+  the engine carrying untestable code.
+- A **real-`bn.fst` test** (`suggest_detailed_banhla_on_real_bn_fst`) that pins `banhla` → বাংলা at
+  `roman_repair_exact`, roman cost 2, high frequency against the shipped artifact; it skips when the
+  submodules are not resolved, so it runs locally and is a no-op in CI. This is the verification the
+  0.8.2 fix lacked.
+
+### Migration
+
+- **Auto-insert gate.** Replace `obadh_autocorrect_should_replace` with
+  `obadh_autocorrect_suggest_detailed` and apply a client policy over the returned candidates — see
+  *Auto-insert policy* in the README. The detailed records now carry `frequency`, which is what makes
+  the decision correct; the removed gate had no access to it at the boundary.
+- **Membership check.** Replace `obadh_autocorrect_is_lexicon_word(w) == 1` with
+  `obadh_autocorrect_word_frequency(w) > 0`. The accessor also returns the count, which the
+  rare-real-word override (`word_frequency(baseline)` vs the correction's `frequency`) needs.
+- **Plain corrections.** `obadh_autocorrect_suggest` is gone; take the `text` fields from
+  `obadh_autocorrect_suggest_detailed`, or use `obadh_compose_suggestions` for a baseline-first bar.
+- **Learned-word protection.** `obadh_autosuggest_is_word_established` / `_established_weight` are
+  gone; track established words in the client. `obadh_autosuggest_suggest` continues to surface
+  learned words in its own suggestions.
+- **Commit.** `obadh_autosuggest_commit` no longer takes a `strength` argument — call
+  `obadh_autosuggest_commit(handle, token, token_len)`.
+- **Rebuild against ABI version 2** (`obadh_abi_version()` returns `2`). Removed symbols fail to
+  link by design.
+
+### Notes
+
+- Ranking quality (e.g. `sriti → ক্ষিতি`, `dinn → দিনন` ranking a wrong word first) is the engine's
+  own workstream, measured against a labeled recall@1 set — the real lever for reliable auto-insert,
+  and it improves every client's gate.
+
 ## [0.8.2]
 
 A one-fix patch to the FST auto-insert gate, from the iOS keyboard downstream wiring their opt-in

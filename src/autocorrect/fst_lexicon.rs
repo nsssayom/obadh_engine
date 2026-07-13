@@ -423,11 +423,6 @@ impl Default for FstSuggestOptions {
     }
 }
 
-/// Maximum edit cost for a candidate to be applied as a silent auto-replacement.
-/// One edit — a single typo — keeps the gate conservative. Tunable; not a public
-/// contract.
-const AUTO_REPLACE_MAX_EDIT_COST: u16 = 1;
-
 #[derive(Debug, Serialize)]
 pub struct FstSuggestResult {
     pub baseline: String,
@@ -438,45 +433,6 @@ pub struct FstSuggestResult {
     pub returned_candidates: usize,
     pub truncated: bool,
     pub candidates: Vec<FstCandidate>,
-}
-
-impl FstSuggestResult {
-    /// The correction confident enough to apply without asking, or `None` to
-    /// merely suggest.
-    ///
-    /// This is the engine-owned auto-insert gate for the FST runtime path — the
-    /// mmap equivalent of the heap [`AutocorrectEngine::decide`](crate::AutocorrectEngine::decide)
-    /// `replacement`. It is deliberately *structural*, not a score threshold, so
-    /// it stays explainable rather than becoming a per-downstream magic number:
-    ///
-    /// - the baseline must not itself be an exact lexicon word
-    ///   ([`exact_frequency`](Self::exact_frequency) is `None`) — a real word the
-    ///   user typed is never overridden;
-    /// - the top candidate must differ from the baseline;
-    /// - its channel must be [`auto-replace eligible`](FstCandidateSource::is_auto_replace_eligible)
-    ///   (a confident edit or exact repair, never a completion or heuristic guess);
-    /// - and it must be a single edit on the dimension where the typo occurred
-    ///   ([`FstCandidate::auto_replace_cost`]): the Bangla-side edit distance for
-    ///   native-script channels, but the *roman-side* repair cost for a roman
-    ///   key-slip that resolves to an exact word — a one-key roman slip can be a
-    ///   large Bangla-side transformation yet is the highest-confidence
-    ///   correction for a transliteration keyboard.
-    pub fn auto_replacement(&self) -> Option<&FstCandidate> {
-        if self.exact_frequency.is_some() {
-            return None;
-        }
-        let top = self.candidates.first()?;
-        if top.text == self.baseline {
-            return None;
-        }
-        if top.source.is_auto_replace_eligible()
-            && top.auto_replace_cost() <= AUTO_REPLACE_MAX_EDIT_COST
-        {
-            Some(top)
-        } else {
-            None
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -492,28 +448,6 @@ pub struct FstCandidate {
     pub roman_repair_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roman_repair_cost: Option<u16>,
-}
-
-impl FstCandidate {
-    /// The edit cost on the dimension where the typo occurred, for the
-    /// auto-replace gate ([`FstSuggestResult::auto_replacement`]).
-    ///
-    /// For roman-repair and exact-loanword channels the correction is a
-    /// *roman-side* key-slip that resolves to an exact lexicon word, so the
-    /// Bangla-side [`edit_cost`](Self::edit_cost) — which can be large even for a
-    /// single roman key-slip, since roman and Bangla are not 1:1 — is the wrong
-    /// measure; the roman [`roman_repair_cost`](Self::roman_repair_cost) is.
-    /// Native-script channels keep the Bangla-side edit cost. This is what lets a
-    /// confident one-key roman slip (`banhla` → বাংলা) qualify while a fuzzy
-    /// recovery guess still does not.
-    pub fn auto_replace_cost(&self) -> u16 {
-        match self.source {
-            FstCandidateSource::RomanRepairExact | FstCandidateSource::EnglishLoanwordExact => {
-                self.roman_repair_cost.unwrap_or(self.edit_cost)
-            }
-            _ => self.edit_cost,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -549,26 +483,27 @@ impl FstCandidateSource {
         }
     }
 
-    /// Whether a top candidate from this channel may be applied as a silent
-    /// auto-replacement, as opposed to merely being suggested.
+    /// Stable numeric code for the C ABI (`obadh_autocorrect_suggest_detailed`).
     ///
-    /// Eligible: confident edits and exact repairs that resolve to a real lexicon
-    /// word — weighted edit, diacritic, vowel-length, exact roman-repair, exact
-    /// loanword. Excluded: completions (prefix, stem-suffix), which extend rather
-    /// than correct, and heuristic recovery (skeleton vowel-drop,
-    /// consonant-confusion, fuzzy loanword), which may suggest but must never
-    /// silently overwrite what the user typed. This mirrors the heap
-    /// [`AutocorrectEngine::decide`](crate::AutocorrectEngine::decide) gate, which
-    /// auto-replaces only a `LexiconEdit`.
-    pub fn is_auto_replace_eligible(self) -> bool {
-        matches!(
-            self,
-            Self::EditDistance
-                | Self::DiacriticEdit
-                | Self::OrthographicVowelLengthEdit
-                | Self::RomanRepairExact
-                | Self::EnglishLoanwordExact
-        )
+    /// **Frozen and append-only:** a downstream branches on these values, so a
+    /// code is never renumbered and a new channel only ever takes the next
+    /// unused number. Callers must treat an unknown code conservatively (not
+    /// eligible for auto-replace), which lets a future channel be added without
+    /// a coordinated release.
+    pub fn stable_code(self) -> u8 {
+        match self {
+            Self::Exact => 0,
+            Self::EditDistance => 1,
+            Self::DiacriticEdit => 2,
+            Self::OrthographicVowelLengthEdit => 3,
+            Self::PrefixCompletion => 4,
+            Self::StemSuffixCompletion => 5,
+            Self::SkeletonVowelDrop => 6,
+            Self::ConsonantConfusion => 7,
+            Self::RomanRepairExact => 8,
+            Self::EnglishLoanwordExact => 9,
+            Self::EnglishLoanwordFuzzy => 10,
+        }
     }
 
     /// Provenance authority for dedup. The skeleton and consonant-confusion channels are
@@ -1149,8 +1084,7 @@ fn is_utf8_continuation(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FstCandidate, FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline,
-        FstSuggestOptions, FstSuggestResult,
+        FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions,
     };
 
     #[test]
@@ -1750,180 +1684,25 @@ mod tests {
         FstLexicon::from_map(builder.into_map())
     }
 
-    fn gate_candidate(text: &str, source: FstCandidateSource, edit_cost: u16) -> FstCandidate {
-        FstCandidate {
-            text: text.to_string(),
-            source,
-            edit_cost,
-            frequency: 100,
-            score: 900,
-            roman_repair: None,
-            roman_repair_kind: None,
-            roman_repair_cost: None,
-        }
-    }
-
-    fn gate_repair_candidate(
-        text: &str,
-        source: FstCandidateSource,
-        edit_cost: u16,
-        roman_repair_cost: u16,
-    ) -> FstCandidate {
-        FstCandidate {
-            roman_repair: Some("roman".to_string()),
-            roman_repair_kind: Some("qwerty_key_slip"),
-            roman_repair_cost: Some(roman_repair_cost),
-            ..gate_candidate(text, source, edit_cost)
-        }
-    }
-
-    fn gate_result(
-        baseline: &str,
-        exact_frequency: Option<u64>,
-        candidates: Vec<FstCandidate>,
-    ) -> FstSuggestResult {
-        FstSuggestResult {
-            baseline: baseline.to_string(),
-            exact_frequency,
-            max_distance: 1,
-            max_edit_cost: None,
-            candidate_count: candidates.len(),
-            returned_candidates: candidates.len(),
-            truncated: false,
-            candidates,
-        }
-    }
-
     #[test]
-    fn auto_replacement_applies_only_a_confident_single_edit_over_a_non_word() {
-        // A confident single edit over a baseline that is not itself a word: replace.
-        let result = gate_result(
-            "বামলা",
-            None,
-            vec![gate_candidate("বাংলা", FstCandidateSource::EditDistance, 1)],
-        );
-        assert_eq!(
-            result.auto_replacement().map(|candidate| candidate.text.as_str()),
-            Some("বাংলা")
-        );
-
-        // Baseline is itself a real lexicon word: never override it.
-        let result = gate_result(
-            "বাংলা",
-            Some(10_000),
-            vec![gate_candidate("বাংলা", FstCandidateSource::Exact, 0)],
-        );
-        assert!(result.auto_replacement().is_none());
-
-        // Top is a completion, not a correction: suggest only.
-        let result = gate_result(
-            "বাং",
-            None,
-            vec![gate_candidate("বাংলা", FstCandidateSource::PrefixCompletion, 0)],
-        );
-        assert!(result.auto_replacement().is_none());
-
-        // Top is a heuristic recovery guess: suggest only.
-        let result = gate_result(
-            "বমলা",
-            None,
-            vec![gate_candidate("বাংলা", FstCandidateSource::SkeletonVowelDrop, 1)],
-        );
-        assert!(result.auto_replacement().is_none());
-
-        // A confident edit but more than one edit away: suggest only.
-        let result = gate_result(
-            "বকমলা",
-            None,
-            vec![gate_candidate("বাংলা", FstCandidateSource::EditDistance, 2)],
-        );
-        assert!(result.auto_replacement().is_none());
-
-        // Top equals the baseline: nothing to replace.
-        let result = gate_result(
-            "বাংলা",
-            None,
-            vec![gate_candidate("বাংলা", FstCandidateSource::EditDistance, 0)],
-        );
-        assert!(result.auto_replacement().is_none());
-    }
-
-    #[test]
-    fn auto_replacement_gates_roman_repairs_on_the_roman_side_cost() {
-        // A one-key roman slip (banhla -> bangla) resolves to an exact word. Its
-        // Bangla-side edit_cost is large (বানহ্লা -> বাংলা), but the roman repair
-        // cost is 1, so it must auto-replace — this is the bread-and-butter
-        // correction for a transliteration keyboard.
-        let result = gate_result(
-            "বানহ্লা",
-            None,
-            vec![gate_repair_candidate(
-                "বাংলা",
-                FstCandidateSource::RomanRepairExact,
-                4,
-                1,
-            )],
-        );
-        assert_eq!(
-            result.auto_replacement().map(|candidate| candidate.text.as_str()),
-            Some("বাংলা")
-        );
-
-        // A larger roman-side edit is suggest-only, even if the Bangla-side cost
-        // happens to be small.
-        let result = gate_result(
-            "বানহ্লা",
-            None,
-            vec![gate_repair_candidate(
-                "বাংলা",
-                FstCandidateSource::RomanRepairExact,
-                1,
-                3,
-            )],
-        );
-        assert!(result.auto_replacement().is_none());
-
-        // An exact English loanword (roman repair cost 0) auto-replaces despite a
-        // large Bangla-side distance.
-        let result = gate_result(
-            "কম্পুতার",
-            None,
-            vec![gate_repair_candidate(
-                "কম্পিউটার",
-                FstCandidateSource::EnglishLoanwordExact,
-                5,
-                0,
-            )],
-        );
-        assert_eq!(
-            result.auto_replacement().map(|candidate| candidate.text.as_str()),
-            Some("কম্পিউটার")
-        );
-
-        // A fuzzy loanword is never auto-replaced regardless of cost.
-        let result = gate_result(
-            "কম্পুতার",
-            None,
-            vec![gate_repair_candidate(
-                "কম্পিউটার",
-                FstCandidateSource::EnglishLoanwordFuzzy,
-                1,
-                1,
-            )],
-        );
-        assert!(result.auto_replacement().is_none());
-    }
-
-    #[test]
-    fn auto_replacement_wires_through_a_real_suggest_call() {
-        // End-to-end: a real lexicon word must report itself as exact and never
-        // auto-replace, proving the gate reads the live suggest result.
-        let lexicon = test_lexicon([("বাংলা", 10_000)]);
-        let result = lexicon
-            .suggest("বাংলা", FstSuggestOptions::default())
-            .expect("suggest should succeed");
-        assert!(result.exact_frequency.is_some());
-        assert!(result.auto_replacement().is_none());
+    fn stable_source_codes_are_frozen() {
+        // These codes are a C ABI contract; renumbering breaks every downstream.
+        use FstCandidateSource::*;
+        for (source, code) in [
+            (Exact, 0),
+            (EditDistance, 1),
+            (DiacriticEdit, 2),
+            (OrthographicVowelLengthEdit, 3),
+            (PrefixCompletion, 4),
+            (StemSuffixCompletion, 5),
+            (SkeletonVowelDrop, 6),
+            (ConsonantConfusion, 7),
+            (RomanRepairExact, 8),
+            (EnglishLoanwordExact, 9),
+            (EnglishLoanwordFuzzy, 10),
+        ] {
+            assert_eq!(source.stable_code(), code, "{source:?}");
+        }
     }
 
     /// Isolated timing of the skeleton automaton walk on the real 845k-word bn.fst. Ignored
@@ -1956,5 +1735,44 @@ mod tests {
                 sink / n
             );
         }
+    }
+
+    /// The cabi `word_frequency` accessor returns `exact_frequency(word).unwrap_or(0)`
+    /// and treats `0` as "not a lexicon word". That is only unambiguous if no real
+    /// entry is stored with frequency 0. Prove it against the shipped 845k-word
+    /// artifact by streaming every entry, and pin the rare-baseline counts the
+    /// client ratio gate is designed around. Skips when the submodule is not
+    /// resolved (CI), runs locally.
+    #[test]
+    fn no_lexicon_entry_has_frequency_zero_on_real_bn_fst() {
+        use fst::Streamer;
+        let path = "data/autocorrect/models/bn.fst";
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("skip: {path} not resolved");
+            return;
+        };
+        let lexicon = FstLexicon::from_bytes(bytes).expect("load fst");
+
+        // Every stored frequency is >= 1, so `word_frequency`'s 0 return means
+        // exactly "absent" — the presence bit the removed is_lexicon_word gave.
+        let mut stream = lexicon.map.stream();
+        let mut entries = 0u64;
+        let mut min_frequency = u64::MAX;
+        while let Some((_key, frequency)) = stream.next() {
+            entries += 1;
+            min_frequency = min_frequency.min(frequency);
+        }
+        assert!(entries > 800_000, "sanity: streamed {entries} entries");
+        assert!(
+            min_frequency >= 1,
+            "an entry has frequency 0; word_frequency's zero sentinel would be ambiguous"
+        );
+
+        // Rare real-word baselines whose common correction the client overrides by
+        // ratio (verified via `suggest-fst`): মানুস 49 → মানুষ, বন্দু 25 → বন্ধু.
+        assert_eq!(lexicon.exact_frequency("মানুস"), Some(49));
+        assert_eq!(lexicon.exact_frequency("বন্দু"), Some(25));
+        // A non-word baseline is None → the accessor's 0.
+        assert_eq!(lexicon.exact_frequency("অআইঈউ"), None);
     }
 }
