@@ -400,29 +400,11 @@ impl ObadhAutocorrect {
     }
 }
 
-/// Ranked correction candidates for `roman`, best first, as a packed string list
-/// (see the module docs). `limit` caps the number returned. snprintf-style.
-#[no_mangle]
-pub unsafe extern "C" fn obadh_autocorrect_suggest(
-    autocorrect: *const ObadhAutocorrect,
-    roman: *const u8,
-    roman_len: usize,
-    limit: usize,
-    out: *mut u8,
-    cap: usize,
-) -> usize {
-    let (Some(autocorrect), Some(roman)) = (autocorrect.as_ref(), input_str(roman, roman_len))
-    else {
-        return 0;
-    };
-    write_str_list(&autocorrect.suggest_texts(roman, limit), out, cap)
-}
-
 /// Ranked correction candidates for `roman` with full per-candidate provenance —
 /// `{text, source, edit_cost, roman_repair_cost, frequency}` — as a packed
-/// detailed record list (see the module docs). Corrections only, mirroring
-/// [`obadh_autocorrect_suggest`]. This is the surface a client builds its own
-/// auto-insert gate on. snprintf-style.
+/// detailed record list (see the module docs). Corrections only; the baseline is
+/// not included (use [`obadh_compose_suggestions`] for a baseline-first bar).
+/// This is the surface a client builds its own auto-insert gate on. snprintf-style.
 #[no_mangle]
 pub unsafe extern "C" fn obadh_autocorrect_suggest_detailed(
     autocorrect: *const ObadhAutocorrect,

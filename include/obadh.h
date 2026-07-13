@@ -85,12 +85,6 @@ uint64_t obadh_autocorrect_fingerprint(const ObadhAutocorrect *autocorrect);
 uint64_t obadh_autocorrect_word_frequency(const ObadhAutocorrect *autocorrect,
                                           const uint8_t *word, size_t word_len);
 
-/* Ranked correction candidates for `roman` as a packed string list (see header
- * notes). `limit` caps the count. snprintf-style. */
-size_t obadh_autocorrect_suggest(const ObadhAutocorrect *autocorrect,
-                                 const uint8_t *roman, size_t roman_len,
-                                 size_t limit, uint8_t *out, size_t cap);
-
 /* Ranked corrections for `roman` with full provenance, as a packed record list:
  *   [uint32 count]
  *     per candidate:

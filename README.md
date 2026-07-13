@@ -354,7 +354,7 @@ the matching `*_free`:
 | Area | Functions |
 | --- | --- |
 | Deterministic | `obadh_transliterate`, `obadh_transliterate_lenient` |
-| Autocorrect | `obadh_autocorrect_open`, `obadh_autocorrect_suggest`, `obadh_autocorrect_suggest_detailed`, `obadh_compose_suggestions`, `obadh_autocorrect_word_alternatives`, `obadh_autocorrect_word_frequency`, `obadh_autocorrect_fingerprint` |
+| Autocorrect | `obadh_autocorrect_open`, `obadh_autocorrect_suggest_detailed`, `obadh_compose_suggestions`, `obadh_autocorrect_word_alternatives`, `obadh_autocorrect_word_frequency`, `obadh_autocorrect_fingerprint` |
 | Autosuggest | `obadh_autosuggest_open`, `obadh_autosuggest_commit`, `obadh_autosuggest_suggest`, `obadh_autosuggest_suggest_for_context`, personal-overlay `clear` / snapshot `export` / `import`, `obadh_autosuggest_fingerprint` |
 | Version | `obadh_abi_version`, `obadh_engine_version` |
 

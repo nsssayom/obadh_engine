@@ -34,6 +34,10 @@ are high-frequency. That belongs in a client that has the data, not an engine th
 - **`obadh_autocorrect_is_lexicon_word`** — subsumed by the new `obadh_autocorrect_word_frequency`
   (presence is `> 0`), which also returns the count the client gate's frequency ratio needs. Keeping
   both would leave a redundant boolean with no unique consumer.
+- **`obadh_autocorrect_suggest`** (the plain string-list corrections) — no consumer. The typing bar
+  uses `obadh_compose_suggestions` (baseline-first); the auto-insert gate uses
+  `obadh_autocorrect_suggest_detailed` (the same corrections, plus provenance). The bare-strings
+  variant sat between the two with no caller. The C ABI is now **23 symbols**.
 
 ### Added
 
@@ -66,6 +70,8 @@ are high-frequency. That belongs in a client that has the data, not an engine th
 - **Membership check.** Replace `obadh_autocorrect_is_lexicon_word(w) == 1` with
   `obadh_autocorrect_word_frequency(w) > 0`. The accessor also returns the count, which the
   rare-real-word override (`word_frequency(baseline)` vs the correction's `frequency`) needs.
+- **Plain corrections.** `obadh_autocorrect_suggest` is gone; take the `text` fields from
+  `obadh_autocorrect_suggest_detailed`, or use `obadh_compose_suggestions` for a baseline-first bar.
 - **Learned-word protection.** `obadh_autosuggest_is_word_established` / `_established_weight` are
   gone; track established words in the client. `obadh_autosuggest_suggest` continues to surface
   learned words in its own suggestions.
