@@ -455,7 +455,12 @@ impl FstSuggestResult {
     /// - the top candidate must differ from the baseline;
     /// - its channel must be [`auto-replace eligible`](FstCandidateSource::is_auto_replace_eligible)
     ///   (a confident edit or exact repair, never a completion or heuristic guess);
-    /// - and its edit cost must be at most one.
+    /// - and it must be a single edit on the dimension where the typo occurred
+    ///   ([`FstCandidate::auto_replace_cost`]): the Bangla-side edit distance for
+    ///   native-script channels, but the *roman-side* repair cost for a roman
+    ///   key-slip that resolves to an exact word — a one-key roman slip can be a
+    ///   large Bangla-side transformation yet is the highest-confidence
+    ///   correction for a transliteration keyboard.
     pub fn auto_replacement(&self) -> Option<&FstCandidate> {
         if self.exact_frequency.is_some() {
             return None;
@@ -464,7 +469,9 @@ impl FstSuggestResult {
         if top.text == self.baseline {
             return None;
         }
-        if top.source.is_auto_replace_eligible() && top.edit_cost <= AUTO_REPLACE_MAX_EDIT_COST {
+        if top.source.is_auto_replace_eligible()
+            && top.auto_replace_cost() <= AUTO_REPLACE_MAX_EDIT_COST
+        {
             Some(top)
         } else {
             None
@@ -485,6 +492,28 @@ pub struct FstCandidate {
     pub roman_repair_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roman_repair_cost: Option<u16>,
+}
+
+impl FstCandidate {
+    /// The edit cost on the dimension where the typo occurred, for the
+    /// auto-replace gate ([`FstSuggestResult::auto_replacement`]).
+    ///
+    /// For roman-repair and exact-loanword channels the correction is a
+    /// *roman-side* key-slip that resolves to an exact lexicon word, so the
+    /// Bangla-side [`edit_cost`](Self::edit_cost) — which can be large even for a
+    /// single roman key-slip, since roman and Bangla are not 1:1 — is the wrong
+    /// measure; the roman [`roman_repair_cost`](Self::roman_repair_cost) is.
+    /// Native-script channels keep the Bangla-side edit cost. This is what lets a
+    /// confident one-key roman slip (`banhla` → বাংলা) qualify while a fuzzy
+    /// recovery guess still does not.
+    pub fn auto_replace_cost(&self) -> u16 {
+        match self.source {
+            FstCandidateSource::RomanRepairExact | FstCandidateSource::EnglishLoanwordExact => {
+                self.roman_repair_cost.unwrap_or(self.edit_cost)
+            }
+            _ => self.edit_cost,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1734,6 +1763,20 @@ mod tests {
         }
     }
 
+    fn gate_repair_candidate(
+        text: &str,
+        source: FstCandidateSource,
+        edit_cost: u16,
+        roman_repair_cost: u16,
+    ) -> FstCandidate {
+        FstCandidate {
+            roman_repair: Some("roman".to_string()),
+            roman_repair_kind: Some("qwerty_key_slip"),
+            roman_repair_cost: Some(roman_repair_cost),
+            ..gate_candidate(text, source, edit_cost)
+        }
+    }
+
     fn gate_result(
         baseline: &str,
         exact_frequency: Option<u64>,
@@ -1801,6 +1844,72 @@ mod tests {
             "বাংলা",
             None,
             vec![gate_candidate("বাংলা", FstCandidateSource::EditDistance, 0)],
+        );
+        assert!(result.auto_replacement().is_none());
+    }
+
+    #[test]
+    fn auto_replacement_gates_roman_repairs_on_the_roman_side_cost() {
+        // A one-key roman slip (banhla -> bangla) resolves to an exact word. Its
+        // Bangla-side edit_cost is large (বানহ্লা -> বাংলা), but the roman repair
+        // cost is 1, so it must auto-replace — this is the bread-and-butter
+        // correction for a transliteration keyboard.
+        let result = gate_result(
+            "বানহ্লা",
+            None,
+            vec![gate_repair_candidate(
+                "বাংলা",
+                FstCandidateSource::RomanRepairExact,
+                4,
+                1,
+            )],
+        );
+        assert_eq!(
+            result.auto_replacement().map(|candidate| candidate.text.as_str()),
+            Some("বাংলা")
+        );
+
+        // A larger roman-side edit is suggest-only, even if the Bangla-side cost
+        // happens to be small.
+        let result = gate_result(
+            "বানহ্লা",
+            None,
+            vec![gate_repair_candidate(
+                "বাংলা",
+                FstCandidateSource::RomanRepairExact,
+                1,
+                3,
+            )],
+        );
+        assert!(result.auto_replacement().is_none());
+
+        // An exact English loanword (roman repair cost 0) auto-replaces despite a
+        // large Bangla-side distance.
+        let result = gate_result(
+            "কম্পুতার",
+            None,
+            vec![gate_repair_candidate(
+                "কম্পিউটার",
+                FstCandidateSource::EnglishLoanwordExact,
+                5,
+                0,
+            )],
+        );
+        assert_eq!(
+            result.auto_replacement().map(|candidate| candidate.text.as_str()),
+            Some("কম্পিউটার")
+        );
+
+        // A fuzzy loanword is never auto-replaced regardless of cost.
+        let result = gate_result(
+            "কম্পুতার",
+            None,
+            vec![gate_repair_candidate(
+                "কম্পিউটার",
+                FstCandidateSource::EnglishLoanwordFuzzy,
+                1,
+                1,
+            )],
         );
         assert!(result.auto_replacement().is_none());
     }
