@@ -20,6 +20,7 @@ Live playground: [https://sayom.me/obadh_engine/](https://sayom.me/obadh_engine/
 - [Deterministic Core](#deterministic-core)
 - [Autocorrect](#autocorrect)
 - [Autosuggest](#autosuggest)
+- [C ABI](#c-abi)
 - [Runtime Data](#runtime-data)
 - [WASM Playground](#wasm-playground)
 - [Rust Usage](#rust-usage)
@@ -32,7 +33,7 @@ Live playground: [https://sayom.me/obadh_engine/](https://sayom.me/obadh_engine/
 Use the Rust library crate for native integrations:
 
 ```toml
-obadh_engine = "0.6.0"
+obadh_engine = "0.9.0"
 ```
 
 The default feature set is empty. Native downstreams, including iOS wrappers,
@@ -42,10 +43,10 @@ Optional features:
 
 ```toml
 # CLI tools and artifact builders.
-obadh_engine = { version = "0.6.0", features = ["cli"] }
+obadh_engine = { version = "0.9.0", features = ["cli"] }
 
 # Browser/WASM bindings for the playground.
-obadh_engine = { version = "0.6.0", features = ["wasm"] }
+obadh_engine = { version = "0.9.0", features = ["wasm"] }
 ```
 
 Repository setup for development:
@@ -87,6 +88,7 @@ surface:
 - bounded personal autosuggest snapshots
 - native scorer/generator handoff helpers for Core ML/ONNX next-word models
 - validated open-vocabulary generated-word candidates for native generators
+- a stable C ABI for native integrators, behind the `cabi` feature ([C ABI](#c-abi))
 
 The crate ships source code, tests, and small deterministic rule fixtures. It
 does not bundle large runtime model artifacts. Those artifacts are versioned in
@@ -99,6 +101,7 @@ Feature policy:
 | default | native SDK surface | no CLI or browser dependencies |
 | `cli` | command-line tools and corpus/artifact builders | `clap`, ZIP/EPUB helpers |
 | `wasm` | browser playground bindings | `wasm-bindgen`, `web-sys` |
+| `cabi` | stable C ABI for native integrators | no extra dependencies |
 
 ## Architecture
 
@@ -176,38 +179,6 @@ produces a Bengali baseline. The autocorrect runtime then retrieves valid
 lexicon candidates from compact FST artifacts and ranks them through bounded,
 explainable channels.
 
-### Auto-insert is client-owned
-
-The runtime (the memory-mapped `FstLexicon` path, and the C ABI over it) is a
-**candidate generator**, not an auto-insert policy. Whether to *silently apply* a
-correction depends on the lexicon's frequency data and on product choices
-(protected words, tap-to-keep, how aggressive to be) — things the engine cannot
-test in CI and that differ per keyboard. So the engine does not ship an
-auto-insert gate; it exposes the signals a client needs and lets the client own
-the decision. (`AutocorrectEngine::decide`/`AutocorrectDecision` remains as a
-heap-lexicon convenience for non-runtime use, but it is not the mmap runtime
-path.)
-
-The signal surface is `obadh_autocorrect_suggest_detailed` (C ABI), which returns
-each correction with its `source`, `edit_cost`, `roman_repair_cost`, and
-`frequency`. A sound reference gate over a **non-word** baseline
-(`obadh_autocorrect_is_lexicon_word` returns 0), applied to the top correction:
-
-- `source` is a confident channel — `edit_distance`, `diacritic_edit`,
-  `orthographic_vowel_length`, `roman_repair_exact`, `english_loanword_exact`, or
-  a single `consonant_confusion`; an **unknown** code is treated as not eligible;
-- the effective cost — `roman_repair_cost` if present, else `edit_cost` — is
-  within your tolerance (roman key-slips can exceed 1);
-- `frequency` clears a floor (this alone rejects the common false positives,
-  which are low-frequency words), and optionally exceeds the baseline word's
-  frequency by a ratio (so a much-more-common correction can override a *rare*
-  real-word baseline);
-- the word is not user-protected.
-
-Every clause maps to one exposed field. Ranking quality (whether the intended
-word is ranked first) is the engine's own workstream and improves this for every
-client.
-
 Runtime channels:
 
 - exact deterministic baseline lookup
@@ -220,6 +191,43 @@ Runtime channels:
 
 Runtime code does not parse CSV, TSV, EPUB, JSON, or heap-resident tries.
 Native tools can memory-map the FST; WASM loads the same compact bytes.
+
+### Candidates and provenance
+
+The runtime returns ranked candidates for the active word. Each candidate
+carries the provenance a caller needs to rank, filter, or gate it:
+
+- `source` — the channel that produced it (exact, weighted edit, diacritic or
+  vowel-length rescue, roman repair, exact/fuzzy loanword, prefix or stem
+  completion, phonetic skeleton, consonant confusion);
+- `edit_cost` — Bangla-side edit distance from the baseline;
+- `roman_repair_cost` — roman-side cost when the candidate came from a roman
+  repair; a one-key roman slip can be a large Bangla-side change but a small
+  roman one;
+- `frequency` — the candidate word's lexicon frequency.
+
+The Rust API exposes these on `FstCandidate` (`FstLexicon::suggest`); the C ABI
+exposes them through `obadh_autocorrect_suggest_detailed`.
+
+### Auto-insert policy
+
+Whether to *silently apply* a correction is a client decision: it depends on the
+lexicon's frequency data and on product choices — protected words, tap-to-keep,
+how aggressive to be. The runtime supplies the signals; the client owns the
+policy. A sound reference policy applies the top correction over a non-word
+baseline (`obadh_autocorrect_is_lexicon_word` returns 0) when:
+
+- `source` is a confident channel — weighted edit, diacritic, vowel-length,
+  exact roman repair, exact loanword, or a single consonant confusion; an
+  unrecognized `source` code is treated as not eligible;
+- the effective cost — `roman_repair_cost` if present, else `edit_cost` — is
+  within tolerance;
+- `frequency` clears a floor, and optionally exceeds the baseline word's
+  frequency by a ratio, so a much-more-common correction can override a rare
+  real-word baseline;
+- the word is not user-protected.
+
+Each clause maps to one exposed field.
 
 Inspect artifacts:
 
@@ -312,6 +320,46 @@ cargo run --release --features cli --bin obadh-autosuggest -- bench \
   --iterations 200000 \
   --pretty
 ```
+
+## C ABI
+
+The `cabi` feature exposes a stable, versioned C ABI for native integrators such
+as iOS and Android keyboards. It is off by default; enabling it compiles the
+`extern "C"` surface into the crate's `cdylib`/`staticlib`. The header is
+[`include/obadh.h`](include/obadh.h).
+
+```toml
+obadh_engine = { version = "0.9.0", features = ["cabi"] }
+```
+
+Surface, all over opaque handles created by `*_open` / `*_new` and released by
+the matching `*_free`:
+
+| Area | Functions |
+| --- | --- |
+| Deterministic | `obadh_transliterate`, `obadh_transliterate_lenient` |
+| Autocorrect | `obadh_autocorrect_open`, `obadh_autocorrect_suggest`, `obadh_autocorrect_suggest_detailed`, `obadh_compose_suggestions`, `obadh_autocorrect_word_alternatives`, `obadh_autocorrect_is_lexicon_word`, `obadh_autocorrect_fingerprint` |
+| Autosuggest | `obadh_autosuggest_open`, `obadh_autosuggest_commit`, `obadh_autosuggest_suggest`, `obadh_autosuggest_suggest_for_context`, personal-overlay `clear` / snapshot `export` / `import`, `obadh_autosuggest_fingerprint` |
+| Version | `obadh_abi_version`, `obadh_engine_version` |
+
+Conventions:
+
+- **Sizing.** Every writer is snprintf-style: it returns the number of bytes the
+  result needs and copies only when the buffer fits. A caller passes a small
+  stack scratch and reallocates only on overflow.
+- **String lists** are one buffer of `[u32 count]` then `[u32 len][utf8 bytes]`
+  records — no in-band delimiter, so any bytes and empty strings round-trip.
+- **Detailed candidate records** (`obadh_autocorrect_suggest_detailed`) extend
+  each record with `[u8 source][u16 edit_cost][u16 roman_repair_cost][u64 frequency]`.
+  `source` is a frozen, append-only code — treat an unrecognized value as not
+  auto-replaceable — and `roman_repair_cost` is `0xFFFF` for a native-side edit.
+- **UTF-8.** Inputs are `(pointer, length)` byte spans; invalid UTF-8 makes the
+  call a no-op. A handle is not shared across threads without external locking.
+
+The ABI version (`obadh_abi_version`, currently `2`) is independent of the
+crate's semantic version: additive symbols leave it unchanged, while a removed or
+changed symbol bumps it. Load-time artifact checks use the fingerprint accessors
+(see [Runtime Data](#runtime-data)).
 
 ## Runtime Data
 

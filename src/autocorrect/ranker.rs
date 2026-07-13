@@ -45,13 +45,12 @@ pub struct CandidateFeatures {
     pub obadh_baseline: bool,
 }
 
-/// The full result of [`AutocorrectEngine::decide`]: the ranked candidates *and*
-/// the auto-insert gate.
+/// The result of [`AutocorrectEngine::decide`] over the in-memory [`Lexicon`]:
+/// the ranked candidates and a conservative replacement suggestion.
 ///
-/// This is what a downstream needs to gate an iOS-style auto-insert responsibly.
-/// [`suggest`](AutocorrectEngine::suggest) returns only [`candidates`](Self::candidates)
-/// and throws the gate away, so callers that want "should I replace?" must use
-/// [`decide`](AutocorrectEngine::decide).
+/// This is the heap path, for offline and corpus use. The mmap runtime a
+/// keyboard uses exposes ranked candidates with provenance instead
+/// (`FstLexicon::suggest`), leaving auto-insert to the client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutocorrectDecision {
     /// The baseline that was analyzed — the Bengali the user's keystrokes
@@ -60,12 +59,10 @@ pub struct AutocorrectDecision {
     pub input: String,
     /// Ranked candidates, best first, starting with the keep candidate.
     pub candidates: Vec<CorrectionCandidate>,
-    /// The auto-insert gate. `Some` only when a correction is confident enough to
-    /// replace what the user typed without asking: it must be a
+    /// A conservative replacement over the keep candidate: `Some` only for a
     /// [`LexiconEdit`](CorrectionSource::LexiconEdit) (never a prefix or skeleton
-    /// guess) that beats the keep candidate by [`AutocorrectConfig::autocorrect_margin`].
-    /// `replacement.is_some()` is the "should replace" signal; when `None`, offer
-    /// [`candidates`](Self::candidates) as suggestions instead.
+    /// guess) that beats the keep candidate by
+    /// [`AutocorrectConfig::autocorrect_margin`]. `None` otherwise.
     pub replacement: Option<CorrectionCandidate>,
 }
 
@@ -82,10 +79,9 @@ pub struct AutocorrectConfig {
     /// [`decide`](AutocorrectEngine::decide) will set
     /// [`AutocorrectDecision::replacement`]. Higher is more conservative.
     pub autocorrect_margin: i32,
-    /// Whether auto-replacement is allowed when the request carries a
-    /// `roman_input`. Default `false`: with the roman buffer still available the
-    /// engine prefers to suggest rather than silently replace. Set `true` for
-    /// true auto-insert. See [`decide`](AutocorrectEngine::decide).
+    /// Whether [`decide`](AutocorrectEngine::decide) may set `replacement` when
+    /// the request carries a `roman_input`. Default `false`. See
+    /// [`decide`](AutocorrectEngine::decide).
     pub auto_replace_roman_input: bool,
     pub search_known_input: bool,
     pub max_prefix_candidates: usize,
@@ -191,54 +187,41 @@ impl AutocorrectEngine {
         self.config
     }
 
-    /// Ranked candidates for `input`, best first. This is a convenience wrapper
-    /// over [`decide`](Self::decide) that **discards the auto-insert gate**
-    /// ([`AutocorrectDecision::replacement`]). Use it when you only render a
-    /// suggestion strip; use [`decide`](Self::decide) when you need to know
-    /// whether to auto-replace.
+    /// Ranked candidates for `input`, best first. Convenience wrapper over
+    /// [`decide`](Self::decide) that returns only the candidates.
     pub fn suggest(&self, input: &str) -> Vec<CorrectionCandidate> {
         self.decide(CorrectionRequest::new(input)).candidates
     }
 
-    /// Rank candidates for a request and compute the auto-insert gate.
+    /// Rank candidates for a request over the in-memory (heap) [`Lexicon`].
     ///
     /// The returned [`AutocorrectDecision`] carries the baseline
     /// ([`input`](AutocorrectDecision::input)), the ranked
-    /// [`candidates`](AutocorrectDecision::candidates), and the
-    /// [`replacement`](AutocorrectDecision::replacement) gate —
-    /// `replacement.is_some()` is the "should replace" signal, already gated
-    /// conservatively (a confident lexicon edit only, never a prefix or skeleton
-    /// guess).
+    /// [`candidates`](AutocorrectDecision::candidates), and a conservative
+    /// [`replacement`](AutocorrectDecision::replacement) (a confident lexicon
+    /// edit only, never a prefix or skeleton guess). If the request carries a
+    /// `roman_input`, `replacement` is suppressed unless
+    /// [`AutocorrectConfig::auto_replace_roman_input`] is set.
     ///
-    /// # The `roman_input` subtlety
-    ///
-    /// If the request carries a `roman_input` — which
-    /// [`ObadhEngine::autocorrect_request`](crate::ObadhEngine::autocorrect_request)
-    /// sets — auto-replacement is **suppressed by default**
-    /// ([`AutocorrectConfig::auto_replace_roman_input`] is `false`): while the
-    /// roman buffer is still in hand the design prefers to *suggest* rather than
-    /// silently replace. For true auto-insert, either set that flag or build the
-    /// request without a roman input. This is the usual surprise when migrating
-    /// an app-side gate onto `should_replace`.
+    /// This heap path is a convenience for offline/corpus use. It is **not** the
+    /// mmap `FstLexicon` runtime path a keyboard uses, and its `replacement` is
+    /// not an auto-insert recommendation: the runtime exposes ranked candidates
+    /// with per-candidate provenance (`FstLexicon::suggest` /
+    /// `obadh_autocorrect_suggest_detailed`) and leaves the auto-insert decision
+    /// to the client, which has the frequency data and product policy to make it.
     ///
     /// ```
     /// use obadh_engine::{AutocorrectEngine, CorrectionRequest, LexiconEntry};
     ///
     /// let engine = AutocorrectEngine::from_entries([LexiconEntry::new("বাংলা", 10_000)]);
-    ///
-    /// // No roman_input, so the auto-replace gate is live.
     /// let decision = engine.decide(CorrectionRequest::new("বামলা"));
     ///
-    /// // `replacement.is_some()` is the auto-insert gate; when set it is one of
-    /// // the ranked candidates.
-    /// let should_replace = decision.replacement.is_some();
+    /// // `replacement`, when set, is one of the ranked candidates.
     /// if let Some(replacement) = &decision.replacement {
     ///     assert!(decision.candidates.contains(replacement));
     /// }
-    ///
-    /// // `suggest` is the same ranking with the gate discarded.
+    /// // `suggest` is the same ranking without the replacement field.
     /// assert_eq!(engine.suggest("বামলা"), decision.candidates);
-    /// # let _ = should_replace;
     /// ```
     pub fn decide(&self, request: CorrectionRequest) -> AutocorrectDecision {
         if request.current.is_empty() {

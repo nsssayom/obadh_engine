@@ -48,6 +48,20 @@ are high-frequency. That belongs in a client that has the data, not an engine th
   submodules are not resolved, so it runs locally and is a no-op in CI. This is the verification the
   0.8.2 fix lacked.
 
+### Migration
+
+- **Auto-insert gate.** Replace `obadh_autocorrect_should_replace` with
+  `obadh_autocorrect_suggest_detailed` and apply a client policy over the returned candidates — see
+  *Auto-insert policy* in the README. The detailed records now carry `frequency`, which is what makes
+  the decision correct; the removed gate had no access to it at the boundary.
+- **Learned-word protection.** `obadh_autosuggest_is_word_established` / `_established_weight` are
+  gone; track established words in the client. `obadh_autosuggest_suggest` continues to surface
+  learned words in its own suggestions.
+- **Commit.** `obadh_autosuggest_commit` no longer takes a `strength` argument — call
+  `obadh_autosuggest_commit(handle, token, token_len)`.
+- **Rebuild against ABI version 2** (`obadh_abi_version()` returns `2`). Removed symbols fail to
+  link by design.
+
 ### Notes
 
 - Ranking quality (e.g. `sriti → ক্ষিতি`, `dinn → দিনন` ranking a wrong word first) is the engine's
