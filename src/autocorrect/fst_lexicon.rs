@@ -1084,8 +1084,7 @@ fn is_utf8_continuation(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FstCandidate, FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline,
-        FstSuggestOptions, FstSuggestResult,
+        FstCandidateSource, FstLexicon, FstLoanwordMatch, FstRepairedBaseline, FstSuggestOptions,
     };
 
     #[test]
