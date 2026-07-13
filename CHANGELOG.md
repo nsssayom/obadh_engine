@@ -6,6 +6,27 @@ Semantic Versioning (with the `0.x` caveat that the minor version carries breaki
 
 Releases before `0.7.0` predate this file; see the git history and tags for those.
 
+## [0.8.2]
+
+A one-fix patch to the FST auto-insert gate, from the iOS keyboard downstream wiring their opt-in
+auto-insert onto the engine's own gate. Confined to the opt-in gate; `suggest` / `compose` and the
+deterministic core are unaffected.
+
+### Fixed
+
+- **`FstSuggestResult::auto_replacement()` now auto-applies a confident roman key-slip.** The gate
+  excluded the most common correction on a transliteration keyboard — a one-key roman slip that
+  resolves to an exact lexicon word (`banhla` → বাংলা). For a `RomanRepairExact` /
+  `EnglishLoanwordExact` candidate, `edit_cost` carries the *Bangla-side* distance from the original
+  baseline to the repaired output (বানহ্লা → বাংলা is 4 edits), while the *roman-side* cost sits in
+  `roman_repair_cost`; the `edit_cost ≤ 1` bar was measuring the wrong dimension. New
+  `FstCandidate::auto_replace_cost()` gates roman-repair channels on `roman_repair_cost` and
+  native-script channels on `edit_cost`, so a confident single roman key-slip to an exact word
+  qualifies by default — as confident as the Bangla one-edit the gate already accepted — while
+  fuzzy recovery is still never auto-applied and a real word the user typed is still never
+  overridden. No new config; `obadh_autocorrect_should_replace` picks it up automatically. ABI
+  version unchanged.
+
 ## [0.8.1]
 
 A patch on the `0.8.0` C ABI, from a gap analysis against the iOS keyboard's `ObadhBridge` surface —
