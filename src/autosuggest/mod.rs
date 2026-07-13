@@ -25,7 +25,7 @@ pub(crate) use adaptive::{
     AutosuggestRepetitionHistory,
 };
 pub use adaptive::{
-    AutosuggestSession, CommitStrength, PersonalAutosuggest, PersonalAutosuggestConfig,
+    AutosuggestSession, PersonalAutosuggest, PersonalAutosuggestConfig,
     PersonalAutosuggestContext, PersonalAutosuggestError, PersonalAutosuggestSnapshotError,
     PersonalAutosuggestSuggestion, PersonalAutosuggestTextSuggestion,
     DEFAULT_PERSONAL_AUTOSUGGEST_ENTRIES, DEFAULT_PERSONAL_AUTOSUGGEST_MIN_COUNT,

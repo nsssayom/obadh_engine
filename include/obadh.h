@@ -43,11 +43,6 @@ typedef struct ObadhEngine ObadhEngine;
 typedef struct ObadhAutocorrect ObadhAutocorrect;
 typedef struct ObadhAutosuggest ObadhAutosuggest;
 
-/* Commit strength codes for obadh_autosuggest_commit. */
-#define OBADH_COMMIT_ORDINARY            0u
-#define OBADH_COMMIT_CORRECTION_REJECTED 1u
-#define OBADH_COMMIT_MANUALLY_ADDED      2u
-
 /* ----------------------------------------------------------------- version */
 
 uint32_t obadh_abi_version(void);
@@ -99,13 +94,6 @@ size_t obadh_autocorrect_word_alternatives(const ObadhAutocorrect *autocorrect,
                                            const uint8_t *word, size_t word_len,
                                            size_t limit, uint8_t *out, size_t cap);
 
-/* Auto-insert gate. Returns 1 if a correction is confident enough to apply
- * without asking, else 0. When 1, the replacement text is written snprintf-style
- * to out/cap and its needed length to *needed_len; when 0, *needed_len is 0. */
-int32_t obadh_autocorrect_should_replace(const ObadhAutocorrect *autocorrect,
-                                         const uint8_t *roman, size_t roman_len,
-                                         uint8_t *out, size_t cap, size_t *needed_len);
-
 /* ----------------------------------------------------------------- autosuggest */
 
 /* Open from an n-gram artifact path. Returns NULL on failure. */
@@ -115,20 +103,10 @@ void              obadh_autosuggest_free(ObadhAutosuggest *autosuggest);
 /* Content fingerprint of the loaded n-gram artifact. */
 uint64_t obadh_autosuggest_fingerprint(const ObadhAutosuggest *autosuggest);
 
-/* Commit a token, learning it into the personal overlay. `strength` is one of the
- * OBADH_COMMIT_* codes. Returns 1 if learned, else 0. */
+/* Commit a token, learning it into the personal overlay. Returns 1 if learned,
+ * else 0. */
 int32_t obadh_autosuggest_commit(ObadhAutosuggest *autosuggest,
-                                 const uint8_t *token, size_t token_len, uint32_t strength);
-
-/* Post-decay evidence that the user established `word` (0 if never committed). */
-uint32_t obadh_autosuggest_established_weight(const ObadhAutosuggest *autosuggest,
-                                              const uint8_t *word, size_t word_len);
-
-/* 1 if the user established `word` with at least `min_weight` post-decay evidence,
- * else 0. Gate for protecting learned words from auto-correction. */
-int32_t obadh_autosuggest_is_word_established(const ObadhAutosuggest *autosuggest,
-                                              const uint8_t *word, size_t word_len,
-                                              uint32_t min_weight);
+                                 const uint8_t *token, size_t token_len);
 
 /* Next-word suggestions for the current session context as a packed string list.
  * Merges the personal overlay's learned words with the model's. */

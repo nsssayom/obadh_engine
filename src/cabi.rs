@@ -39,8 +39,8 @@ use crate::autocorrect::{
     LoanwordSearchOptions, RomanRepairOptions, FST_MAX_LEVENSHTEIN_DISTANCE,
 };
 use crate::autosuggest::{
-    AutosuggestLm, AutosuggestOptions, AutosuggestSession, CommitStrength,
-    PersonalAutosuggestConfig, PersonalAutosuggestTextSuggestion,
+    AutosuggestLm, AutosuggestOptions, AutosuggestSession, PersonalAutosuggestConfig,
+    PersonalAutosuggestTextSuggestion,
 };
 use crate::ObadhEngine;
 
@@ -421,40 +421,6 @@ pub unsafe extern "C" fn obadh_autocorrect_word_alternatives(
     write_str_list(&autocorrect.word_alternatives_texts(word, limit), out, cap)
 }
 
-/// The engine's auto-insert gate for `roman`. Returns 1 if a correction is
-/// confident enough to apply without asking (a confident single-edit lexicon
-/// word over a non-word baseline), 0 otherwise. When 1, the replacement text is
-/// written snprintf-style to `out`/`cap` and its needed length to `*needed_len`;
-/// when 0, `*needed_len` is set to 0. See [`FstSuggestResult::auto_replacement`].
-#[no_mangle]
-pub unsafe extern "C" fn obadh_autocorrect_should_replace(
-    autocorrect: *const ObadhAutocorrect,
-    roman: *const u8,
-    roman_len: usize,
-    out: *mut u8,
-    cap: usize,
-    needed_len: *mut usize,
-) -> i32 {
-    if let Some(needed_len) = needed_len.as_mut() {
-        *needed_len = 0;
-    }
-    let (Some(autocorrect), Some(roman)) = (autocorrect.as_ref(), input_str(roman, roman_len))
-    else {
-        return 0;
-    };
-    let Some(result) = autocorrect.suggest_result(roman) else {
-        return 0;
-    };
-    let Some(replacement) = result.auto_replacement() else {
-        return 0;
-    };
-    let written = write_bytes(replacement.text.as_bytes(), out, cap);
-    if let Some(needed_len) = needed_len.as_mut() {
-        *needed_len = written;
-    }
-    1
-}
-
 // ------------------------------------------------------------------ autosuggest
 
 /// Next-word autosuggest over committed Bengali, with the on-device personal
@@ -515,66 +481,20 @@ pub unsafe extern "C" fn obadh_autosuggest_fingerprint(
     }
 }
 
-fn commit_strength_from_code(code: u32) -> CommitStrength {
-    match code {
-        1 => CommitStrength::CorrectionRejected,
-        2 => CommitStrength::ManuallyAdded,
-        _ => CommitStrength::Committed,
-    }
-}
-
 /// Commit a token into the session context, learning it into the personal
-/// overlay. `strength` is 0 = ordinary commit, 1 = correction-rejected,
-/// 2 = manually-added (see `CommitStrength`); any other value is treated as 0.
-/// Returns 1 if the token was learned, 0 otherwise.
+/// overlay. Returns 1 if the token was learned, 0 otherwise.
 #[no_mangle]
 pub unsafe extern "C" fn obadh_autosuggest_commit(
     autosuggest: *mut ObadhAutosuggest,
     token: *const u8,
     token_len: usize,
-    strength: u32,
 ) -> i32 {
     let (Some(autosuggest), Some(token)) = (autosuggest.as_mut(), input_str(token, token_len))
     else {
         return 0;
     };
-    let learned = autosuggest
-        .session
-        .commit_token_with_strength(token, commit_strength_from_code(strength))
-        .unwrap_or(false);
+    let learned = autosuggest.session.commit_token(token).unwrap_or(false);
     i32::from(learned)
-}
-
-/// Post-decay evidence that the user has established `word` as their own
-/// vocabulary. 0 if never committed. See
-/// [`AutosuggestSession::established_weight`](crate::AutosuggestSession::established_weight).
-#[no_mangle]
-pub unsafe extern "C" fn obadh_autosuggest_established_weight(
-    autosuggest: *const ObadhAutosuggest,
-    word: *const u8,
-    word_len: usize,
-) -> u32 {
-    let (Some(autosuggest), Some(word)) = (autosuggest.as_ref(), input_str(word, word_len)) else {
-        return 0;
-    };
-    u32::from(autosuggest.session.established_weight(word))
-}
-
-/// Whether the user has established `word` with at least `min_weight` post-decay
-/// evidence. A downstream protecting learned words from auto-correction gates on
-/// this. Returns 1 or 0.
-#[no_mangle]
-pub unsafe extern "C" fn obadh_autosuggest_is_word_established(
-    autosuggest: *const ObadhAutosuggest,
-    word: *const u8,
-    word_len: usize,
-    min_weight: u32,
-) -> i32 {
-    let (Some(autosuggest), Some(word)) = (autosuggest.as_ref(), input_str(word, word_len)) else {
-        return 0;
-    };
-    let min_weight = min_weight.min(u32::from(u16::MAX)) as u16;
-    i32::from(autosuggest.session.is_word_established(word, min_weight))
 }
 
 impl ObadhAutosuggest {
@@ -853,10 +773,7 @@ mod tests {
                 0
             );
             assert_eq!(obadh_autocorrect_fingerprint(ptr::null()), 0);
-            assert_eq!(
-                obadh_autosuggest_established_weight(ptr::null(), word.as_ptr(), word.len()),
-                0
-            );
+            assert_eq!(obadh_autosuggest_fingerprint(ptr::null()), 0);
         }
     }
 
@@ -942,27 +859,9 @@ mod tests {
 
         unsafe {
             let name = "নাসির".as_bytes();
-            // Not established yet.
+            // An out-of-vocabulary name is learned into the personal overlay.
             assert_eq!(
-                obadh_autosuggest_established_weight(autosuggest, name.as_ptr(), name.len()),
-                0
-            );
-            // A manually-added commit establishes it with the mapped weight.
-            assert_eq!(
-                obadh_autosuggest_commit(
-                    autosuggest,
-                    name.as_ptr(),
-                    name.len(),
-                    OBADH_COMMIT_MANUALLY_ADDED_CODE
-                ),
-                1
-            );
-            assert_eq!(
-                obadh_autosuggest_established_weight(autosuggest, name.as_ptr(), name.len()),
-                u32::from(CommitStrength::ManuallyAdded.weight())
-            );
-            assert_eq!(
-                obadh_autosuggest_is_word_established(autosuggest, name.as_ptr(), name.len(), 2),
+                obadh_autosuggest_commit(autosuggest, name.as_ptr(), name.len()),
                 1
             );
 
@@ -985,8 +884,6 @@ mod tests {
         }
         let _ = std::fs::remove_file(path);
     }
-
-    const OBADH_COMMIT_MANUALLY_ADDED_CODE: u32 = 2;
 
     /// Executable contract: the shipped C header must declare every exported
     /// symbol and pin the same ABI version, so the header cannot drift from the
