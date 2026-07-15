@@ -1,7 +1,26 @@
-//! Obadh Engine - A linguistically accurate Roman to Bengali transliteration engine
+//! Obadh Engine — a deterministic Roman→Bangla transliteration engine and runtime
+//! SDK for Bangla typing systems.
 //!
-//! This library provides a transliteration engine for converting Roman script
-//! to Bengali script, focusing on accuracy and linguistic correctness.
+//! The core transliterator is rule-based: Roman input becomes Bengali because an
+//! Obadh rule says so, not because a dictionary or model guessed a word. Higher
+//! runtime layers sit above that core as separate, optional stages:
+//!
+//! - [`engine`] — the deterministic tokenizer and transliterator ([`ObadhEngine`]).
+//! - [`autocorrect`] — active-word candidate generation over memory-mapped FST
+//!   artifacts, each candidate carrying its provenance ([`FstCandidate`]).
+//!   Auto-insert *policy* is the caller's; the engine supplies the signals
+//!   (source, edit costs, and lexicon frequency).
+//! - [`autosuggest`] — next-word runtime over committed Bengali text, with a
+//!   bounded personal overlay and an optional neural scorer/generator handoff.
+//!
+//! The default feature set is empty, so native downstreams pay for none of the
+//! CLI or browser tooling. A stable, versioned C ABI is available behind the
+//! `cabi` feature (see the `cabi` module and `include/obadh.h`); the
+//! [obadh-ios](https://github.com/nsssayom/obadh-ios) keyboard is the reference
+//! integrator.
+//!
+//! See the [README](https://github.com/nsssayom/obadh_engine#readme) for the
+//! Roman rule contract, the reference auto-insert policy, and performance numbers.
 
 pub mod autocorrect;
 pub mod autosuggest;

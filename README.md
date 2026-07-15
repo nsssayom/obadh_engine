@@ -12,6 +12,8 @@ as separate runtime layers.
 
 Live playground: [https://sayom.me/obadh_engine/](https://sayom.me/obadh_engine/)
 
+Version history and breaking changes: [CHANGELOG.md](CHANGELOG.md).
+
 ## Index
 
 - [Install](#install)
@@ -36,8 +38,9 @@ Use the Rust library crate for native integrations:
 obadh_engine = "0.9.0"
 ```
 
-The default feature set is empty. Native downstreams, including iOS wrappers,
-do not pay for CLI tooling or browser/WASM dependencies.
+The default feature set is empty. Native downstreams — such as the
+[obadh-ios](https://github.com/nsssayom/obadh-ios) keyboard — do not pay for CLI
+tooling or browser/WASM dependencies.
 
 Optional features:
 
@@ -344,6 +347,12 @@ as iOS and Android keyboards. It is off by default; enabling it compiles the
 `extern "C"` surface into the crate's `cdylib`/`staticlib`. The header is
 [`include/obadh.h`](include/obadh.h).
 
+The [obadh-ios](https://github.com/nsssayom/obadh-ios) keyboard is the reference
+downstream: it links the `staticlib` and calls this ABI directly from Swift, and
+its integration needs drive the surface. The ABI is what a client builds on — the
+engine owns candidate generation, provenance, and ranking; auto-insert *policy*
+is the client's (see [Auto-insert policy](#auto-insert-policy)).
+
 ```toml
 obadh_engine = { version = "0.9.0", features = ["cabi"] }
 ```
@@ -411,7 +420,7 @@ Fresh source checkouts should use `./init.sh`. Runtime applications should pin
 an engine crate version and a compatible data commit/tag, then bundle only the
 artifacts needed by that target.
 
-For iOS, the downstream `obadh-ios` package should bundle autocorrect FSTs, the
+For iOS, the downstream [`obadh-ios`](https://github.com/nsssayom/obadh-ios) package should bundle autocorrect FSTs, the
 c64 n-gram, the generator manifest, and a compiled Core ML model. Corpora, raw
 TSVs, training checkpoints, and builder outputs should not ship inside the
 keyboard extension.
