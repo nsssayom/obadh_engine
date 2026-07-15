@@ -6,6 +6,16 @@ Semantic Versioning (with the `0.x` caveat that the minor version carries breaki
 
 Releases before `0.7.0` predate this file; see the git history and tags for those.
 
+## [Unreleased]
+
+### Documentation
+
+- README + crate-root docs now name the [obadh-ios](https://github.com/nsssayom/obadh-ios) keyboard
+  as the reference C ABI downstream (SDK Shape, C ABI, Runtime Data); the crate-root doc was
+  rewritten to describe the full layered SDK (deterministic core + autocorrect + autosuggest +
+  `cabi`) rather than only transliteration; a CHANGELOG pointer was added to the README. No API or
+  behavior change.
+
 ## [0.9.0]
 
 **Breaking (crate + C ABI, `cabi` version → 2).** A clean-up driven by the iOS keyboard downstream:
